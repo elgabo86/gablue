@@ -332,19 +332,36 @@ leurs icônes, pour l'interface.
   froid **et** wineserver déjà chaud : la fenêtre du jeu passe `fs=true`, un
   autre notepad lancé hors launcher reste intact, et `unloadScript` répond
   `false` après la sortie (script bien déchargé).
-- **Barre Plasma entre l'écran noir et le jeu** : mesuré 18/11 — Plasma ne
-  cache ses panneaux que lorsque la **fenêtre active** est plein écran (vérifié :
-  plein écran actif → barre cachée, plein écran inactif → barre visible). Or la
-  fenêtre du jeu est **activée avant** que son plein écran ne soit effectif (le
-  client X11/wine met quelques centaines de ms à obéir) : la barre remontait
-  ~0,4 s (capture spectacle : 1 image sur 40, bande du bas à 0,246 au lieu de
-  0). Correctif : tant que la fenêtre du jeu n'est pas réellement plein écran,
-  le script **réactive l'écran noir du launcher** (qui est plein écran) puis
-  rend la main au jeu dès que `fullScreen` passe à vrai (relance toutes les
-  30 ms, plafond 2 s). Vérifié par capture : 0 image avec la barre sur la même
-  séquence, et le jeu reçoit bien le focus à la fin (`actif=steam_proton
-  fs=true`). Contrepartie assumée : le jeu perd le focus quelques centaines de
-  ms au démarrage.
+- **Barre Plasma entre l'écran noir et le jeu** : Plasma ne cache ses panneaux
+  que lorsque la **fenêtre active** est plein écran (mesuré 18/11, reconfirmé le
+  22/11 sur Plasma 6.8.3 : une fenêtre plein écran *inactive* laisse la barre
+  devant). Deux mesures, deux protections dans le script KWin :
+  1. la fenêtre du jeu est **activée avant** que son plein écran ne soit
+     effectif (le client X11/wine met quelques centaines de ms à obéir) : tant
+     qu'elle n'est pas réellement plein écran, le script **réactive l'écran noir
+     du launcher** (qui l'est) puis rend la main dès que `fullScreen` passe à
+     vrai (relance toutes les 30 ms, plafond 2 s). Contrepartie assumée : le jeu
+     perd le focus quelques centaines de ms au démarrage ;
+  2. la barre se voyait quand même **1 à 2 images** au moment où la fenêtre du
+     jeu arrive (2 images sur 599 à 20 i/s, ~100 ms, bande du bas mesurée à
+     20 Hz) : KWin ne réempile le plein écran qu'à l'image suivante. Le script
+     pose donc `keepAbove` sur l'écran noir puis sur la fenêtre du jeu — la
+     couche « Above » passe devant les panneaux, **y compris une barre
+     `hiding=none` toujours visible** — et le retire `GRACE` (400 ms) après que
+     le jeu est devenu actif plein écran, avec un garde-fou `MAX_AU_DESSUS`
+     (8 s) pour ne jamais laisser une fenêtre au-dessus de la barre.
+  **Aucun fichier de config Plasma n'est écrit** : une bascule de `panel.hiding`
+  par `evaluateScript` réécrirait `plasma-org.kde.plasma.desktop-appletsrc`
+  (écarté le 22/11). Vérifié par capture de la bande du bas pendant le
+  lancement : 0 image de barre sur 561.
+- **Filet `uncurtain` en fin de partie** : si le jeu meurt avant que le script
+  n'ait rendu la main, `kwin::release` charge un dernier script (nom unique par
+  relève : KWin renvoie `-1` pour un nom déjà pris) qui retire `keepAbove` de la
+  fenêtre du launcher, puis le décharge. **L'ordre compte** : le script de
+  surveillance est déchargé *avant* le nettoyage, sinon son minuteur (20 ms)
+  reposait `keepAbove` juste après et le launcher restait au-dessus de tout
+  jusqu'à la partie suivante. Les noms uniques datent du 22/11 : « KWin a refusé
+  le script de nettoyage » à chaque partie après la première.
 - **Un plein écran retiré reste retiré** : le script ne force chaque fenêtre que
   pendant ses 3 premières secondes (`JEUNE`, clé = `internalId`). Ensuite la
   fenêtre appartient à l'utilisateur : `F`/F11 ou l'overlay manette retirent le
@@ -640,20 +657,28 @@ leurs icônes, pour l'interface.
   quand l'écran est noir), retour en fondu à la fin du jeu ; défilement animé
   vers la sélection. Tout est piloté au temps (dt), pas par image, et
   l'abonnement `window::frames()` n'existe que pendant une animation.
-- **Titre trop long = défilement** : la vignette sélectionnée affiche le nom
-  **entier** et le fait défiler quand il ne tient pas (pause au début, descente
-  jusqu'au dernier caractère, pause, retour ; 34 px/s). Les autres vignettes
-  restent tronquées avec une ellipse (`short`) : animer toute la grille
-  coûterait une mise en forme de texte par vignette et par image. Le widget
-  `Marquee` (`src/marquee.rs`) met le texte en page à sa largeur **naturelle**
-  (limite infinie) puis le recadre (`with_layer`) : un titre long ne peut ni
-  élargir la vignette ni empiéter sur la voisine. L'horloge (`title_elapsed`)
-  vient de `App::tick` et repart à zéro quand la sélection change ; elle ne
-  tourne que si le nom dépasse le budget de caractères de la vignette
-  (`App::title_budget`, volontairement pessimiste), donc aucune image demandée
-  au repos. Sous la respiration,
-  le recadrage suit la transformation de `Pose` (`push_clip` multiplie par la
-  transformation courante).
+- **Titre trop long = défilement continu** : la vignette sélectionnée affiche
+  le nom **entier** et le fait défiler quand il ne tient pas. Une pause de
+  1,2 s (on lit le début), puis défilement **sans fin** vers la gauche à
+  34 px/s : la fin sort, un blanc de `GAP` (48 px) passe, et le **début revient
+  par la droite** — le texte ne remonte jamais en arrière (demandé le 22/11 ;
+  l'ancien aller-retour avec pause à chaque bout est abandonné). Deux
+  exemplaires du nom sont dessinés, espacés de `largeur + GAP` (`travel` donne
+  l'avance modulo cette période ; le second n'est dessiné que s'il touche la
+  bande). Les autres vignettes restent tronquées avec une ellipse (`short`) :
+  animer toute la grille coûterait une mise en forme de texte par vignette et
+  par image. Le widget `Marquee` (`src/marquee.rs`) met le texte en page à sa
+  largeur **naturelle** (limite infinie) puis le recadre (`with_layer`) : un
+  titre long ne peut ni élargir la vignette ni empiéter sur la voisine.
+  **Piège mesuré le 22/11** : `with_layer(bande)` + `with_transformation(dx)`
+  applique `dx` une **seconde** fois au cadrage du texte (iced multiplie le
+  `viewport` reçu par la transformation courante, `iced_wgpu::text`) — la bande
+  rétrécissait à mesure que le texte défilait, d'où « du vide à la place de la
+  fin du nom ». On passe donc au contenu une bande décalée de `−dx` : le
+  cadrage effectif reste la bande. L'horloge (`title_elapsed`) vient de
+  `App::tick` et repart à zéro quand la sélection change ; elle ne tourne que si
+  le nom dépasse le budget de caractères de la vignette (`App::title_budget`,
+  volontairement pessimiste), donc aucune image demandée au repos.
 - **Roue de chargement** : `src/spinner.rs`, neuf points sur un cercle dans le
   coin **haut droit** (aucun contrôle n'y vit, grille comme page), visible
   seulement pendant un téléchargement de visuels. Trois pièges, tous
@@ -702,6 +727,11 @@ leurs icônes, pour l'interface.
   voir sa puce — une seule horloge tourne à la fois). Réglages sans recompiler :
   `GLAUNCHER_FX_MS` (16-200, intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par
   image) ; `sparkles = false` coupe tout (aucun fil lancé).
+  **Sonde de fluidité** `GLAUNCHER_ANIM_DEBUG=1` : `App::tick` journalise
+  l'intervalle RÉEL entre deux images pendant un fondu (`image 8 ms (fade …)`)
+  — c'est ce qui distingue « l'animation rame » de « le compositeur/l'échelle
+  fait scintiller le texte » (22/11 : 8-9 ms constants à 120 Hz, donc rien à
+  corriger dans la boucle).
 - **Hyperespace au lancement** : pendant le voile noir (0,9 s), chaque
   particule est poussée vers l'extérieur depuis le centre (`fade²`, traînée
   `95 px`, opacité `1 + 2.8 × fade`) et le même calcul joué à l'envers les
@@ -720,8 +750,11 @@ leurs icônes, pour l'interface.
   Un **agrandissement** et non un recul : un contenu qui rétrécit laissait voir
   son bord au milieu du noir (jugé moche le 20/11). Échelle **continue** :
   une quantification à 0,5 % donnait 12 paliers, donc des à-coups de quelques
-  pixels (jugé saccadé le 20/11). Le texte est re-rasterisé à chaque taille —
-  net, mais coûteux : ne pas l'étendre à d'autres éléments.
+  pixels (jugé saccadé le 20/11). Le texte y est re-rasterisé à chaque taille
+  (la cadence, elle, est régulière : 8-9 ms par image, mesuré à 120 Hz) — un
+  léger tremblement assumé le 22/11, gardé tel quel ; la respiration, elle, ne
+  transforme plus son titre (voir sa puce). Ne pas l'étendre à d'autres
+  éléments.
 - **Retour d'un jeu** : chaque vignette revient **de son côté de l'écran**,
   en dézoomant, titre compris (`App::comeback` + `Pose` par carte).
   `RETURN_SPREAD` règle la distance parcourue (55 % de la largeur),
@@ -749,16 +782,34 @@ leurs icônes, pour l'interface.
   20/11). `Pose` est le même enrobage (mêmes dimensions, même `layout`) mais
   applique la transformation **dans l'arbre**, avec `Renderer::with_transformation` :
   ordre des couches conservé et découpage de la zone défilante respecté.
-- **Respiration de la sélection (vignette entière)** : la carte sélectionnée
-  est **grossie par elle-même** de 0 à **5 %** (période 4 s) via `Pose` : fond
-  bleu de sélection, cover, tranche, étoile et titre bougent d'un seul bloc,
-  autour du centre de la vignette, sans refaire la mise en page. Le canvas
-  (`sparkles::draw_breath`) ne peint plus que le **cadre d'accent** autour de
-  la cover, à la même échelle et avec le même facteur (`App::breath_factor`,
-  calculé une fois par image, partagé par la carte et le canvas) — c'est ce qui
-  garde le cadre au-dessus de l'image et collé à elle. Le fond bleu restait
-  figé tant que seul le canvas bougeait (constaté 20/11), et la cover
-  réapparaissait d'un coup au minimum quand deux peintres se relayaient.
+  `Pose::pivot(Point)` choisit le point fixe en coordonnées locales (par défaut
+  le centre du contenu) : deux `Pose` qui doivent grossir autour du même point
+  de l'écran le reçoivent chacun dans les siennes.
+- **Respiration de la sélection** : le **fond** de la vignette (case teintée,
+  bordure, ombre) et son **visuel** (cover, tranche, étoile) sont grossis de 0 à
+  **5 %** (période 4 s) via `Pose`, autour du **centre du titre** — et le titre,
+  lui, n'est **jamais transformé** (mesuré 22/11, retour « le texte zoomé n'est
+  pas top ») : iced re-rasterise un texte à chaque changement de taille
+  (`text.size × transformation.scale_factor()`, `iced_wgpu::layer::draw_text`),
+  donc un titre qui suit l'échelle par pas de 1 px scintille et saute pendant
+  que la cover glisse en sub-pixel (constaté : lignes du texte qui
+  apparaissent/disparaissent). Le texte est donc posé **hors de toute `Pose`**
+  et la vignette monte au-dessus de son nom : 300 images de mesure, titre
+  immobile au pixel. La carte est une pile `[fond, contenu]` — le fond
+  (case+ombre) est transformé, le contenu porte la cover transformée **et** le
+  titre intact. `Pose::pivot` donne le point fixe en coordonnées locales : le
+  fond et la cover le reçoivent chacun dans les siennes, pour un même point de
+  l'écran (le centre du titre, sous la cover : `caption_middle`).
+  La glissade d'un changement de taille passe par le même pivot
+  (`zoom_transform(old, card, art, pivot, e)`) : la cover arrive exactement
+  dans sa case, l'ancienne géométrie (pivot = centre de la case) restant un cas
+  particulier. Le canvas (`sparkles::draw_breath`) ne peint que le **cadre
+  d'accent** autour de la cover, à la même échelle, autour du même
+  `Breath::pivot` et avec le même facteur (`App::breath_factor`, calculé une
+  fois par image, partagé par la carte et le canvas) — c'est ce qui garde le
+  cadre au-dessus de l'image et collé à elle. Le fond restait figé tant que
+  seul le canvas bougeait (constaté 20/11), et la cover réapparaissait d'un coup
+  au minimum quand deux peintres se relayaient.
   Conséquences : la carte peint **tout** son visuel (plus de `owns_art`, plus
   de cover/tranche/étoile rejouées par le canvas, plus de vignette sans cover à
   traiter à part) et le canvas n'a plus qu'**une géométrie** — le cadre étant

@@ -88,6 +88,16 @@ const CARD_INSET: f32 = 9.0;
 const ART_RATIO: f32 = 1.5;
 /// Hauteur de la ligne de titre sous une vignette.
 const CARD_CAPTION: f32 = 24.0;
+/// Écart entre la cover et son titre.
+const TITLE_GAP: f32 = 6.0;
+
+/// Hauteur, sous le bas de la cover, du **milieu** de la ligne de titre : c'est
+/// le point fixe de la respiration (le texte ne bouge pas d'un pixel, la
+/// vignette grossit autour de lui).
+fn caption_middle() -> f32 {
+    TITLE_GAP + (CARD_CAPTION - TITLE_GAP) * 0.5
+}
+
 /// En mosaïque, les vignettes sont plus petites que `cell_size` (densité façon
 /// Switch Online) ; le zoom agit sur cette taille comme sur la grille.
 const MOSAIC_SCALE: f32 = 0.55;
@@ -156,6 +166,13 @@ const RETURN_STAGGER: f32 = 0.45;
 const RETURN_END: f32 = 0.15;
 /// Constante de temps du défilement animé (secondes).
 const SCROLL_TAU: f32 = 0.10;
+
+/// Sonde de fluidité (`GLAUNCHER_ANIM_DEBUG=1`) : `tick` journalise alors
+/// l'intervalle réel entre deux images pendant un fondu (16,7 ms = 60 Hz).
+fn anim_debug() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| std::env::var_os("GLAUNCHER_ANIM_DEBUG").is_some())
+}
 
 /// Vignette de remplacement, à la taille et à la forme d'une vraie cover.
 const COVER_SAMPLE: &[u8] = include_bytes!("../assets/cover-sample.png");
@@ -2504,11 +2521,23 @@ impl App {
         let mut tasks = Vec::new();
         let now = std::time::Instant::now();
         // pas de temps borné : une image lente ne fait pas sauter l'animation
-        let dt = now
-            .duration_since(self.last_tick)
-            .as_secs_f32()
-            .clamp(0.001, 0.05);
+        let ecoule = now.duration_since(self.last_tick).as_secs_f32();
+        let dt = ecoule.clamp(0.001, 0.05);
         self.last_tick = now;
+
+        // Sonde de fluidité (`GLAUNCHER_ANIM_DEBUG=1`) : intervalle RÉEL entre
+        // deux images pendant un fondu (16,7 ms = 60 Hz ; au-delà de ~20 ms
+        // l'œil voit une saccade). Sert à trancher entre « c'est l'animation
+        // qui rame » et « c'est le compositeur ».
+        if anim_debug() && (self.fade < 0.999 || (self.fade - self.fade_target).abs() > 0.001) {
+            eprintln!(
+                "glauncher : image {} ms (fade {:.3} → {:.1}, page {:.2})",
+                (ecoule * 1000.0).round(),
+                self.fade,
+                self.fade_target,
+                self.page_fade
+            );
+        }
 
         // Poussière et respiration : le temps avance du pas RÉEL quand la
         // fenêtre fournit les images (`window::frames`, 60 Hz). Quand le
@@ -2777,7 +2806,10 @@ impl App {
     /// Animation du changement de taille : échelle et décalage à appliquer à la
     /// vignette `index` pour qu'elle parte de son ancienne case et arrive à la
     /// nouvelle. `None` au repos (aucune transformation, aucun coût).
-    fn zoom_pose(&self, index: usize) -> Option<(f32, Vector)> {
+    /// `pivot` = point fixe de la transformation, en coordonnées locales à la
+    /// vignette (son coin haut-gauche pour origine) : le même que celui des
+    /// `Pose` de la carte, sinon la cover arriverait à côté de sa case.
+    fn zoom_pose(&self, index: usize, pivot: Vector) -> Option<(f32, Vector)> {
         let zoom = self.zoom.as_ref()?;
         if !matches!(self.config.view, ViewMode::Grid | ViewMode::Mosaic) {
             return None;
@@ -2788,7 +2820,7 @@ impl App {
             return None;
         }
         let e = ease_reveal((zoom.elapsed / zoom_seconds()).clamp(0.0, 1.0));
-        Some(zoom_transform(&old_art, &card, &art, e))
+        Some(zoom_transform(&old_art, &card, &art, card.position() + pivot, e))
     }
 
     /// Case d'une vignette dans la disposition courante, mosaïque comprise.
@@ -2808,6 +2840,16 @@ impl App {
     /// le cadre du canvas, qui doivent grossir **exactement** ensemble.
     fn breath_factor(&self) -> f32 {
         sparkles::breath_factor(self.sparkles.time(), self.breath_pulses())
+    }
+
+    /// Distance verticale entre le centre d'une vignette et celui de son titre,
+    /// c'est-à-dire le point autour duquel la respiration grossit : le titre
+    /// reste immobile (aucune re-rasterisation, aucun saut d'un pixel), la
+    /// vignette monte au-dessus de son nom.
+    fn caption_pivot(&self) -> f32 {
+        let (_, art_width, _) = self.metrics();
+        let art_height = art_width * ART_RATIO;
+        PADDING + art_height + caption_middle() - self.row_height() * 0.5
     }
 
     /// La vignette sélectionnée respire-t-elle ? Sert au facteur d'échelle
@@ -2842,17 +2884,21 @@ impl App {
         }
         self.games.get(self.selected)?;
         let (card, art) = self.slot_rect(self.selected)?;
+        // pivot de la carte (centre du titre), en coordonnées locales à la case
+        let pivot = Vector::new(card.width * 0.5, card.height * 0.5 + self.caption_pivot());
         // la glissade du changement de taille s'applique au cadre comme à la
         // carte, sinon il resterait à la nouvelle place pendant que l'image
         // arrive de l'ancienne
-        let (zoom_scale, zoom_offset) = self.zoom_pose(self.selected).unwrap_or((1.0, Vector::ZERO));
+        let (zoom_scale, zoom_offset) =
+            self.zoom_pose(self.selected, pivot).unwrap_or((1.0, Vector::ZERO));
+        let breath = self.breath_factor();
         Some(sparkles::Breath {
-            card,
+            pivot: card.position() + pivot,
             art,
             radius: CARD_RADIUS,
             frame_color: ACCENT,
             frame_width: FOCUS_BORDER,
-            factor: self.breath_factor() * zoom_scale,
+            factor: breath * zoom_scale,
             offset: zoom_offset,
         })
     }
@@ -5200,22 +5246,55 @@ impl App {
                 .color(MUTED)
                 .into()
         };
-        let body = column![art, title].spacing(6).align_x(Alignment::Center);
+        // Respiration : la vignette grossit, le TITRE NON. iced re-rasterise un
+        // texte à chaque changement de taille (`text.size × scale_factor`) :
+        // une lettre de 17 px qui suit l'échelle par pas de 1 px se met à
+        // scintiller et à sauter alors que la cover glisse en sub-pixel
+        // (mesuré 22/11 : lignes du texte qui apparaissent/disparaissent).
+        // Le titre est donc posé HORS de toute transformation : seuls le fond
+        // de la vignette et son visuel sont grossis, autour du centre du titre
+        // (`Pose::pivot`), qui devient le point fixe de l'animation — la
+        // vignette monte au-dessus de son nom, le nom ne bouge pas.
+        let breath = if selected { self.breath_factor() } else { 1.0 };
+        let largeur = cell - 2.0 * self.cell_inset();
+        let hauteur = self.row_height();
+        let pivot = Vector::new(largeur * 0.5, PADDING + art_height + caption_middle());
+        let (zoom_scale, zoom_offset) = self
+            .zoom_pose(index, pivot)
+            .unwrap_or((1.0, Vector::ZERO));
+        let scale = breath * zoom_scale;
 
         // Le canvas dessine le cadre de la vignette sélectionnée (il doit
         // grossir avec elle) : la carte garde l'épaisseur pour la mise en page
         // mais la peint en transparent.
         let canvas_frame = self.canvas_frame() && selected && !self.returning;
-        let cell = container(body)
-            .width(Length::Fixed(cell - 2.0 * self.cell_inset()))
-            // hauteur IMPOSÉE par le calcul de défilement (`row_height`) : sans
-            // ça la hauteur réelle (celle du texte de titre) divergeait de
-            // quelques pixels et le cadre du canvas dérivait de rangée en rangée
-            .height(Length::Fixed(self.row_height()))
-            .padding(PADDING)
-            .style(move |_| card_style(selected, canvas_frame));
+        let visuel = Pose::new(art)
+            // même point de l'écran que le fond, exprimé dans SES coordonnées
+            .pivot(Point::new(art_width * 0.5, art_height + caption_middle()))
+            .scale(scale)
+            .offset(zoom_offset);
+        let contenu = container(
+            column![visuel, title]
+                .spacing(TITLE_GAP)
+                .align_x(Alignment::Center),
+        )
+        .width(Length::Fixed(largeur))
+        // hauteur IMPOSÉE par le calcul de défilement (`row_height`) : sans
+        // ça la hauteur réelle (celle du texte de titre) divergeait de
+        // quelques pixels et le cadre du canvas dérivait de rangée en rangée
+        .height(Length::Fixed(hauteur))
+        .padding(PADDING);
+        let fond = Pose::new(
+            container(Row::new())
+                .width(Length::Fixed(largeur))
+                .height(Length::Fixed(hauteur))
+                .style(move |_| card_style(selected, canvas_frame)),
+        )
+        .pivot(Point::new(pivot.x, pivot.y))
+        .scale(scale)
+        .offset(zoom_offset);
 
-        let card: Element<'_, Message> = mouse_area(cell)
+        let card: Element<'_, Message> = mouse_area(stack![fond, contenu])
             .on_press(Message::CardClicked(index))
             .into();
         // Retour de jeu : la vignette revient de son côté de l'écran en
@@ -5227,20 +5306,6 @@ impl App {
                 .scale(scale)
                 .offset(Vector::new(dx, 0.0))
                 .into();
-        }
-        // Respiration : la vignette ENTIÈRE grossit d'un bloc — fond bleu de
-        // sélection, cover, tranche, étoile et titre — donc le halo de
-        // sélection suit enfin l'image (constaté 20/11). Le cadre d'accent est
-        // peint par le canvas à la même échelle, par-dessus.
-        // Changement de taille : la même `Pose` porte la glissade (position et
-        // échelle) ; les deux se multiplient sans se marcher dessus.
-        let breath = if selected { self.breath_factor() } else { 1.0 };
-        let (zoom_scale, zoom_offset) = self
-            .zoom_pose(index)
-            .unwrap_or((1.0, Vector::ZERO));
-        let scale = breath * zoom_scale;
-        if (scale - 1.0).abs() > 0.0001 || zoom_offset != Vector::ZERO {
-            return Pose::new(card).scale(scale).offset(zoom_offset).into();
         }
         card
     }
@@ -5314,7 +5379,9 @@ impl App {
             .on_press(Message::CardClicked(index))
             .into();
         // changement de taille : la tuile glisse et grandit comme en grille
-        if let Some((scale, offset)) = self.zoom_pose(index) {
+        // (mosaïque : pas de titre, le pivot reste le centre de la tuile)
+        let pivot = Vector::new(cell * 0.5, cell * ART_RATIO * 0.5);
+        if let Some((scale, offset)) = self.zoom_pose(index, pivot) {
             return Pose::new(card).scale(scale).offset(offset).into();
         }
         card
@@ -5708,21 +5775,25 @@ fn visible_items(
 /// Échelle et décalage d'une vignette pendant la glissade d'un changement de
 /// taille : `e` va de 0 (elle est encore à sa case d'avant) à 1 (elle a rejoint
 /// la nouvelle). L'échelle part du rapport des **covers** (c'est l'image qu'on
-/// regarde) et le décalage est calculé sur le centre de la cover, pas sur celui
-/// de la case : à `e = 0`, la cover dessinée avec cette pose occupe EXACTEMENT
-/// son ancien rectangle (la case suit à quelques pixels près).
+/// regarde) et le décalage est calculé sur le centre de la cover, pas sur le
+/// pivot : à `e = 0`, la cover dessinée avec cette pose occupe EXACTEMENT son
+/// ancien rectangle (la case suit à quelques pixels près).
+///
+/// `pivot` (écran) est le point fixe des `Pose` de la carte. Passer le centre de
+/// la case pour un pivot au centre de la case reproduit le calcul d'origine.
 fn zoom_transform(
     old_art: &Rectangle,
-    card: &Rectangle,
+    _card: &Rectangle,
     art: &Rectangle,
+    pivot: Point,
     e: f32,
 ) -> (f32, Vector) {
     let start = old_art.width / art.width;
     let scale = start + (1.0 - start) * e;
-    // la cover n'est pas au centre de la case (marge interne) : son centre est
-    // décalé de `shift`, que la mise à l'échelle déplace aussi
-    let shift = art.center() - card.center();
-    let offset = (old_art.center() - card.center() - shift * scale) * (1.0 - e);
+    // la cover n'est pas au pivot (marge interne, ligne de titre) : son centre
+    // est décalé de `shift`, que la mise à l'échelle déplace aussi
+    let shift = art.center() - pivot;
+    let offset = (old_art.center() - pivot - shift * scale) * (1.0 - e);
     (scale, offset)
 }
 
@@ -6049,26 +6120,28 @@ mod tests {
         let old_art = Rectangle::new(Point::new(100.0, 60.0), Size::new(218.0, 327.0));
         let card = Rectangle::new(Point::new(400.0, 300.0), Size::new(292.0, 480.0));
         let art = Rectangle::new(Point::new(412.0, 312.0), Size::new(250.0, 375.0));
+        // pivot de la respiration : centre du titre, sous la cover
+        let pivot = Point::new(card.center().x, art.y + art.height + 18.0);
 
         // e = 0 : la cover est encore exactement à son ancienne place et taille
-        let (scale, offset) = zoom_transform(&old_art, &card, &art, 0.0);
+        let (scale, offset) = zoom_transform(&old_art, &card, &art, pivot, 0.0);
         assert!((scale - 218.0 / 250.0).abs() < 1e-4, "échelle de départ {scale}");
-        let centre = card.center() + offset + (art.center() - card.center()) * scale;
+        let centre = pivot + offset + (art.center() - pivot) * scale;
         assert!((centre.x - old_art.center().x).abs() < 0.01, "x {centre:?}");
         assert!((centre.y - old_art.center().y).abs() < 0.01, "y {centre:?}");
         assert!((art.width * scale - old_art.width).abs() < 0.01);
         assert!((art.height * scale - old_art.height).abs() < 0.01);
 
         // e = 1 : aucune transformation, la cover est à sa nouvelle place
-        let (scale, offset) = zoom_transform(&old_art, &card, &art, 1.0);
+        let (scale, offset) = zoom_transform(&old_art, &card, &art, pivot, 1.0);
         assert!((scale - 1.0).abs() < 1e-6);
         assert_eq!(offset, Vector::ZERO);
 
         // entre les deux : l'écart se referme, sans dépassement
-        let mut precedent = zoom_transform(&old_art, &card, &art, 0.0);
+        let mut precedent = zoom_transform(&old_art, &card, &art, pivot, 0.0);
         for step in 1..=40 {
             let e = step as f32 / 40.0;
-            let (scale, offset) = zoom_transform(&old_art, &card, &art, e);
+            let (scale, offset) = zoom_transform(&old_art, &card, &art, pivot, e);
             assert!(scale >= 218.0 / 250.0 - 1e-4 && scale <= 1.0 + 1e-4, "{e} : {scale}");
             assert!(offset.x.abs() <= precedent.1.x.abs() + 1e-3, "{e} : {offset:?}");
             assert!(offset.y.abs() <= precedent.1.y.abs() + 1e-3, "{e} : {offset:?}");

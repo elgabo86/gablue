@@ -5,21 +5,31 @@
 //! un titre long ne peut donc pas élargir la vignette ni empiéter sur la
 //! voisine.
 //!
-//! Défilement « intelligent » : pause au début (on lit le nom), descente
-//! jusqu'au dernier caractère, pause, retour — et seulement si le texte
-//! dépasse vraiment. Un titre qui tient est simplement centré, sans
-//! transformation ni découpe.
+//! Défilement **continu** : pause au début (on lit le nom), puis descente
+//! régulière vers la gauche ; la fin du nom est suivie d'un blanc (`GAP`) et du
+//! début du nom qui revient par la droite — le texte ne remonte jamais en
+//! arrière. Seulement si le texte dépasse vraiment : un titre qui tient est
+//! simplement centré, sans transformation ni découpe.
+//!
+//! Piège mesuré le 22/11 : `with_layer(bande)` + `with_transformation(dx)`
+//! applique `dx` **deux fois** au cadrage du texte (iced multiplie le
+//! `viewport` reçu par la transformation courante, `iced_wgpu::text`), donc la
+//! bande rétrécissait à mesure que le texte défilait — la fin du nom restait
+//! vide. On passe donc au contenu une bande décalée de `−dx` pour que le
+//! cadrage effectif reste la bande.
 //!
 //! L'horloge vient de `App::tick` (aucun temps stocké ici) : quand plus rien
 //! ne défile, plus aucune image n'est demandée au moteur.
 
 use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Layout, Shell, layout, renderer};
-use iced::{Element, Length, Rectangle, Size, Transformation, mouse};
+use iced::{Element, Length, Point, Rectangle, Size, Transformation, mouse};
 
-/// Pause à chaque extrémité (s) et vitesse de défilement (px par seconde).
+/// Pause avant le départ (s) et vitesse de défilement (px par seconde).
 const PAUSE: f32 = 1.2;
 const SPEED: f32 = 34.0;
+/// Blanc entre la fin du nom et le début qui revient par la droite.
+const GAP: f32 = 48.0;
 
 /// Enveloppe qui recadre son contenu et le fait défiler horizontalement quand
 /// il ne tient pas dans la largeur offerte.
@@ -148,14 +158,29 @@ where
             return;
         }
 
-        // trop large : on découpe à la bande et on fait défiler
-        let dx = -travel(width - bounds.width, self.elapsed);
+        // trop large : on découpe à la bande et on fait défiler sans fin
+        let avance = travel(width, self.elapsed);
         renderer.with_layer(bounds, |renderer| {
-            renderer.with_transformation(Transformation::translate(dx, 0.0), |renderer| {
-                self.content.as_widget().draw(
-                    tree, renderer, theme, style, child, cursor, &bounds,
+            // deux exemplaires du nom, espacés de la longueur + le blanc : le
+            // second est celui qui « revient par la droite »
+            for decalage in [avance, avance - width - GAP] {
+                let dx = -decalage;
+                let debut = child.bounds().x + dx;
+                if debut > bounds.x + bounds.width || debut + width < bounds.x {
+                    continue; // copie entièrement hors bande
+                }
+                // cadrage : `dx` est appliqué une seconde fois par iced, on
+                // annule donc ici pour que la bande reste la bande
+                let cadrage = Rectangle::new(
+                    Point::new(bounds.x - dx, bounds.y),
+                    bounds.size(),
                 );
-            });
+                renderer.with_transformation(Transformation::translate(dx, 0.0), |renderer| {
+                    self.content.as_widget().draw(
+                        tree, renderer, theme, style, child, cursor, &cadrage,
+                    );
+                });
+            }
         });
     }
 
@@ -185,21 +210,16 @@ where
     }
 }
 
-/// Distance parcourue à `elapsed` secondes pour un débordement de `overflow`
-/// pixels : 0 au départ, `overflow` au bout, puis retour. Aucun saut.
-fn travel(overflow: f32, elapsed: f32) -> f32 {
-    let cross = overflow / SPEED;
-    let cycle = 2.0 * (PAUSE + cross);
-    let t = elapsed.rem_euclid(cycle);
-    if t < PAUSE {
-        0.0
-    } else if t < PAUSE + cross {
-        (t - PAUSE) * SPEED
-    } else if t < 2.0 * PAUSE + cross {
-        overflow
-    } else {
-        overflow - (t - 2.0 * PAUSE - cross) * SPEED
+/// Avance du nom à `elapsed` secondes : `0` pendant la pause de départ (on lit
+/// le début), puis défilement continu — la fin sort à gauche, le début revient
+/// par la droite après `GAP`, sur une période de `width + GAP` pixels. Aucun
+/// saut, aucun retour en arrière.
+fn travel(width: f32, elapsed: f32) -> f32 {
+    let periode = width + GAP;
+    if periode <= 0.0 {
+        return 0.0;
     }
+    ((elapsed - PAUSE).max(0.0) * SPEED) % periode
 }
 
 impl<'a, Message, Theme, Renderer> From<Marquee<'a, Message, Theme, Renderer>>
@@ -220,24 +240,33 @@ mod tests {
 
     #[test]
     fn le_defilement_reste_dans_les_bornes() {
-        let overflow = 120.0;
-        // départ en pause, texte au début
-        assert_eq!(travel(overflow, 0.0), 0.0);
-        assert_eq!(travel(overflow, PAUSE - 0.01), 0.0);
+        let width = 320.0;
+        let periode = width + GAP;
+        // départ en pause, nom au début
+        assert_eq!(travel(width, 0.0), 0.0);
+        assert_eq!(travel(width, PAUSE - 0.01), 0.0);
 
         let mut previous: f32 = 0.0;
         let mut top: f32 = 0.0;
-        for step in 0..6000 {
-            let x = travel(overflow, step as f32 * 0.01);
-            assert!((0.0..=overflow).contains(&x), "x : {x}");
-            // pas de saut d'une image à l'autre (10 ms)
-            assert!((x - previous).abs() <= SPEED * 0.011, "saut : {previous} → {x}");
+        for step in 0..9000 {
+            let x = travel(width, step as f32 * 0.01);
+            assert!((0.0..periode).contains(&x), "x : {x}");
+            // pas de saut d'une image à l'autre (10 ms), sauf le passage de
+            // fin de période où l'on repart de 0 (le nom suivant prend la suite)
+            let saut = (x - previous).abs();
+            assert!(
+                saut <= SPEED * 0.011 || saut > periode - SPEED * 0.02,
+                "saut : {previous} → {x}"
+            );
             previous = x;
             top = top.max(x);
         }
-        // le dernier caractère est bien atteint, puis on revient au début
-        assert!((top - overflow).abs() < 0.01, "sommet : {top}");
-        let cycle = 2.0 * (PAUSE + overflow / SPEED);
-        assert!(travel(overflow, cycle - 0.001) < 0.05, "retour au début");
+        // la fin du nom sort bien de la bande (l'avance atteint sa largeur)
+        assert!(top >= width, "avance maximale : {top}");
+        // deux tours plus tard, on est revenu au même point
+        let tour = periode / SPEED;
+        let a = travel(width, PAUSE + 0.5 + tour);
+        let b = travel(width, PAUSE + 0.5 + 2.0 * tour);
+        assert!((a - b).abs() < 0.01, "période : {a} vs {b}");
     }
 }

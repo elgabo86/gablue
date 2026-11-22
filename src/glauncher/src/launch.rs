@@ -78,7 +78,7 @@ pub fn run(launch: &Launch, cache: &Path, slug: &str, key: &str, nom: &str) -> R
         .map_err(|err| format!("attente de la fin du jeu : {err}"))?;
 
     kwin_stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    kwin::release();
+    kwin::release(cache);
 
     Ok(status.code().unwrap_or(-1))
 }

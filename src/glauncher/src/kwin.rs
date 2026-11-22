@@ -109,7 +109,7 @@ pub fn watch(root_pid: u32, cache: &Path, slug: &str, key: &str, nom: &str) -> A
                 waited += step;
             }
 
-            release();
+            release(&cache);
 
             // le jeu est fini : l'overlay ne doit plus afficher son logo. Le
             // fichier n'est retiré que s'il est encore le nôtre (deux
@@ -212,8 +212,13 @@ fn publier(
     }
 }
 
-/// Décharge le script (le jeu est terminé).
-pub fn release() {
+/// Décharge le script (le jeu est terminé) et rend la fenêtre du launcher au
+/// bureau si le script n'a pas eu le temps de le faire.
+pub fn release(cache: &Path) {
+    // le script de surveillance est déchargé AVANT le nettoyage : son minuteur
+    // reposait `keepAbove` sur l'écran noir (toutes les 20 ms), et le laisser
+    // tourner juste après `uncurtain` pouvait remettre le launcher au-dessus de
+    // tout jusqu'à la partie suivante
     let current = CURRENT.lock().ok().and_then(|mut slot| slot.take());
     if let Some(name) = current {
         unload(&name);
@@ -221,6 +226,9 @@ pub fn release() {
     // relève d'une version précédente : le nom sans numéro est resté chargé
     // si le launcher a été mis à jour pendant une partie
     unload(PLUGIN_PREFIX);
+    if let Err(error) = uncurtain(cache) {
+        eprintln!("glauncher : nettoyage KWin impossible : {error}");
+    }
 }
 
 /// Décharge le script laissé par une session précédente tuée en pleine partie.
@@ -291,7 +299,7 @@ fn apply(cache: &Path, pids: &[u32]) -> Result<(), String> {
 
 /// Script KWin : plein écran sur les fenêtres normales des PID du jeu.
 ///
-/// Deux précautions, apprises à la mesure (18/11) :
+/// Trois précautions, apprises à la mesure (18/11 et 22/11) :
 /// - le plein écran n'est posé qu'une fois, pendant les 3 premières secondes
 ///   d'une fenêtre : retiré ensuite (F, overlay manette), il n'est **pas**
 ///   remis ;
@@ -299,7 +307,14 @@ fn apply(cache: &Path, pids: &[u32]) -> Result<(), String> {
 ///   du launcher reste la fenêtre active. Plasma ne cache ses panneaux que pour
 ///   une fenêtre active plein écran, et le client (wine) met quelques
 ///   centaines de ms à obéir : sans ça on voit la barre entre l'écran noir et
-///   le jeu.
+///   le jeu ;
+/// - la barre se voit quand même **une ou deux images** au moment où la fenêtre
+///   du jeu arrive (mesuré 22/11 : 2 images sur 599 à 20 i/s, ~100 ms, la
+///   barre dessinée par-dessus l'écran noir). KWin ne réempile le plein écran
+///   qu'à l'image suivante : on pose donc `keepAbove` sur l'écran noir et sur
+///   la fenêtre du jeu le temps de la transition (la couche « Above » de KWin
+///   passe devant les panneaux, y compris une barre toujours visible), puis on
+///   le retire — aucun fichier de config Plasma n'est touché.
 fn script_body(pids: &[u32], launcher_pid: u32) -> String {
     let list = pids
         .iter()
@@ -314,7 +329,16 @@ const LAUNCHER = {launcher_pid};
 const vues = {{}};
 // démarrage toléré pour imposer le plein écran (le client met du temps)
 const JEUNE = 3000;
+// délai pendant lequel une fenêtre plein écran reste au-dessus de la barre
+// après être devenue active (le temps que KWin réempile)
+const GRACE = 400;
+// garde-fou : aucune fenêtre de jeu ne reste au-dessus au-delà
+const MAX_AU_DESSUS = 8000;
 let attente = null;
+// fenêtres rendues au bureau : ne plus les poser au-dessus de la barre
+const rendues = {{}};
+// début du délai de grâce, par fenêtre
+const auDessus = {{}};
 
 function cle(w) {{
     return String(w.internalId || (w.caption + "|" + w.pid));
@@ -333,13 +357,36 @@ function fenetreLauncher() {{
     return null;
 }}
 
+// La couche « Above » de KWin est dessinée devant les panneaux (mesuré : une
+// fenêtre keepAbove couvre la barre même sans plein écran). C'est ce qui évite
+// l'image de barre au moment où la fenêtre du jeu arrive.
+function devantLaBarre(w, oui) {{
+    if (w && w.keepAbove !== oui) w.keepAbove = oui;
+}}
+
+// La fenêtre du launcher redevient une fenêtre comme les autres : le jeu prend
+// le dessus.
+function decouvrir() {{
+    devantLaBarre(fenetreLauncher(), false);
+}}
+
 // Vrai si la fenêtre du jeu est maintenant plein écran : on lui rend la main.
 function rendreMain(jeu) {{
     if (attente) {{
         attente.stop();
         attente = null;
     }}
+    decouvrir();
     workspace.activeWindow = jeu;
+}}
+
+// Le jeu est devant : on lui rend l'état normal (Alt-Tab doit fonctionner).
+function rendreAuBureau(w, k) {{
+    devantLaBarre(w, false);
+    rendues[k] = true;
+    auDessus[k] = undefined;
+    decouvrir();
+    console.info("glauncher : barre Plasma rendue au bureau");
 }}
 
 // Garde l'écran noir actif tant que la fenêtre du jeu n'est pas plein écran.
@@ -367,14 +414,23 @@ function traiter(w) {{
     if (!estJeu(w)) return;
     const k = cle(w);
     const debut = vues[k] !== undefined ? vues[k] : (vues[k] = Date.now());
+    const age = Date.now() - debut;
     // passé le démarrage, la fenêtre appartient à l'utilisateur : un plein
     // écran retiré (F, overlay manette) doit le rester
-    if (Date.now() - debut > JEUNE) return;
-    if (!w.fullScreen) {{
+    if (age <= JEUNE && !w.fullScreen) {{
         console.info("glauncher : plein écran sur « " + w.caption + " »");
         w.fullScreen = true;
     }}
+    if (!rendues[k] && !w.keepAbove) devantLaBarre(w, true);
     couvrir(w);
+    if (rendues[k]) return;
+    if (w.fullScreen && w === workspace.activeWindow) {{
+        if (auDessus[k] === undefined) auDessus[k] = Date.now();
+        else if (Date.now() - auDessus[k] > GRACE) rendreAuBureau(w, k);
+    }} else {{
+        auDessus[k] = undefined;
+    }}
+    if (age > MAX_AU_DESSUS) rendreAuBureau(w, k);
 }}
 
 function sweep() {{
@@ -383,6 +439,8 @@ function sweep() {{
 }}
 
 sweep();
+// l'écran noir couvre la barre pendant tout le démarrage du jeu
+devantLaBarre(fenetreLauncher(), true);
 const added = workspace.windowAdded ? workspace.windowAdded : workspace.clientAdded;
 if (added && added.connect) added.connect(traiter);
 const activated = workspace.windowActivated ? workspace.windowActivated : workspace.clientActivated;
@@ -393,6 +451,58 @@ const timer = new QTimer();
 timer.interval = 200;
 timer.timeout.connect(sweep);
 timer.start();
+"#
+    )
+}
+
+/// Remet la fenêtre du launcher dans le bureau (`keepAbove` retiré) : filet de
+/// sécurité quand la partie se termine avant que le script n'ait rendu la main
+/// (jeu qui plante aussitôt), sinon le launcher resterait au-dessus de tout.
+///
+/// Le nom du script porte un compteur : KWin refuse (-1) un nom déjà chargé, et
+/// un même `release` peut suivre un lancement avorté (constaté 22/11 : le
+/// nettoyage ne passait jamais, « KWin a refusé le script de nettoyage »).
+fn uncurtain(cache: &Path) -> Result<(), String> {
+    static RELOAD: AtomicUsize = AtomicUsize::new(0);
+    let script = cache.join("kwin-uncurtain.js");
+    std::fs::write(&script, uncurtain_body(std::process::id()))
+        .map_err(|err| format!("{} : {err}", script.display()))?;
+    let reload = RELOAD.fetch_add(1, Ordering::Relaxed) + 1;
+    let name = format!("glauncher-uncurtain-{}-{reload}", std::process::id());
+    let id = dbus(&[
+        "org.kde.KWin",
+        "/Scripting",
+        "org.kde.kwin.Scripting.loadScript",
+        &script.display().to_string(),
+        &name,
+    ])?;
+    if id.trim() == "-1" || id.trim().is_empty() {
+        return Err(format!("KWin a refusé le script de nettoyage ({name})"));
+    }
+    dbus(&["org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting.start"])?;
+    let resultat = dbus(&[
+        "org.kde.KWin",
+        &format!("/Scripting/Script{}", id.trim()),
+        "org.kde.kwin.Script.run",
+    ]);
+    // le script a fait son travail : ne pas en laisser un par partie dans KWin
+    unload(&name);
+    resultat.map(|_| ())
+}
+
+/// Script de nettoyage : le launcher redevient une fenêtre ordinaire.
+fn uncurtain_body(launcher_pid: u32) -> String {
+    format!(
+        r#"// généré par glauncher — filet de sécurité (ne pas éditer)
+const LAUNCHER = {launcher_pid};
+const list = workspace.windowList ? workspace.windowList() : workspace.clientList();
+for (let i = 0; i < list.length; i++) {{
+    const w = list[i];
+    if (Number(w.pid) === LAUNCHER && w.keepAbove) {{
+        w.keepAbove = false;
+        console.info("glauncher : barre Plasma rendue au bureau");
+    }}
+}}
 "#
     )
 }
@@ -593,6 +703,32 @@ mod tests {
         );
         assert!(body.contains("timer.interval = 200"), "relance périodique");
         assert!(body.contains("timer.start()"), "la relance est armée");
+    }
+
+    #[test]
+    fn script_couvre_la_barre_par_keep_above() {
+        let body = script_body(&[12], 99);
+        assert!(
+            body.contains("function devantLaBarre"),
+            "la barre se couvre par la couche Above, pas par la config Plasma"
+        );
+        assert!(body.contains("w.keepAbove = oui"), "le drapeau est posé ET retiré");
+        assert!(body.contains("devantLaBarre(fenetreLauncher(), true)"), "écran noir au-dessus");
+        assert!(body.contains("GRACE = 400"), "rendu au bureau après réempilement");
+        assert!(body.contains("MAX_AU_DESSUS = 8000"), "garde-fou contre un Alt-Tab cassé");
+        assert!(body.contains("function decouvrir"), "l'écran noir est découvert au passage");
+        assert!(
+            body.contains("rendues[k] = true"),
+            "une fenêtre rendue au bureau n'est plus reposée au-dessus"
+        );
+    }
+
+    #[test]
+    fn nettoyage_retire_keep_above_du_launcher() {
+        let body = uncurtain_body(4242);
+        assert!(body.contains("const LAUNCHER = 4242;"));
+        assert!(body.contains("w.keepAbove = false"));
+        assert!(body.contains("Number(w.pid) === LAUNCHER"));
     }
 
     #[test]

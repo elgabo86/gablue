@@ -89,14 +89,14 @@ pub struct Sparkles {
     time: f32,
 }
 
-/// Sélection qui respire : la **vignette entière** (fond bleu, cover, tranche,
-/// étoile et titre) est grossie par la carte elle-même (`Pose`), et le canvas
-/// ne fait que redessiner le cadre d'accent autour de la cover, à la même
-/// échelle et autour du même centre.
+/// Sélection qui respire : le fond de la vignette et son visuel grossissent par
+/// la carte elle-même (`Pose`), et le canvas redessine le cadre d'accent autour
+/// de la cover, à la même échelle et autour du même point fixe — le centre du
+/// titre, qui ne bouge pas (voir `App::card`).
 #[derive(Clone)]
 pub struct Breath {
-    /// Vignette entière (cadre, marge interne, cover, titre).
-    pub card: Rectangle,
+    /// Point fixe de l'échelle, dans la fenêtre : centre du titre.
+    pub pivot: Point,
     /// Rectangle de l'image dans la fenêtre.
     pub art: Rectangle,
     /// Rayon des coins de la vignette.
@@ -319,11 +319,12 @@ pub fn breath_factor(time: f32, pulse: bool) -> f32 {
 }
 
 /// Dessine le **cadre d'accent** autour de la cover, grossi de `factor` autour
-/// du centre de la vignette — exactement la transformation que la carte
-/// applique elle-même (`Pose`), donc le cadre reste collé à l'image qui respire.
+/// du même point fixe que la carte (le centre du titre) — exactement la
+/// transformation qu'elle applique (`Pose`), donc le cadre reste collé à l'image
+/// qui respire.
 ///
-/// Seul le cadre vient du canvas : le fond bleu, la cover, la tranche, l'étoile
-/// et le titre sont grossis par la carte, ce qui laisse le cadre au-dessus de
+/// Seul le cadre vient du canvas : le fond de la vignette, la cover, la tranche
+/// et l'étoile sont grossis par la carte, ce qui laisse le cadre au-dessus de
 /// l'image (une géométrie dessinée après l'arbre). Le cadre entoure la cover,
 /// pas le titre (demandé le 20/11).
 fn draw_breath(shapes: &mut Frame, breath: &Breath, bounds: Rectangle) {
@@ -337,7 +338,7 @@ fn draw_breath(shapes: &mut Frame, breath: &Breath, bounds: Rectangle) {
     }
 
     let factor = breath.factor;
-    let middle = breath.card.center() + breath.offset;
+    let middle = breath.pivot + breath.offset;
     let art = breath.art;
     let center = art.center() + breath.offset;
     let art = Rectangle::new(

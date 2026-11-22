@@ -10,12 +10,13 @@
 //!
 //! Sert à trois choses : la plongée de la page au lancement d'un jeu, le
 //! retour des vignettes depuis les bords (`App::comeback`) et la respiration
-//! de la vignette sélectionnée (fond, cover, tranche, étoile et titre grossis
-//! d'un bloc, le canvas ne peignant que le cadre d'accent par-dessus).
+//! de la vignette sélectionnée (fond, cover, tranche et étoile grossis autour
+//! du centre du TITRE, qui n'est jamais transformé : un texte re-rasterisé à
+//! chaque taille scintille — le canvas ne peint que le cadre d'accent).
 
 use iced::advanced::widget::{Tree, Widget, tree};
 use iced::advanced::{Clipboard, Layout, Shell, layout, renderer};
-use iced::{Element, Event, Length, Rectangle, Size, Transformation, Vector, mouse};
+use iced::{Element, Event, Length, Point, Rectangle, Size, Transformation, Vector, mouse};
 
 /// Enveloppe transparente : mêmes dimensions et même mise en page que son
 /// contenu, dessiné avec une échelle et un décalage.
@@ -23,6 +24,7 @@ pub struct Pose<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     scale: f32,
     offset: Vector,
+    pivot: Option<Point>,
 }
 
 impl<'a, Message, Theme, Renderer> Pose<'a, Message, Theme, Renderer> {
@@ -31,7 +33,18 @@ impl<'a, Message, Theme, Renderer> Pose<'a, Message, Theme, Renderer> {
             content: content.into(),
             scale: 1.0,
             offset: Vector::ZERO,
+            pivot: None,
         }
+    }
+
+    /// Point fixe de l'échelle, en coordonnées **locales** au contenu (son coin
+    /// haut-gauche est l'origine ; il peut tomber hors des bornes). Sans lui,
+    /// l'échelle part du centre. Deux `Pose` différents qui doivent grossir
+    /// autour du MÊME point de l'écran (le fond d'une vignette et sa cover) le
+    /// reçoivent chacun dans ses propres coordonnées.
+    pub fn pivot(mut self, pivot: Point) -> Self {
+        self.pivot = Some(pivot);
+        self
     }
 
     /// Échelle appliquée autour du centre du contenu (1 = taille normale).
@@ -121,7 +134,10 @@ where
         }
 
         let bounds = layout.bounds();
-        let middle = bounds.center();
+        let middle = match self.pivot {
+            Some(pivot) => Point::new(bounds.x + pivot.x, bounds.y + pivot.y),
+            None => bounds.center(),
+        };
         let transformation = Transformation::translate(
             middle.x + self.offset.x,
             middle.y + self.offset.y,
