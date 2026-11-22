@@ -599,14 +599,27 @@ pub fn resolve(opts: &Options) -> (Config, Option<String>) {
 /// cette version ne connaît pas.
 pub fn save_game_dirs(path: &Path, dirs: &[String]) -> Result<(), String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    let updated = rewrite_game_dirs(&text, dirs);
+    write_atomic(path, &rewrite_game_dirs(&text, dirs))
+}
+
+/// Écrit la musique de fond (`music`, `music_volume`) dans `config.toml`, avec
+/// le même contrat que `save_game_dirs` : seules ces deux clés changent,
+/// commentaires, ordre et clés inconnues sont conservés. Gablue Manager écrit
+/// les mêmes clés (case « Jouer une musique de fond » et curseur « Volume » de
+/// l'onglet Lancement de jeux) : les deux écrivains restent interchangeables.
+pub fn save_music(path: &Path, music: bool, volume: u8) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    write_atomic(path, &rewrite_music(&text, music, volume))
+}
+
+/// Temporaire + renommage : le manager lit ce fichier, il ne doit jamais voir
+/// un état à moitié écrit.
+fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| format!("{} : {err}", parent.display()))?;
     }
-    // temporaire + rename : le manager lit ce fichier, il ne doit jamais voir
-    // un état à moitié écrit
     let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, updated).map_err(|err| format!("{} : {err}", tmp.display()))?;
+    std::fs::write(&tmp, text).map_err(|err| format!("{} : {err}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|err| format!("{} : {err}", path.display()))
 }
 
@@ -640,7 +653,81 @@ fn brackets_open(text: &str) -> bool {
 
 /// Contenu de `config.toml` avec `game_dirs` remplacé (ou ajouté).
 pub fn rewrite_game_dirs(text: &str, dirs: &[String]) -> String {
-    let replacement = format!("game_dirs = {}", toml_list(dirs));
+    rewrite_assignment(text, "game_dirs", format!("game_dirs = {}", toml_list(dirs)))
+}
+
+/// Contenu de `config.toml` avec `music` et `music_volume` remplacés (ou
+/// ajoutés), le reste intact. Les deux clés sont traitées **en une passe**
+/// pour rester voisines : deux insertions séparées les auraient écartées
+/// d'une ligne vide.
+pub fn rewrite_music(text: &str, music: bool, volume: u8) -> String {
+    let volume = volume.min(100);
+    let ligne_music = || format!("music = {}", if music { "true" } else { "false" });
+    let ligne_volume = || format!("music_volume = {volume}");
+
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 2);
+    let mut vu_music = false;
+    let mut vu_volume = false;
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        match assignment_key(line) {
+            // le volume suit immédiatement la clé de la musique (une clé en
+            // double dans le fichier est repliée : elle n'a qu'un sens)
+            Some("music") => {
+                if !vu_music {
+                    out.push(ligne_music());
+                    vu_music = true;
+                    if !vu_volume {
+                        out.push(ligne_volume());
+                        vu_volume = true;
+                    }
+                }
+                continue;
+            }
+            Some("music_volume") => {
+                if !vu_volume {
+                    out.push(ligne_volume());
+                    vu_volume = true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        out.push(line.to_string());
+    }
+    if !vu_music || !vu_volume {
+        let mut bloc = Vec::new();
+        if !vu_music {
+            bloc.push(ligne_music());
+        }
+        if !vu_volume {
+            bloc.push(ligne_volume());
+        }
+        let insert_at = out
+            .iter()
+            .position(|line| line.trim_start().starts_with('['))
+            .unwrap_or(out.len());
+        if insert_at < out.len() {
+            // clés de tête : une ligne vide les sépare de la section
+            bloc.push(String::new());
+            if insert_at > 0 && !out[insert_at - 1].trim().is_empty() {
+                bloc.insert(0, String::new());
+            }
+        }
+        out.splice(insert_at..insert_at, bloc);
+    }
+    let mut result = out.join("\n").trim_end_matches('\n').to_string();
+    result.push('\n');
+    result
+}
+
+/// Remplace la ligne d'affectation `key` (ou l'ajoute en fin de clés de tête,
+/// avant la première section). Une valeur sur plusieurs lignes est avalée
+/// entièrement : on ne laisse jamais un morceau de tableau orphelin.
+fn rewrite_assignment(text: &str, key: &str, replacement: String) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
     let mut done = false;
@@ -648,12 +735,10 @@ pub fn rewrite_game_dirs(text: &str, dirs: &[String]) -> String {
     while index < lines.len() {
         let line = lines[index];
         index += 1;
-        if assignment_key(line) != Some("game_dirs") || done {
+        if assignment_key(line) != Some(key) || done {
             out.push(line.to_string());
             continue;
         }
-        // une valeur peut tenir sur plusieurs lignes (tableau) : on avale
-        // jusqu'à ce que les crochets soient équilibrés
         let mut block = line.to_string();
         while brackets_open(&block) && index < lines.len() {
             block.push('\n');
@@ -664,7 +749,6 @@ pub fn rewrite_game_dirs(text: &str, dirs: &[String]) -> String {
         done = true;
     }
     if !done {
-        // clé absente : en fin de clés de tête, avant la première section
         let insert_at = out
             .iter()
             .position(|line| line.trim_start().starts_with('['))
@@ -742,6 +826,43 @@ x = 1
         let text = "scan_skip = [\"a\"]\ngame_dirs = []\n";
         let out = rewrite_game_dirs(text, &dirs(&["~/G"]));
         assert_eq!(out, "scan_skip = [\"a\"]\ngame_dirs = [\"~/G\"]\n");
+    }
+
+    #[test]
+    fn musique_remplacee_puis_ajoutee() {
+        let text = "# garde-moi\nmusic = true\nmusic_volume = 60\nfullscreen = true\n";
+        assert_eq!(
+            rewrite_music(text, false, 35),
+            "# garde-moi\nmusic = false\nmusic_volume = 35\nfullscreen = true\n"
+        );
+        // clés absentes : ajoutées en fin de clés de tête, avant la première
+        // section — jamais après, où elles appartiendraient à la section
+        let out = rewrite_music("game_dirs = []\n[autre]\nx = 1\n", true, 70);
+        assert!(out.contains("music = true"), "{out}");
+        assert!(out.contains("music_volume = 70"), "{out}");
+        assert!(out.find("music_volume").unwrap() < out.find("[autre]").unwrap());
+        // les dossiers de jeux ne sont pas touchés
+        assert_eq!(
+            rewrite_music("game_dirs = [\"~/G\"]\n", false, 5),
+            "game_dirs = [\"~/G\"]\nmusic = false\nmusic_volume = 5\n"
+        );
+        // volume borné à 100
+        assert!(rewrite_music("", true, 250).contains("music_volume = 100"));
+    }
+
+    #[test]
+    fn musique_ecrite_sur_disque() {
+        let base = std::env::temp_dir().join(format!("glauncher-mus-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let path = base.join("config.toml");
+        std::fs::write(&path, "# mes réglages\nmusic = true\nmusic_volume = 60\n").unwrap();
+        save_music(&path, false, 45).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# mes réglages\nmusic = false\nmusic_volume = 45\n"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

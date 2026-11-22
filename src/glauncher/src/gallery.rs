@@ -60,16 +60,19 @@ impl Item {
             .unwrap_or_default()
     }
 
-    /// Date lisible `2026-11-22 22:31`, en **heure locale** (celle que l'affiche
-    /// le gestionnaire de fichiers du poste).
-    pub fn date(&self) -> String {
+    /// Date **lisible** : c'est le seul libellé d'une tuile (le nom du fichier
+    /// ne dit rien à personne). `22 nov. 2026 · 22:31`.
+    pub fn date_lisible(&self) -> String {
         let secondes = self
             .mtime
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|duree| duree.as_secs())
             .unwrap_or(0);
         let (annee, mois, jour, heure, minute) = locale(secondes);
-        format!("{annee:04}-{mois:02}-{jour:02} {heure:02}:{minute:02}")
+        format!(
+            "{jour} {} {annee} · {heure:02}:{minute:02}",
+            mois_abrege(mois)
+        )
     }
 
     pub fn poids(&self) -> String {
@@ -99,6 +102,15 @@ fn locale(secondes: u64) -> (i64, u32, u32, u32, u32) {
         tm.tm_hour as u32,
         tm.tm_min as u32,
     )
+}
+
+/// Mois abrégé en français, tel qu'on l'écrit dans une date courte.
+fn mois_abrege(mois: u32) -> &'static str {
+    const MOIS: [&str; 12] = [
+        "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.",
+        "nov.", "déc.",
+    ];
+    MOIS.get(mois.saturating_sub(1) as usize).copied().unwrap_or("")
 }
 
 /// Conversion horodatage → (année, mois, jour, heure, minute), en UTC (repli).
@@ -307,6 +319,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_lisible_francaise() {
+        let item = Item {
+            path: PathBuf::from("/tmp/screenshot_1.png"),
+            genre: Genre::Image,
+            mtime: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_795_386_660),
+            taille: 1,
+        };
+        let date = item.date_lisible();
+        // « 22 nov. 2026 · HH:MM » — l'heure dépend du fuseau du poste
+        assert!(date.starts_with("22 nov. 2026 · "), "{date}");
+        assert_eq!(date.len(), "22 nov. 2026 · 00:00".len());
+    }
 
     #[test]
     fn date_locale_du_poste() {

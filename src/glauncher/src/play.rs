@@ -59,9 +59,19 @@ impl Lecteur {
             // tout passe par la manette, donc pas d'OSC (mais l'OSD reste pour
             // afficher le temps après une avance)
             .arg("--osc=no")
-            .arg("--osd-level=1")
-            .arg("--osd-duration=800")
-            .arg("--keep-open=no")
+            // Niveau 3 : mpv affiche « ▶ 00:01:12 / 01:44:20 (69 %) » à chaque
+            // saut (niveau 1 : rien, niveau 2 : la position seule). Mesuré au
+            // banc le 22/11 : c'est le seul réglage qui donne position, durée
+            // ET pourcentage — avancer dans un film sans ça se fait à l'aveugle.
+            .arg("--osd-level=3")
+            .arg("--osd-on-seek=msg-bar")
+            .arg("--osd-duration=2500")
+            .arg("--osd-font-size=44")
+            // **fin de vidéo : on ne ferme pas**. Le dernier plan reste à
+            // l'écran (image figée) et c'est Rond qui referme — sinon la
+            // fenêtre disparaissait au moment précis où l'on regarde la fin,
+            // et le retour au launcher surprenait.
+            .arg("--keep-open=yes")
             .arg("--no-resume-playback")
             .arg(format!("--input-ipc-server={}", socket.display()))
             .arg("--title=glauncher")

@@ -88,6 +88,8 @@ enum Order {
     Play,
     /// Fondu de sortie puis arrêt de `mpv` (partie lancée).
     Stop,
+    /// Nouveau volume en pourcentage (Réglages du launcher), à chaud.
+    Volume(u8),
 }
 
 impl Music {
@@ -116,6 +118,22 @@ impl Music {
     pub fn fade_out(&self) {
         let _ = self.commands.send(Order::Stop);
     }
+
+    /// Change le volume **sans redémarrer la piste** : `mpv` reste en place,
+    /// seule la rampe de volume suit (baisse et hausse passent par le même
+    /// fondu, donc aucun clic).
+    pub fn volume(&self, pourcent: u8) {
+        let _ = self.commands.send(Order::Volume(pourcent));
+    }
+}
+
+/// Pas de volume par tick de `STEP_MS` : montée (fondu d'entrée) et descente
+/// (fondu de sortie) pour un volume donné.
+fn rampes(volume: f32) -> (f32, f32) {
+    (
+        volume / (FADE_IN_MS as f32 / STEP_MS as f32),
+        volume / (FADE_OUT_MS as f32 / STEP_MS as f32),
+    )
 }
 
 /// Recopie la piste embarquée dans le cache (`<cache>/music/menu.opus`).
@@ -144,11 +162,10 @@ fn write_track(cache: &Path) -> Option<PathBuf> {
 /// en plus `SIGTERM` si le launcher disparaît sans lâcher proprement).
 fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8) {
     // le volume vient de la configuration (0 à 100) : au-delà, `mpv` sature
-    let volume = volume.min(100) as f32;
+    let mut volume = volume.min(100) as f32;
     // deux rampes : montée plus douce que la descente (`in_step` est recalculé
-    // au démarrage et à chaque reprise, qui a son propre fondu)
-    let mut in_step = volume / (FADE_IN_MS as f32 / STEP_MS as f32);
-    let out_step = volume / (FADE_OUT_MS as f32 / STEP_MS as f32);
+    // au démarrage, à chaque reprise et à chaque changement de volume)
+    let (mut in_step, mut out_step) = rampes(volume);
     let mut player: Option<Player> = None;
     let mut round = 0;
     let mut level = 0.0f32;
@@ -174,6 +191,13 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
         match order {
             Ok(Order::Play) => veut = true,
             Ok(Order::Stop) => veut = false,
+            Ok(Order::Volume(pourcent)) => {
+                volume = pourcent.min(100) as f32;
+                // la rampe part du plus fort des deux : baisser de 60 à 0 doit
+                // descendre au rythme du niveau atteint, pas d'un pas calculé
+                // sur zéro (qui ne bougerait jamais)
+                (in_step, out_step) = rampes(volume.max(level));
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             // `Music` lâchée (fermeture du launcher) : on s'arrête net
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

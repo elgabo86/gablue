@@ -33,9 +33,12 @@ système au-delà de `unsquashfs` (icône dans un `.wgp`), `qdbus6`/`qdbus` (ple
   drapeau fixe convient aux deux modes ; `Message::ToggleFullscreen` ne fait
   que changer de `window::Mode`.
 - Réglages : le launcher lit `~/.config/glauncher/config.toml` et ne l'écrit
-  **jamais** ; Gablue Manager (`dialogs/glauncher.py`) écrit les dossiers de
-  jeux, le plein écran, la musique de fond et SteamGridDB. Vue, tri et taille
-  des vignettes se règlent dans le launcher et vivent dans son cache
+  **le launcher, lui, n'écrit QUE trois clés** — `game_dirs`, `music` et
+  `music_volume` —, chacune en préservant commentaires, ordre et clés inconnues
+  (`save_game_dirs`, `save_music`), le même contrat que l'écrivain de Gablue
+  Manager (`dialogs/glauncher.py`) : les deux sont interchangeables. Le reste
+  (plein écran, SteamGridDB) appartient au manager. Vue, tri et taille des
+  vignettes se règlent dans le launcher et vivent dans son cache
   (`state.txt`).
 - Menu de l'overlay manette (`gablue-pad`) : entrée `GLAUNCHER`, au-dessus
   d'EmulationStation, via `scripts/toggle-glauncher`.
@@ -170,6 +173,15 @@ manette n'était libre.
   commentaires et clés inconnues préservés (`src/recorder.rs`, même contrat que
   `save_game_dirs`). Un `~` littéral n'est jamais écrit : les chemins viennent
   du navigateur, donc absolus.
+- **Son** : deux lignes entre la sortie et l'affichage. *Musique de fond* —
+  `Croix` coupe ou relance, appliqué **tout de suite** (couper envoie `Stop` au
+  fil de lecture, qui garde sa position : relancer reprend la piste où elle
+  était) puis écrit `music = true|false`. *Volume de la musique* — au
+  **gauche/droite**, par pas de 5 % (0 à 100), appliqué à chaud par
+  `music::Music::volume` (la rampe de fondu suit, `mpv` ne redémarre pas) et
+  écrit dans `music_volume`. Le retour de partie ne relance la musique que si
+  `music` est vrai et le volume non nul : une musique coupée dans les Réglages
+  ne revient pas après un jeu.
 - **Écran du jeu** : dernière ligne de la page, réglée au **gauche/droite** —
   `Comme Plasma` (défaut : KWin applique la disposition enregistrée, étendue ou
   clonée), `Cloner` (réplique de l'écran principal), `Principal seul` (les
@@ -190,7 +202,9 @@ manette n'était libre.
   l'overlay **résident** (frappe uinput dans le champ qui a le focus).
   Surcharge : `GLAUNCHER_KBD_CMD` (banc). Au bureau, rien n'est lancé.
 - **Banc** : `GLAUNCHER_SETTINGS_DEMO=1` ouvre la page, `=browser` ouvre en
-  plus le navigateur sur `$HOME` ; la fenêtre glissante (`fenetre()`) remplace
+  plus le navigateur sur `$HOME`, `=son` pose le curseur sur la ligne de la
+  musique (vérifié au banc : `Croix` → `music = false` écrit, commentaires
+  conservés ; volume → `music_volume = 65`) ; la fenêtre glissante (`fenetre()`) remplace
   une zone défilante à état, donc rien à reconstruire d'un rendu à l'autre.
   `GLAUNCHER_RECORDER_CONF` redirige `recorder.conf` vers un bac à sable.
 
@@ -200,7 +214,12 @@ Section **séparée** (menus des vues → « Galerie… », triangle/T), plein �
 en session console. Deux dossiers lus dans `recorder.conf` : `screenshot_*.png`
 (captures) et `Video_*.mp4` / `Replay_*.mp4` (enregistrements, replays), triés
 du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
-(`CAPTURE` / `VIDÉO`), son poids et sa date **locale**.
+(`CAPTURE` / `VIDÉO`), son poids et sa date **locale au propre**
+(« 22 nov. 2026 · 22:31 ») — **jamais le nom du fichier**
+(`Video_20261120_101500.mp4` ne dit rien à personne) ; la confirmation
+d'effacement nomme l'élément par cette même date. Le fond garde la **poussière
+d'étoiles** du launcher (`sparkles`), posée au-dessus de la grille : un fond
+noir opaque l'aurait effacée.
 
 - **Vignettes** (`src/gallery.rs`) : fabriquées sur un fil de fond, une par une
   (`gallery::spawn`), pas sur le fil de l'interface — iced décode en plus sur un
@@ -219,8 +238,14 @@ du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
   droite = ±5 s** (`seek … relative`), **Rond = sortie** (puis délai de grâce
   de 3 s avant `SIGKILL`). La manette est lue en evdev direct, donc elle marche
   même quand la fenêtre de `mpv` a le focus (la garde de focus est court-
-  circuitée quand un lecteur tourne). Fin de vidéo → `try_wait` relève la
-  sortie, le voile se lève et la fenêtre du launcher reprend le focus.
+  circuitée quand un lecteur tourne). **Fin de vidéo : la fenêtre reste**
+  (`--keep-open=yes`) — le dernier plan est affiché à l'arrêt, c'est `Rond` qui
+  referme (puis `try_wait` relève la sortie, le voile se lève et le launcher
+  reprend le focus) ; avant, la fenêtre disparaissait au moment où l'on
+  regarde la fin. **Progression** : `--osd-level=3` fait afficher à `mpv`
+  « ▶ 00:01:12 / 01:44:20 (69 %) » à chaque saut (`--osd-duration=2500`,
+  police 44) — mesuré au banc : le niveau 1 n'affiche rien et le niveau 2 la
+  position seule, d'où l'impression d'avancer à l'aveugle.
 - **Effacement confirmé** : `Carré` arme (« effacer ? Croix = oui »), `Croix`
   efface pour de bon, `Rond` annule, **tout déplacement désarme**. Le fichier
   est supprimé du disque (`remove_file`) : c'est la seule action destructive du
@@ -1076,8 +1101,9 @@ du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
   sont écrits dans `<cache>/state.txt` (`vue=grille|liste|mosaique`,
   `tri=nom|recents|favoris`, `.part` + renommage) à chaque changement — `V`,
   menu « Type de liste » et menu « Tri » compris. `view` de `config.toml` ne sert plus que de
-  valeur par défaut au tout premier lancement : le launcher n'écrit **jamais**
-  `config.toml`, qui appartient à `gablue-manager`.
+  valeur par défaut au tout premier lancement. Le launcher n'écrit dans
+  `config.toml` que `game_dirs`, `music` et `music_volume` (ses trois réglages) ;
+  tout le reste du fichier appartient à `gablue-manager`.
 - **Rien à rafraîchir à la main** : le veilleur inotify met la liste à jour,
   donc plus de touche `R` ni de bouton Start/Menu « Rafraîchir » (retour 18/11).
 - **Pied de page** : l'aide des touches est **centrée**, le tri à gauche, et à

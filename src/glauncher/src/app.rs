@@ -519,6 +519,9 @@ pub enum Message {
     /// La liste des dossiers a changé : écriture de `config.toml`, rescan, et
     /// ce libellé dans le pied de page.
     SettingsChanged(String),
+    /// La musique de fond a changé (activée/coupée, volume) : appliqué à
+    /// chaud puis écrit dans `config.toml`.
+    SettingsMusic,
     /// Galerie : ouvrir, fermer, naviguer, ouvrir l'élément sélectionné.
     GalleryOpen,
     GalleryClose,
@@ -852,6 +855,12 @@ struct Settings {
     captures: Option<String>,
     /// Dossier des captures d'écran (`None` = défaut de `screenshot.sh`).
     shots: Option<String>,
+    /// Musique de fond jouée (`music` de `config.toml`), réglable ici depuis
+    /// le 22/11 : le launcher n'écrit que `music` et `music_volume`, jamais le
+    /// reste du fichier.
+    musique: bool,
+    /// Volume de la musique en pourcentage (`music_volume`), par pas de 5.
+    volume: u8,
     /// Écran du jeu (index dans `ECRANS`), dernière ligne de la liste.
     ecran: usize,
 }
@@ -886,6 +895,8 @@ impl Settings {
             browser: None,
             captures: recorder::dossier(recorder::CLE_CAPTURES),
             shots: recorder::dossier(recorder::CLE_SHOTS),
+            musique: config.music,
+            volume: config.music_volume.min(100),
             ecran: ecran_lu(),
         }
     }
@@ -900,15 +911,25 @@ impl Settings {
         self.dossiers.len() + 2
     }
 
-    /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
-    fn ligne_ecran(&self) -> usize {
+    /// Ligne de la musique de fond (jouée / coupée).
+    fn ligne_musique(&self) -> usize {
         self.dossiers.len() + 3
     }
 
-    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
-    /// dossiers de sortie, l'écran).
-    fn lignes(&self) -> usize {
+    /// Ligne du volume de la musique.
+    fn ligne_volume(&self) -> usize {
         self.dossiers.len() + 4
+    }
+
+    /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
+    fn ligne_ecran(&self) -> usize {
+        self.dossiers.len() + 5
+    }
+
+    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
+    /// dossiers de sortie, la musique et son volume, l'écran).
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 6
     }
 
     /// Clé de `recorder.conf` d'une ligne de sortie, si c'en est une.
@@ -1344,6 +1365,11 @@ impl App {
                 tasks.push(Task::done(Message::SettingsOpen));
                 // ligne 0 = « ajouter » : ouvre le navigateur sur $HOME
                 tasks.push(Task::done(Message::SettingsAct));
+            }
+            // ligne « Son » : musique et son volume (banc, bac à sable)
+            Ok("son") => {
+                tasks.push(Task::done(Message::SettingsOpen));
+                tasks.push(Task::done(Message::SettingsNav(3)));
             }
             _ => {}
         }
@@ -2636,8 +2662,12 @@ impl App {
                 // les vignettes reviennent des bords pendant que le voile
                 // s'éclaircit
                 self.returning = true;
-                // retour au launcher : la musique revient en fondu
-                if let Some(music) = &self.music {
+                // retour au launcher : la musique revient en fondu — sauf si
+                // elle a été coupée dans les Réglages entre-temps
+                if self.config.music
+                    && self.config.music_volume > 0
+                    && let Some(music) = &self.music
+                {
                     music.resume();
                 }
                 // on revient dans la liste des jeux, pas dans la page du jeu
@@ -3120,6 +3150,11 @@ impl App {
                 if settings.selected == settings.ligne_ecran() {
                     return Task::none();
                 }
+                // ligne musique : Croix coupe / relance, tout de suite
+                if settings.selected == settings.ligne_musique() {
+                    settings.musique = !settings.musique;
+                    return Task::done(Message::SettingsMusic);
+                }
                 // dossier de sortie : naviguer à partir du dossier courant
                 if let Some(cle) = settings.cle_sortie(settings.selected) {
                     let courant = if cle == recorder::CLE_CAPTURES {
@@ -3166,7 +3201,25 @@ impl App {
                 Task::none()
             }
             Message::SettingsChanged(message) => self.persist_dirs(message),
+            Message::SettingsMusic => self.persist_musique(),
             Message::SettingsChoix(delta) => {
+                // volume de la musique : gauche/droite par pas de 5 %
+                let volume = {
+                    let Some(settings) = self.settings.as_mut() else {
+                        return Task::none();
+                    };
+                    if settings.browser.is_some() || settings.selected != settings.ligne_volume() {
+                        None
+                    } else {
+                        let pas = 5 * delta.signum();
+                        settings.volume = (settings.volume as i32 + pas).clamp(0, 100) as u8;
+                        settings.confirm = None;
+                        Some(settings.volume)
+                    }
+                };
+                if volume.is_some() {
+                    return Task::done(Message::SettingsMusic);
+                }
                 let choix = {
                     let Some(settings) = self.settings.as_mut() else {
                         return Task::none();
@@ -3900,6 +3953,41 @@ impl App {
     /// Écrit `game_dirs` dans `config.toml` (seule cette clé change), met la
     /// surveillance à jour et relance un scan complet : un dossier retiré doit
     /// faire disparaître ses jeux de la liste.
+    /// Applique **à chaud** la musique de fond puis l'écrit dans `config.toml`
+    /// (seules `music` et `music_volume` changent). Couper envoie `Stop` — le
+    /// fil garde sa position, donc relancer reprend la piste où elle était.
+    fn persist_musique(&mut self) -> Task<Message> {
+        let Some(settings) = self.settings.as_ref() else {
+            return Task::none();
+        };
+        let (musique, volume) = (settings.musique, settings.volume);
+        self.config.music = musique;
+        self.config.music_volume = volume;
+        if !musique || volume == 0 {
+            if let Some(music) = &self.music {
+                music.fade_out();
+            }
+        } else if let Some(music) = &self.music {
+            // volume à chaud : `mpv` reste, seule la rampe suit
+            music.volume(volume);
+            music.resume();
+        } else {
+            self.music = music::Music::start(&self.config.cache_dir(), volume);
+        }
+        self.status = Some((
+            match (musique, volume) {
+                (false, _) => "musique de fond : coupée".to_string(),
+                (true, 0) => "musique de fond : volume 0 % (silencieuse)".to_string(),
+                (true, volume) => format!("musique de fond : {volume} %"),
+            },
+            false,
+        ));
+        if let Err(err) = crate::config::save_music(&self.config_path, musique, volume) {
+            self.status = Some((format!("écriture impossible ({err})"), true));
+        }
+        Task::none()
+    }
+
     fn persist_dirs(&mut self, message: String) -> Task<Message> {
         let dossiers = self
             .settings
@@ -5734,11 +5822,13 @@ impl App {
         let mut section = "";
         for index in top..fin {
             let selected = index == settings.selected;
-            // quelle section : jeux, sortie, affichage
+            // quelle section : jeux, sortie, son, affichage
             let courante = if index <= settings.dossiers.len() {
                 "Dossiers de jeux"
             } else if index <= settings.ligne_shots() {
                 "Sortie"
+            } else if index <= settings.ligne_volume() {
+                "Son"
             } else {
                 "Affichage"
             };
@@ -5805,6 +5895,68 @@ impl App {
                 } else {
                     Message::Nothing
                 }));
+                continue;
+            }
+
+            // musique de fond : Croix coupe / relance (appliqué tout de suite)
+            if index == settings.ligne_musique() {
+                let etat = if settings.musique { "♪ activée" } else { "coupée" };
+                let ligne = container(
+                    row![
+                        text("Musique de fond")
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(format!("{etat} · Croix = {}", if settings.musique {
+                            "couper"
+                        } else {
+                            "relancer"
+                        }))
+                        .size(14)
+                        .color(if selected {
+                            Color::BLACK
+                        } else if settings.musique {
+                            ACCENT
+                        } else {
+                            MUTED
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(mouse_area(ligne).on_press(if selected {
+                    Message::SettingsAct
+                } else {
+                    Message::Nothing
+                }));
+                continue;
+            }
+
+            // volume de la musique : gauche/droite par pas de 5 %
+            if index == settings.ligne_volume() {
+                let valeur = format!("◀ {} % ▶", settings.volume);
+                let ligne = container(
+                    row![
+                        text("Volume de la musique")
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(valeur).size(15).color(if selected {
+                            Color::BLACK
+                        } else if settings.musique {
+                            TEXT
+                        } else {
+                            MUTED
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(ligne);
                 continue;
             }
 
@@ -5896,6 +6048,14 @@ impl App {
             format!(
                 "Croix = choisir le dossier des {quoi} · Carré = revenir au défaut ({defaut})"
             )
+        } else if settings.selected == settings.ligne_musique() {
+            if settings.musique {
+                "Croix = couper la musique de fond du lanceur. Elle ne joue pas pendant une partie, et se tait dès qu'une autre application joue du son.".to_string()
+            } else {
+                "Croix = relancer la musique de fond (elle reprend là où elle s'était arrêtée).".to_string()
+            }
+        } else if settings.selected == settings.ligne_volume() {
+            "Gauche/droite = volume de la musique, par pas de 5 % — 0 % la rend silencieuse sans la couper.".to_string()
         } else if settings.selected == settings.ligne_ecran() {
             "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
         } else if settings.dossiers.is_empty() {
@@ -6096,18 +6256,19 @@ impl App {
                         })
                         .into(),
                     };
+                // Seul libellé : la DATE, au propre. Le nom du fichier
+                // (`Video_20261120_101500.mp4`) ne dit rien à personne et
+                // faisait du bruit sous chaque vignette.
                 let legende = column![
                     text(format!("{} · {}", item.genre.badge(), item.poids()))
                         .size(12)
                         .color(if selectionne { ACCENT } else { MUTED }),
-                    text(short(&item.nom(), 30)).size(13).color(TEXT),
-                    text(if arme {
-                        "effacer ? Croix = oui".to_string()
-                    } else {
-                        item.date()
-                    })
-                    .size(12)
-                    .color(if arme { DANGER } else { MUTED }),
+                    text(item.date_lisible()).size(14).color(TEXT),
+                    // la place de l'alerte est réservée : la tuile ne grandit
+                    // pas d'un coup quand on arme l'effacement
+                    text(if arme { "effacer ? Croix = oui" } else { "" })
+                        .size(12)
+                        .color(if arme { DANGER } else { MUTED }),
                 ]
                 .spacing(2);
                 let tuile = container(column![vignette, legende].spacing(6))
@@ -6121,12 +6282,19 @@ impl App {
         }
 
         let aide = if let Some(index) = galerie.arme {
-            let nom = galerie
+            // on nomme l'élément par sa date : c'est ce que la tuile affiche
+            let quoi = galerie
                 .items
                 .get(index)
-                .map(|item| item.nom())
+                .map(|item| {
+                    if item.genre == gallery::Genre::Video {
+                        format!("la vidéo du {}", item.date_lisible())
+                    } else {
+                        format!("la capture du {}", item.date_lisible())
+                    }
+                })
                 .unwrap_or_default();
-            format!("Effacer {nom} ? Le fichier sera supprimé du disque. Croix = effacer · Rond = annuler")
+            format!("Effacer {quoi} ? Le fichier sera supprimé du disque. Croix = effacer · Rond = annuler")
         } else if galerie.items.is_empty() {
             "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer).".to_string()
         } else {
@@ -6164,15 +6332,24 @@ impl App {
         )
         .padding(24)
         .width(Fill)
-        .height(Fill)
-        .style(|_| container::Style {
-            // opaque : la galerie EST l'écran (session console plein écran),
-            // la liste des jeux ne doit pas se lire derrière les vignettes
-            background: Some(Background::Color(Color::BLACK)),
-            ..container::Style::default()
-        });
+        .height(Fill);
 
-        panel.into()
+        // Fond opaque (la galerie EST l'écran : la liste des jeux ne doit pas
+        // se lire derrière) PUIS la poussière d'étoiles par-dessus, comme sur
+        // la liste : la galerie ne perd pas le fond du launcher.
+        let fond = container(Row::new())
+            .width(Fill)
+            .height(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::BLACK)),
+                ..container::Style::default()
+            });
+        let poussiere: Element<'_, Message> = if self.config.sparkles {
+            self.sparkles.view(self.scroll_drawn(), self.fade, None)
+        } else {
+            container(Row::new()).width(Fill).height(Fill).into()
+        };
+        stack![fond, panel, poussiere].into()
     }
 
     /// Capture d'écran en plein écran : fondu et léger agrandissement à
