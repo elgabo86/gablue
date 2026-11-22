@@ -145,6 +145,15 @@ dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
 - **Effet immédiat** : `config.game_dirs` mis à jour, `Veille::definir` pour la
   surveillance (ajout et retrait à chaud), puis rescan complet — un dossier
   retiré doit faire disparaître ses jeux.
+- **Écran du jeu** : dernière ligne de la page, réglée au **gauche/droite** —
+  `Comme Plasma` (défaut : KWin applique la disposition enregistrée, étendue ou
+  clonée), `Cloner` (réplique de l'écran principal), `Principal seul` (les
+  autres sorties éteintes). La préférence n'est pas appliquée tout de suite :
+  elle vit dans `~/.config/gablue/gaming.conf` et `gablue-gaming-launcher`
+  l'applique au démarrage de la session console (`kscreen-doctor`, une seule
+  invocation atomique). Le launcher ne parle jamais à KWin directement pour ça :
+  il appelle `gablue-display` (`status`/`set`), seule vérité du format et de la
+  validation (`GLAUNCHER_DISPLAY_HELPER` pour le banc).
 - **Banc** : `GLAUNCHER_SETTINGS_DEMO=1` ouvre la page, `=browser` ouvre en
   plus le navigateur sur `$HOME` ; la fenêtre glissante (`fenetre()`) remplace
   une zone défilante à état, donc rien à reconstruire d'un rendu à l'autre.

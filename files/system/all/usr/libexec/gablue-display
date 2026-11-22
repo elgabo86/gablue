@@ -1,0 +1,153 @@
+#!/usr/bin/python3
+
+"""gablue-display — écrans de la session de jeu (Gablue).
+
+En session console, kwin_wayland applique la disposition enregistrée par
+Plasma : écran étendu ou cloné, comme sur le bureau. Cette préférence ajoute
+UN choix, appliqué au démarrage de la session de jeu (jamais au bureau) :
+
+    plasma    ne touche à rien (défaut) — on suit la configuration Plasma ;
+    clone     tous les écrans connectés affichent la même image ;
+    primary   seul l'écran principal reste allumé (les autres sont éteints).
+
+Pourquoi ici et pas dans le launcher directement : la session appelle `apply`
+avant de lancer le launcher, et le launcher écrit la préférence avec `set`.
+Une seule vérité pour le format du fichier et la validation des valeurs.
+
+`kscreen-doctor` travaille en une seule invocation atomique : on construit
+TOUS les arguments puis on l'appelle une fois (deux appels successifs
+laisseraient un état intermédiaire, écran noir compris).
+
+Banc (ne touche à rien) : `gablue-display --dry-run apply` affiche la commande
+qui serait lancée. La variable GABLUE_DISPLAY_DRY=1 fait la même chose.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+KSCREEN = "/usr/bin/kscreen-doctor"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "gablue" / "gaming.conf"
+MODES = ("plasma", "clone", "primary")
+
+
+def lire_mode() -> str:
+    """Préférence enregistrée ; toute valeur inconnue retombe sur « plasma »."""
+    try:
+        for ligne in CONFIG.read_text(encoding="utf-8").splitlines():
+            if ligne.startswith("display="):
+                valeur = ligne.split("=", 1)[1].strip()
+                if valeur in MODES:
+                    return valeur
+    except OSError:
+        pass
+    return "plasma"
+
+
+def ecrire_mode(mode: str) -> None:
+    CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    # on ne réécrit que la clé `display`, le reste du fichier est préservé
+    lignes = []
+    if CONFIG.exists():
+        lignes = [
+            ligne
+            for ligne in CONFIG.read_text(encoding="utf-8").splitlines()
+            if not ligne.startswith("display=")
+        ]
+    lignes.append(f"display={mode}")
+    temporaire = CONFIG.with_suffix(".conf.tmp")
+    temporaire.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    os.replace(temporaire, CONFIG)
+
+
+def sorties() -> list[dict]:
+    """Sorties vues par KWin, telles que kscreen-doctor les décrit."""
+    resultat = subprocess.run([KSCREEN, "-j"], capture_output=True, text=True)
+    if resultat.returncode != 0:
+        raise SystemExit(f"gablue-display: kscreen-doctor -j a échoué : {resultat.stderr.strip()}")
+    return json.loads(resultat.stdout).get("outputs", [])
+
+
+def principale(ecrans: list[dict]) -> dict | None:
+    """Écran principal : la priorité la plus BASSE (1 = principal ; 0 = non
+    renseignée, donc traitée comme secondaire). Sans priorité, le premier
+    allumé. Règle unique, pour ne pas dépendre d'un ordre de liste."""
+    actifs = [ecran for ecran in ecrans if ecran.get("enabled") and ecran.get("connected")]
+    if not actifs:
+        return None
+    return sorted(actifs, key=lambda e: (e.get("priority") or 99, e.get("id", 0)))[0]
+
+
+def commande(mode: str, ecrans: list[dict]) -> list[str]:
+    """Arguments kscreen-doctor pour ce mode (liste vide = ne rien faire)."""
+    if mode == "plasma":
+        return []
+    principal = principale(ecrans)
+    if principal is None:
+        return []
+    autres = [
+        ecran
+        for ecran in ecrans
+        if ecran.get("enabled")
+        and ecran.get("connected")
+        and ecran.get("name") != principal.get("name")
+    ]
+    if mode == "clone":
+        # mettre à l'échelle l'écran principal d'abord serait inutile : KWin
+        # aligne la réplique sur la source. `mirror` garde le mode de l'autre
+        # écran, donc une TV 4K et un moniteur 1080p restent cohérents.
+        return [f"output.{ecran['name']}.mirror.{principal['name']}" for ecran in autres]
+    if mode == "primary":
+        return [f"output.{ecran['name']}.disable" for ecran in autres]
+    return []
+
+
+def appliquer(mode: str) -> int:
+    ecrans = sorties()
+    arguments = commande(mode, ecrans)
+    if not arguments:
+        print(f"gablue-display: {mode} — rien à changer")
+        return 0
+    sec = os.environ.get("GABLUE_DISPLAY_DRY") == "1" or "--dry-run" in sys.argv
+    if sec:
+        print("gablue-display:", " ".join(arguments))
+        return 0
+    resultat = subprocess.run([KSCREEN, *arguments], capture_output=True, text=True)
+    if resultat.returncode != 0:
+        print(f"gablue-display: échec : {resultat.stderr.strip()}", file=sys.stderr)
+        return 1
+    print(f"gablue-display: {mode} appliqué ({len(arguments)} écran(s))")
+    return 0
+
+
+def main() -> int:
+    arguments = [a for a in sys.argv[1:] if not a.startswith("--")]
+    ordre = sys.argv[1] if sys.argv[1:] else "status"
+    if ordre == "status":
+        print(lire_mode())
+        return 0
+    if ordre == "set":
+        if len(arguments) < 2 or arguments[1] not in MODES:
+            print(f"usage : gablue-display set {{{'|'.join(MODES)}}}", file=sys.stderr)
+            return 2
+        ecrire_mode(arguments[1])
+        print(arguments[1])
+        return 0
+    if ordre == "apply":
+        return appliquer(lire_mode())
+    if ordre == "list":
+        for ecran in sorties():
+            etat = "allumé" if ecran.get("enabled") else "éteint"
+            print(f"{ecran.get('name')}\t{etat}\tpriorité {ecran.get('priority')}")
+        return 0
+    print(
+        "usage : gablue-display status|list|apply|set {plasma|clone|primary} [--dry-run]",
+        file=sys.stderr,
+    )
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

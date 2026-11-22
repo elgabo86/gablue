@@ -55,6 +55,29 @@
   `src/cursor.rs`). Il `exec` ensuite KWin avec
   `--exit-with-session /usr/libexec/gablue-gaming-launcher`. Jamais `set -e` :
   un service absent n'est pas une panne de session.
+- **gablue-gaming-removable** : monte les **disques externes** de la session
+  console. Sur le bureau c'est le service KDED `solid_device_automounter` de
+  Plasma qui s'en charge ; sans plasmashell, rien ne les montait. Balayage
+  idempotent (`lsblk` : amovible ou hotplug, système de fichiers connu, pas
+  déjà monté) au démarrage puis à chaque `Added` vu par `udisksctl monitor`
+  (client D-Bus, aucun privilège ni `udevadm` root). `--no-user-interaction`
+  est **obligatoire** : sans plasmashell il n'y a aucun agent PolicyKit dans
+  la session, une demande d'authentification ne recevrait pas de réponse — le
+  montage est autorisé à la session active (`allow_active=yes`). Les disques
+  internes (RM=0, HOTPLUG=0), le chiffrement (LUKS), le swap et les agrégats
+  RAID/LVM/ZFS ne sont jamais touchés. Une seule instance par session
+  (`flock`), et `GABLUE_LSBLK`/`GABLUE_UDISKSCTL` servent au banc.
+- **gablue-display** : préférence d'**écran du jeu**, appliquée au démarrage de
+  la session console (par `gablue-gaming-launcher`, qui tourne dans KWin donc
+  a un compositeur à qui parler). `plasma` (défaut) ne touche à rien : KWin
+  applique la disposition enregistrée par Plasma, étendue ou clonée ;
+  `clone` réplique l'écran principal sur les autres (`output.<autre>.mirror.<principal>`),
+  `primary` éteint les autres (`disable`). Une **seule** invocation atomique de
+  `kscreen-doctor` (deux appels laisseraient un état intermédiaire, écran noir
+  compris). Principal = priorité la plus basse (1 = principal, 0 = non
+  renseignée), sinon premier allumé. Préférence dans
+  `~/.config/gablue/gaming.conf` (`display=`), réglée depuis la page Réglages
+  du launcher ; `--dry-run` affiche la commande sans rien appliquer.
 - **gablue-gaming-launcher** : boucle du launcher. Contrat de sortie : code
   **0 = fin voulue** (KWin s'arrête, retour au greeter), **≠ 0 = plantage** →
   relance après 1 s. En session console le launcher n'expose aucune sortie
@@ -65,9 +88,11 @@
   relit `Exec=` telle quelle (une entrée `flatpak run`, cas de SyncThingy,
   démarre donc l'application flatpak sans code spécial), respecte
   `Hidden`/`X-GNOME-Autostart-enabled`/`OnlyShowIn`, retire les codes de champ
-  et ne double pas une instance déjà lancée (`flatpak ps`). C'est le bon
-  endroit et non `gablue-gaming-session` : ce script tourne **dans** KWin,
-  donc `WAYLAND_DISPLAY` et le bus utilisateur existent déjà.
+  et ne double pas une instance déjà lancée (`flatpak ps`). Il applique aussi
+  la préférence d'écran du jeu (`gablue-display`) et lance le monteur de
+  disques externes (`gablue-gaming-removable`). C'est le bon endroit et non
+  `gablue-gaming-session` : ce script tourne **dans** KWin, donc
+  `WAYLAND_DISPLAY`, le bus utilisateur et le compositeur existent déjà.
 - **Pas encore là** (lots suivants) : la session « choix » avec compte à
   rebours (autologin retardé sans passer par le greeter), les entrées
   Mode console / Mode bureau de `gpad`, les réglages `session`/`autologin`/

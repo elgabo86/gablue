@@ -502,6 +502,8 @@ pub enum Message {
     SettingsNav(i32),
     /// Croix : ajouter un dossier (ou entrer dans un dossier existant).
     SettingsAct,
+    /// Gauche/droite : cycle la ligne « écran du jeu ».
+    SettingsChoix(i32),
     /// Carré : armer le retrait du dossier sélectionné.
     SettingsArm,
     /// Navigateur de dossiers : navigation, choix, remontée.
@@ -734,6 +736,48 @@ fn year_index(filter: Option<u32>, years: Vec<u32>) -> usize {
         .map_or(0, |position| position + 1)
 }
 
+/// Écran du jeu, appliqué au démarrage de la session console : `plasma` suit
+/// la disposition enregistrée par Plasma, `clone` réplique l'écran principal
+/// sur les autres, `primary` éteint les autres. Le format et l'application
+/// vivent dans `/usr/libexec/gablue-display` (une seule vérité).
+const ECRANS: [(&str, &str); 3] = [
+    ("plasma", "Comme Plasma"),
+    ("clone", "Cloner"),
+    ("primary", "Principal seul"),
+];
+
+/// Helper d'écran ; surchargeable pour le banc (absent de l'arbre de travail).
+fn display_helper() -> PathBuf {
+    std::env::var_os("GLAUNCHER_DISPLAY_HELPER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/usr/libexec/gablue-display"))
+}
+
+/// Préférence enregistrée → index dans `ECRANS` (défaut : Plasma).
+fn ecran_lu() -> usize {
+    let sortie = std::process::Command::new(display_helper())
+        .arg("status")
+        .output();
+    let cle = sortie
+        .ok()
+        .map(|sortie| String::from_utf8_lossy(&sortie.stdout).trim().to_string())
+        .unwrap_or_default();
+    ECRANS.iter().position(|(connue, _)| *connue == cle).unwrap_or(0)
+}
+
+/// Écrit la préférence (Helper : `gablue-display set <mode>`).
+fn ecran_ecrit(index: usize) -> Result<(), String> {
+    let (cle, _) = ECRANS[index.min(ECRANS.len() - 1)];
+    match std::process::Command::new(display_helper())
+        .args(["set", cle])
+        .status()
+    {
+        Ok(statut) if statut.success() => Ok(()),
+        Ok(statut) => Err(format!("code {}", statut.code().unwrap_or(-1))),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
 /// Page « Réglages » du launcher (hors jeu) : la liste des dossiers de jeux.
 ///
 /// Le retrait est **armé** avant d'agir : retirer `~/Games` de la liste n'est
@@ -750,6 +794,8 @@ struct Settings {
     confirm: Option<usize>,
     /// Navigateur de dossiers ouvert par-dessus la liste.
     browser: Option<Browser>,
+    /// Écran du jeu (index dans `ECRANS`), dernière ligne de la liste.
+    ecran: usize,
 }
 
 /// Navigateur de dossiers à la manette : ligne 0 = « choisir ce dossier »,
@@ -768,12 +814,18 @@ impl Settings {
             selected: 0,
             confirm: None,
             browser: None,
+            ecran: ecran_lu(),
         }
     }
 
-    /// Nombre de lignes de la liste (le bouton « ajouter » compris).
-    fn lignes(&self) -> usize {
+    /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
+    fn ligne_ecran(&self) -> usize {
         self.dossiers.len() + 1
+    }
+
+    /// Nombre de lignes de la liste (« ajouter », les dossiers, l'écran).
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 2
     }
 }
 
@@ -2604,7 +2656,10 @@ impl App {
             Message::SettingsArm => {
                 if let Some(settings) = self.settings.as_mut()
                     && settings.browser.is_none()
+                    // seules les lignes de dossier se retirent : ni « ajouter »,
+                    // ni la préférence d'écran
                     && settings.selected > 0
+                    && settings.selected <= settings.dossiers.len()
                 {
                     settings.confirm = Some(settings.selected - 1);
                 }
@@ -2626,6 +2681,10 @@ impl App {
                         retire
                     )));
                 }
+                // ligne écran : elle ne réagit qu'à gauche/droite
+                if settings.selected == settings.ligne_ecran() {
+                    return Task::none();
+                }
                 let cible = if settings.selected == 0 {
                     std::env::var_os("HOME")
                         .map(PathBuf::from)
@@ -2640,6 +2699,26 @@ impl App {
                 Task::none()
             }
             Message::SettingsChanged(message) => self.persist_dirs(message),
+            Message::SettingsChoix(delta) => {
+                let choix = {
+                    let Some(settings) = self.settings.as_mut() else {
+                        return Task::none();
+                    };
+                    if settings.browser.is_some() || settings.selected != settings.ligne_ecran() {
+                        return Task::none();
+                    }
+                    let nombre = ECRANS.len() as i32;
+                    settings.ecran = (settings.ecran as i32 + delta).rem_euclid(nombre) as usize;
+                    settings.confirm = None;
+                    settings.ecran
+                };
+                let (_, libelle) = ECRANS[choix];
+                self.status = Some(match ecran_ecrit(choix) {
+                    Ok(()) => (format!("écran du jeu : {libelle}"), false),
+                    Err(err) => (format!("écran : écriture impossible ({err})"), true),
+                });
+                Task::none()
+            }
             Message::BrowserNav(delta) => {
                 if let Some(browser) = self.settings.as_mut().and_then(|s| s.browser.as_mut()) {
                     let last = browser.entrees.len() as i32; // ligne 0 = choisir
@@ -3922,6 +4001,8 @@ impl App {
                     Task::done(Message::SettingsAct)
                 }
                 keyboard::Key::Named(Named::Delete) => Task::done(Message::SettingsArm),
+                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::SettingsChoix(1)),
+                keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::SettingsChoix(-1)),
                 keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::SettingsNav(1)),
                 keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::SettingsNav(-1)),
                 _ => Task::none(),
@@ -4150,6 +4231,16 @@ impl App {
                             Message::BrowserNav(1)
                         } else {
                             Message::SettingsNav(1)
+                        }),
+                        PadButton::Left => Task::done(if navigateur {
+                            Message::BrowserNav(-1)
+                        } else {
+                            Message::SettingsChoix(-1)
+                        }),
+                        PadButton::Right => Task::done(if navigateur {
+                            Message::BrowserNav(1)
+                        } else {
+                            Message::SettingsChoix(1)
                         }),
                         // carré : armé le retrait (jamais direct)
                         PadButton::Menu => Task::done(Message::SettingsArm),
@@ -5023,6 +5114,30 @@ impl App {
         let mut rows = Column::new().spacing(4);
         for index in top..fin {
             let selected = index == settings.selected;
+            // dernière ligne : l'écran du jeu (gauche/droite), pas un dossier
+            if index == settings.ligne_ecran() {
+                let (_, libelle) = ECRANS[settings.ecran];
+                let valeur = format!("◀ {libelle} ▶");
+                let ligne = container(
+                    row![
+                        text("Écran du jeu")
+                            .size(18)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(valeur).size(15).color(if selected {
+                            Color::BLACK
+                        } else {
+                            MUTED
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(ligne);
+                continue;
+            }
             let (label, detail, danger) = if index == 0 {
                 ("Ajouter un dossier…".to_string(), String::new(), false)
             } else {
@@ -5075,6 +5190,8 @@ impl App {
                     .map(|dossier| folders::affiche(Path::new(dossier)))
                     .unwrap_or_default()
             )
+        } else if settings.selected == settings.ligne_ecran() {
+            "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
         } else if settings.dossiers.is_empty() {
             "Aucun dossier de jeux : la bibliothèque est vide. Croix = ajouter un dossier.".to_string()
         } else {

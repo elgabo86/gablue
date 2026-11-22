@@ -69,6 +69,28 @@ demarrer_syncthing() {
 
 demarrer_syncthing
 
+# Écran du jeu : appliqué ICI et pas dans `gablue-gaming-session`, pour la même
+# raison que Syncthing — ce script tourne déjà DANS KWin, donc `kscreen-doctor`
+# a un compositeur à qui parler. La préférence vit dans
+# `~/.config/gablue/gaming.conf` (réglée depuis le launcher) : `plasma` ne
+# touche à rien, `clone` réplique l'écran principal sur les autres, `primary`
+# éteint les autres. Une seule invocation atomique, un service absent n'est
+# jamais une panne de session.
+GABLUE_DISPLAY=${GABLUE_DISPLAY:-/usr/libexec/gablue-display}
+if [ -x "$GABLUE_DISPLAY" ]; then
+    "$GABLUE_DISPLAY" apply >/dev/null 2>&1 \
+        || log "écran : préférence non appliquée (session inchangée)"
+fi
+
+# Disques externes : Plasma les monte par son propre service (module KDED
+# `solid_device_automounter`), absent d'une session console. Le helper balaie
+# au démarrage puis à chaque branchement ; il tient un verrou, donc une
+# relance du launcher après un plantage n'en démarre pas un second.
+GABLUE_REMOVABLE=${GABLUE_REMOVABLE:-/usr/libexec/gablue-gaming-removable}
+if [ -x "$GABLUE_REMOVABLE" ]; then
+    setsid "$GABLUE_REMOVABLE" </dev/null >/dev/null 2>&1 &
+fi
+
 while :; do
     "$GLAUNCHER"
     code=$?
