@@ -1,0 +1,21 @@
+[package]
+name = "gtracker-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+regex = "1"
+rusqlite = { version = "0.43", features = ["bundled"] }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+sevenz-rust2 = "0.25"
+hound = "3.5"
+flate2 = "1"
+lofty = "0.25"
+rodio = { version = "0.20", default-features = false }
+# grille rythmique automatique : portage Rust de Beat This! (backend rten, pur Rust)
+beat-this = { version = "1.1.0", default-features = false }
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

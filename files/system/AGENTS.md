@@ -44,8 +44,10 @@ Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité pl
 ## Scripts utilisateur (/usr/bin)
 
 - `gablue-apk-installer` : installateur APK par glisser-déposer — le code vit dans `src/gablue-apk-installer/` (paquet `gablue_apk_installer`, installé en `/usr/lib/gablue-apk-installer/` par `files/scripts/build-apk-installer`) ; contrat complet → `src/gablue-apk-installer/AGENTS.md`
-- `retroplayer` : GUI Rust musiques rétro, compilée depuis `src/retroplayer` (étape
-  `retroplayer-build`) ; `.desktop` + icône `hicolor/scalable/apps/retroplayer.svg`
+- `gtracker` : GUI Rust (egui, Wayland natif) — lecteur et arrangeur multitrack de
+  bandes-son rétro, compilée depuis `src/gtracker` (étape `gtracker-build`) ;
+  `.desktop` + icône `hicolor/scalable/apps/gtracker.svg` (app_id et
+  `StartupWMClass` doivent rester `gtracker`, sinon KWin affiche l'icône générique)
 - Scripts gaming : `azahar-install`, `eden-install`, `esde-install`, `lichii-install`, `xenia-install` — **sauf `esde-install`, ce sont des coquilles** de `/usr/libexec/gablue-apps` (voir « Moteur d'installation des AppImages »)
 - Scripts utilitaires : `dlv`, `dlcover`, `tvqt`, `ventoy`, `wallpaper-import`, `clean-media`
 - `ssh-key-add` : ajoute la clé publique à un serveur (crée `~/.ssh/id_ed25519` ed25519 sans passphrase si absente, `ssh-copy-id`, vérifie la connexion sans mot de passe). Port custom : `-p/--port N`, `user@hôte:N`, IPv6 `[adresse]:N` (sans crochets dans la cible finale) ; `-p` + `:port` = erreur ; sans argument → invite la cible. Script stocké 644, `+x` posé par post-install (convention repo)

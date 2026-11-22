@@ -109,10 +109,10 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── completions/                    # Completions bash et zsh
 │   │   └── lib/                            # Bibliothèques modulaires (~60 fichiers)
 │   │       └── AGENTS.md                    # Architecture, modules, points techniques
-│   ├── retroplayer/                        # Lecteur de musiques rétro (Rust, egui)
-│   │   ├── AGENTS.md                       # Contrat : boucle PSF, cache, icône, build image
-│   │   ├── crates/core/                   # Base SQLite, joshw.info, décodage, boucle, export
-│   │   ├── crates/gui/                    # Binaire `retroplayer` (egui/eframe)
+│   ├── gtracker/                           # GTracker : lecteur + arrangeur multitrack (Rust, egui)
+│   │   ├── AGENTS.md                       # Contrat : boucle, projet, cache, icône, build image
+│   │   ├── crates/core/                   # Base SQLite, joshw.info, décodage, boucle, projet, export
+│   │   ├── crates/gui/                    # Binaire `gtracker` (egui/eframe, Wayland natif)
 │   │   └── assets/                         # Icône (make-icon.py → .rgba/.png/.svg)
 │   ├── lgplaunch/                          # Sources de lgplaunch (Bash modulaire)
 │   │   ├── AGENTS.md                        # Modules, montage LGP, overlays
@@ -129,7 +129,7 @@ Le projet construit 6 variantes distinctes :
 │   │   ├── AGENTS.md                      # Détail des scripts de build (copr → cpuid-fault)
 │   │   ├── build-c                       # Compilation sources C
 │   │   ├── build-gwine                    # Assemblage script gwine standalone
-│   │   ├── build-retroplayer              # Compilation Rust du lecteur (étape jetée)
+│   │   ├── build-gtracker                 # Compilation Rust de GTracker (étape jetée)
 │   │   ├── build-vgmstream                # vgmstream-cli épinglé (sets .txtp/.fsb)
 │   │   ├── cleanup                        # Nettoyage intermédiaire
 │   │   ├── copr                           # Configuration dépôts COPR
@@ -272,7 +272,7 @@ retroplayer en cours).
 - **Fedora Kinoite** : https://fedoraproject.org/kinoite/
 - **Terra** : https://github.com/terrapkg
 - **Documentation uBlue** : https://docs.universal-blue.org/
-- **RetroPlayer** : `src/retroplayer/` (dépôt standalone supprimé le 20/11/2026)
+- **GTracker** (ex-RetroPlayer) : `src/gtracker/` (dépôt standalone supprimé le 20/11/2026)
 
 ## Architecture documentaire (AGENTS.md)
 
@@ -303,7 +303,7 @@ son propre AGENTS.md de sous-dossier + pointeur dans l'index ci-dessous.
 | Installateur APK (paquet `gablue_apk_installer`) | `src/gablue-apk-installer/AGENTS.md` | modifier `src/gablue-apk-installer/` |
 | Firmware DualSense / Edge (`gablue-dualsense`) | `src/gablue-dualsense/AGENTS.md` | modifier `dualsense-ctl.c`, le script `/usr/bin/gablue-dualsense` ou la détection de famille |
 | lgplaunch (modules Bash `lib/`) | `src/lgplaunch/AGENTS.md` | modifier `src/lgplaunch/` |
-| RetroPlayer (GUI Rust, boucle, cache, icône, `.desktop`) | `src/retroplayer/AGENTS.md` | modifier `src/retroplayer/` ou son installation |
+| GTracker (GUI Rust, boucle, projet, cache, icône, `.desktop`) | `src/gtracker/AGENTS.md` | modifier `src/gtracker/` ou son installation |
 | Manette : overlay, déclencheur, gate BPF, options | `src/gablue-pad/AGENTS.md` | modifier `src/gablue-pad/`, un geste, une unité ou un réglage du pad |
 | Enregistreur / replay écran (KMS + VAAPI, socket d'état) | `src/gablue-rec/AGENTS.md` | modifier `src/gablue-rec/`, brancher capture/replay dans l'overlay ou toucher aux privilèges DRM |
 

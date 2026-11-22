@@ -1,0 +1,15 @@
+[package]
+name = "gtracker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gtracker-core = { path = "../core" }
+# **Wayland natif** (règle de la maison : GUI Wayland, jamais X11) : le
+# `x11` seul faisait tourner l'app en client XWayland — d'où KWin qui ignore
+# `with_maximized` et un app_id qui n'est qu'un WM_CLASS (vécu 22/11).
+eframe = { version = "0.37", default-features = false, features = ["glow", "wayland", "default_fonts"] }
+anyhow = "1"
+# types Source de rodio (écoute d'une tranche, tests de reprise)
+rodio = { version = "0.20", default-features = false }

@@ -143,11 +143,11 @@ fi
 # INSTALLATION DES BINAIRES EXTERNES
 # =============================================================================
 
-# RetroPlayer n'est plus téléchargé ici : binaire compilé depuis `src/retroplayer`
-# (étape `retroplayer-build` du Containerfile) puis `COPY --from`.
+# GTracker n'est plus téléchargé ici : binaire compilé depuis `src/gtracker`
+# (étape `gtracker-build` du Containerfile) puis `COPY --from`.
 
 # Installation de ZXTune — seul le décodeur `zxtune123` entre dans l'image
-# (RetroPlayer l'appelle pour rendre les pistes en WAV ; le lecteur Qt est exclu).
+# (GTracker l'appelle pour rendre les pistes en WAV ; le lecteur Qt est exclu).
 # Détection dynamique de la dernière révision publiant un build Linux x86_64
 # (certaines révisions n'existent que pour Android/darwin — ex. r5101, r5111)
 ZXTUNE_REV=""
@@ -162,7 +162,7 @@ if [ -z "$ZXTUNE_REV" ]; then
     exit 1
 fi
 echo "Installation de ZXTune ${ZXTUNE_REV}"
-# Seul `zxtune123` est gardé : c'est lui que RetroPlayer lance pour décoder en WAV.
+# Seul `zxtune123` est gardé : c'est lui que GTracker lance pour décoder en WAV.
 # `zxtune-qt` (GUI Qt, 35 Mo) et son entrée de bureau ne servent à rien ici ;
 # `xtractor` non plus. Le reste du tarball (`/usr/share/zxtune` : aide de
 # zxtune123, conf d'exemple) est conservé.

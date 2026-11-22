@@ -1,0 +1,24 @@
+#!/usr/bin/bash
+
+# Compilation de GTracker (Rust, egui) dans l'étape "gtracker-build".
+# Le binaire est déposé dans /out : l'étape finale le copie par COPY --from,
+# donc la toolchain Rust (~300 Mo) n'entre jamais dans l'image.
+
+set -eoux pipefail
+
+# Dépendances de compilation, uniquement dans cette étape (jetée après).
+# gcc : linker des binaires Rust. alsa-lib-devel + pkg-config : `cpal` (rodio)
+# construit contre ALSA — en local sur Kinoite il faut passer par les en-têtes
+# de brew (voir src/gtracker/build.sh), dans l'image les -devel sont là.
+# Wayland : rien à installer — winit charge `libwayland-client`/`libxkbcommon`
+# à l'exécution (dlopen), les libs runtime sont déjà dans l'image de base.
+dnf5 -y install cargo rust gcc alsa-lib-devel pkg-config
+
+# --locked : Cargo.lock est dans le dépôt, la résolution ne bouge pas.
+# Le projet arrive dans /build par le Containerfile, `assets/` compris
+# (icône embarquée par include_bytes!, absente = échec de compilation).
+cargo build --release --locked --manifest-path /build/Cargo.toml
+
+install -Dm755 /build/target/release/gtracker /out/gtracker
+
+echo "gtracker compilé : $(stat -c %s /out/gtracker) octets"

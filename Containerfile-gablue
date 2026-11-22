@@ -111,22 +111,23 @@ RUN --mount=type=cache,dst=/var/cache \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build-glauncher
 
-# Étape intermédiaire : lecteur de musiques rétro RetroPlayer (Rust, egui).
+# Étape intermédiaire : GTracker, lecteur et arrangeur de bandes-son rétro
+# (Rust, egui, Wayland natif).
 # Même raison d'être que les précédentes : la toolchain reste ici, l'étape
 # finale ne reçoit que le binaire. `assets/` est copié (icône embarquée par
 # `include_bytes!`) ; les en-têtes ALSA de `cpal` sont installés par le script.
-FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS retroplayer-build
+FROM quay.io/fedora-ostree-desktops/${SOURCE_IMAGE}:${FEDORA_VERSION} AS gtracker-build
 ENV CARGO_HOME=/cargo
-COPY src/retroplayer/Cargo.toml /build/Cargo.toml
-COPY src/retroplayer/Cargo.lock /build/Cargo.lock
-COPY src/retroplayer/crates /build/crates
-COPY src/retroplayer/assets /build/assets
+COPY src/gtracker/Cargo.toml /build/Cargo.toml
+COPY src/gtracker/Cargo.lock /build/Cargo.lock
+COPY src/gtracker/crates /build/crates
+COPY src/gtracker/assets /build/assets
 RUN --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=cache,dst=/cargo \
     --mount=type=cache,dst=/build/target \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
-    /ctx/build-retroplayer
+    /ctx/build-gtracker
 
 # Étape intermédiaire : vgmstream-cli, décodeur des sets `.txtp`/`.fsb`/`.bfstm`
 # de joshw.info que zxtune ne lit pas. Pas de paquet Fedora : compilation depuis
@@ -298,9 +299,9 @@ COPY --from=gpad-gate-build /out/gpad-gate /out/gpad-gate.bpf.o /usr/libexec/gab
 # icône arrivent avec `files/system/all`.
 COPY --from=glauncher-build /out/glauncher /usr/bin/glauncher
 
-# RetroPlayer (binaire Rust de l'étape retroplayer-build) ; `.desktop` et icône
+# GTracker (binaire Rust de l'étape gtracker-build) ; `.desktop` et icône
 # arrivent avec `files/system/all`.
-COPY --from=retroplayer-build /out/retroplayer /usr/bin/retroplayer
+COPY --from=gtracker-build /out/gtracker /usr/bin/gtracker
 
 # vgmstream-cli : décodeur des conteneurs PS1/PS2/PS3/Switch/Wii U
 # (`.txtp`, `.fsb`, `.bfstm`, `.btsnd`…) que zxtune ne lit pas. Les libs
