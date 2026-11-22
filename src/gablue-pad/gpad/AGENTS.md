@@ -6,13 +6,14 @@ buffer shm (aucun toolkit). Deux habillages : **RETRO** (police bitmap 5×7
 embarquée) et **MODERNE** (Noto Sans TTF + glyphes de manette Xelu, embarqués
 dans `assets/`). Contrat des gestes et liste des composants : `AGENTS.md` racine.
 
-## Réglages (page REGLAGES)
+## Réglages (catégories du menu)
 
-Le menu **est** le panneau : aucune sous-page, aucun panneau secondaire. Les
-réglages vivent sur la page `REGLAGES`, groupés par sections (titre + filet,
-**jamais sélectionnables** — la navigation les saute). On navigue (haut/bas,
-D-pad **ou** stick gauche) et chaque ligne de réglage se manipule **au
-gauche/droite**, appliquée **immédiatement** — rien à valider.
+Le menu **est** le panneau : aucune fenêtre secondaire. Les réglages vivent
+dans les **catégories** de l'accueil (`JEU`, `FENETRES`, `PERF`, `CAPTURE`,
+`SON`, `AFFICHAGE`, `MANETTE`, `SYSTEME`), une page par domaine. On navigue
+(haut/bas, D-pad **ou** stick gauche), `A` ouvre une catégorie, `B` revient à
+l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliquée
+**immédiatement** — rien à valider.
 
 | Section / ligne | Curseur | Effet |
 |---|---|---|
@@ -84,22 +85,23 @@ Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
   demandé est « dans le menu même » : ne pas y revenir). Marge layer-shell :
   **positive honorée** (bordure mesurée à x=1600 pour `--test-margin 480`),
   **négative ignorée** par KWin → le panneau glisse par décalage du **dessin**.
-- `FOCUS fps|mango|volume` : le panneau s'ouvre **sur la page `REGLAGES`**,
-  curseur sur la ligne (c'est ce que passe le combo Home+bas). Mesuré :
-  `FOCUS fps` → page `REGLAGES`, `FPS` sélectionné. Mesuré aussi : `FOCUS
-  mango` puis stick droite → `vue=horizontal`.
+- `FOCUS fps|mango|volume|capture|fin|accueil` : le panneau s'ouvre **dans la
+  catégorie** de la ligne, curseur dessus (c'est ce que passe le combo
+  Home+bas). Mesuré : `FOCUS fps` → catégorie `PERF`, `FPS` sélectionné.
+  Mesuré aussi : `FOCUS mango` puis stick droite → `vue=horizontal` ;
+  `FOCUS accueil` photographie le menu des catégories (banc).
 
 Mesuré : `VOLUME` 50 → 60 → 55 % (`pactl`), `A` → `MUTE true` puis
 `MUTE false` ; `MANGOHUD` gauche → `vue=masque` ; `FPS` gauche → `fps=165` ;
 **D-pad** gauche/droite → même effet que le stick.
 
-## Pages : ACTIONS, RÉGLAGES, APPLICATIONS (L1/R1)
+## Pages : MENU, APPLICATIONS (L1/R1) et catégories
 
-Trois pages dans le même panneau, dans cet ordre : `ACTIONS` (défaut),
-`REGLAGES`, `APPLICATIONS`. **R1 avance, L1 recule** (elles allaient dans le
-même sens) ; la liste des fenêtres est un **aller-retour** : `B` y revient sur
-la page qui l'a ouverte au lieu de fermer le panneau, et activer une fenêtre y
-revient aussi (`fen_retour`). La sélection est propre à chaque page, la liste
+Deux pages de premier niveau dans le même panneau : `MENU` (les catégories,
+défaut) et `APPLICATIONS`. **R1 avance, L1 recule** (elles allaient dans le
+même sens) ; une catégorie et la liste des fenêtres sont des **allers-retours** :
+`B` (ou `L1`/`R1`) en sort vers la page qui l'a ouverte au lieu de fermer le
+panneau, et activer une fenêtre y revient aussi (`fen_retour`). La sélection est propre à chaque page, la liste
 affichée est celle de la page courante (`liste()`), et les séparateurs de
 section ne sont jamais sélectionnés (`pas_selectable()` saute les
 `Entree::Groupe`). Deux sous-pages hors cycle : **FENETRE** (actions de la
@@ -120,44 +122,43 @@ de chaque côté** (`filet_fondu_inv` à gauche, `filet_fondu` à droite), **2 p
 d'épaisseur** et alpha 0xBB : à 1 px et 0x66 le filet disparaissait sur le
 papier peint (constaté « pas assez visible »). Pas de pastille dans le titre.
 
-**Suivi de page** : trois **ronds** en bas du panneau (9 px, écart 9), la page
-courante pleine en accent et grossie de 2 px, les autres en `rail`. Des carrés
-à l'origine — le titre n'en veut plus, le suivi reste, en ronds (demandé). Les
-sous-pages `FENÊTRE`/`FENÊTRES` n'ont pas de rond à elles : c'est la page qui
-les a ouvertes qui reste allumée (`page_cycle()`).
+**Suivi de page** : un **rond** par page de premier niveau (`ORDRE_PAGES` :
+`ACCUEIL`, `APPLIS` ; 9 px, écart 9), la courante pleine en accent et grossie
+de 2 px, les autres en `rail`. Des carrés à l'origine — le titre n'en veut plus,
+le suivi reste, en ronds (demandé). Ni une catégorie ni les sous-pages
+`FENÊTRE`/`FENÊTRES` n'ont de rond à elles : c'est la page qui les a ouvertes
+qui reste allumée (`page_cycle()`).
 
-**Page `ACTIONS`** — la fenêtre active et tout ce qui agit dessus, puis les
-actions de session :
-
-```
-FENETRE ACTIVE (icône + légende + classe ; A = page FERMER / PLEIN ECRAN / CHOISIR FENETRE ; L2/R2 = cycle)
-ENREGISTRER UNE VIDEO
-CAPTURE ECRAN
-REPLAY
-SAUVER REPLAY
-MODE SOURIS
-CLAVIER VIRTUEL
-```
-
-**Page `REGLAGES`** — uniquement des réglages, par sections :
+**Page `MENU` (accueil) — des catégories, plus une page à rallonge.** Le menu
+latéral ne montrait plus qu'une liste de 15 lignes ; il ouvre désormais un
+sous-menu par domaine, avec un chevron au bord droit :
 
 ```
+JEU        FERMER · PLEIN ECRAN · TOUT FERMER
+FENETRES   CHOISIR FENETRE          (le sélecteur jeu ⇄ app compagne viendra ici)
+PERF       MANGOHUD · FPS MAX · PRIORITE ACTIVE
+CAPTURE    ENREGISTRER · CAPTURE ECRAN · REPLAY · SAUVER REPLAY · DUREE · REPLAY AUTO · QUALITE · CODEC · RESOLUTION · FPS · CURSEUR
 SON        VOLUME
-AFFICHAGE  MANGOHUD
-           FPS MAX
-           VRR
-CAPTURE    QUALITE
-           CODEC
-           RESOLUTION
-           FPS
-           CURSEUR
-REPLAY     DUREE REPLAY
-           REPLAY AUTO
-PERFORMANCE PRIORITE ACTIVE
-INTERFACE  STYLE RETRO / STYLE MODERNE
+AFFICHAGE  VRR · STYLE
+MANETTE    MODE SOURIS · CLAVIER VIRTUEL · DECONNECTER LA MANETTE
+SYSTEME    FERMER LA SESSION · REDEMARRER · ETEINDRE
 ```
 
-**Un réglage = un vrai contrôle, jamais du texte nu** : les énumérations
+Mécanique : `Entree::SousMenu(libellé, Cat)` + `Page::Categorie(Cat)` ;
+`A` ouvre, `B` revient à l'accueil **le curseur sur la catégorie quittée**,
+`L1`/`R1` sortent d'une catégorie vers la page de premier niveau. Le contenu
+est figé dans `cat_items` à l'entrée (reconstruit par `maj_accueil` : `SAUVER
+REPLAY` n'existe qu'avec le buffer, la déconnexion qu'avec une manette connue),
+et **l'entrée d'une catégorie ne glisse pas** : l'animation de `aller_page`
+rejoue l'ancienne liste en changeant `page`, or toutes les catégories partagent
+`cat_items` — l'ancienne serait peinte avec le contenu de la nouvelle.
+L'en-tête de fenêtre (`Entree::Fenetre`, hauteur nulle) est en tête de CHAQUE
+catégorie : il reste sélectionnable partout. Le gate BPF suit le **panneau**,
+jamais la profondeur du menu : entrer dans une catégorie ne rouvre rien. Le menu
+système (`--console`, Home maintenu) reste une liste plate : ses cinq actions
+irréversibles n'ont pas besoin de sous-menus.
+
+**Un réglage = un vrai contrôle, jamais du texte nu****Un réglage = un vrai contrôle, jamais du texte nu** : les énumérations
 (`QUALITE`, `CODEC`, `RESOLUTION`, `FPS` de CAPTURE, comme `VOLUME`/`FPS`/
 `DUREE`)
 prennent la **valeur à droite + le curseur gradué dessous** (ligne de 86 px), et
@@ -402,7 +403,7 @@ fois la palette et la géométrie (rayons, barres d'accent, ombre).
 | `RETRO` (défaut) | bitmap 5×7 embarquée, **capitales** | SteamOS : fond quasi noir (~91 %), accent bleu Steam `#1a9fff`, **surbrillance claire en pastille** à texte sombre, rayon 16 / sélection 20 |
 | `MODERNE` | Noto Sans TTF (`fontdue`), casse de phrase accentuée | **même thème, même géométrie** (`theme_pour()` renvoie `theme_retro()` pour les deux) + **glyphes de manette Xelu** dans l'aide du bas, marqueur de sélection en trait d'accent |
 
-- **Choix à chaud** : ligne `STYLE` sur `REGLAGES`, section `INTERFACE`. C'est un
+- **Choix à chaud** : ligne `STYLE` dans la catégorie `AFFICHAGE`. C'est un
   **interrupteur** (`A`, pas un curseur) dont le libellé dit le style courant —
   `Style retro` (OFF) / `Style moderne` (ON) — appliqué immédiatement et écrit
   dans `~/.config/gablue/gpad-style` (choix mémorisé).
@@ -967,7 +968,7 @@ nettoyer à la main.
 | `--resident` | survit entre deux ouvertures (surface mappée transparente hors écran) ; `open`/`close` arrivent par `--ipc` |
 | `--ipc <socket>` | socket de commande du déclencheur (`open <node> <cibles…>`, `kbd <node>`, `close`) |
 | `--fullscreen` | surface plein écran (banc) |
-| `--focus fps\|mango\|volume` | ouvre sur `REGLAGES`, curseur sur la ligne |
+| `--focus fps\|mango\|volume\|capture\|fin\|accueil` | ouvre la catégorie de la ligne, curseur dessus (`accueil` = le menu des catégories) |
 | `--style retro\|moderne` | style visuel (prioritaire sur `PAD_STYLE` et le fichier) |
 | `--test-margin N` | marge layer-shell positive (banc) |
 | `--no-kwin` | n'installe pas le script d'info de fenêtre |
@@ -1001,4 +1002,4 @@ nettoyer à la main.
 | style | `--style truc` → `STYLE RETRO (retro) police=bitmap` ; `A` sur `STYLE` → `STYLE MODERNE (moderne) police=ttf` + fichier + bascule à chaud |
 | vrr | `A` sur `VRR` → `VRR desactive` puis `kscreen-doctor -o` montre `Vrr: Never` sur chaque sortie ; second `A` → `Vrr: Automatic` (mesuré, `vrr=auto`) |
 | glyphes | `GLYPHES 11 (xbox)` au premier dessin MODERNE ; manette Sony → `(ps)` |
-| booster | page REGLAGES, 5 « bas » depuis `VOLUME` (sections sautées) → `SELECT PRIORITE ACTIVE` ; `A` → `BOOSTER actif` puis `BOOSTER inactif`, avec `kwriteconfig6 … autostart true\|false` + `systemctl --user restart\|stop plasma-foreground-booster.service` (HOME et `systemctl` factices) |
+| booster | catégorie `PERF`, 2 « bas » depuis `MANGOHUD` → `SELECT PRIORITE ACTIVE` ; `A` → `BOOSTER actif` puis `BOOSTER inactif`, avec `kwriteconfig6 … autostart true\|false` + `systemctl --user restart\|stop plasma-foreground-booster.service` (HOME et `systemctl` factices) |

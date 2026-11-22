@@ -778,6 +778,10 @@ const MH_OPTS: [(&str, &str); 3] = [
 /// Une ligne du menu. Les réglages vivent **dans la liste** : pas de
 /// sous-menu, pas de panneau secondaire — on se pose sur la ligne, et
 /// gauche/droite change la valeur, appliquée aussitôt.
+///
+/// Exception, les **catégories** : l'accueil est un menu de sous-menus
+/// (`SousMenu`), et chaque catégorie est une page à part. C'est un niveau de
+/// navigation, pas un second panneau : même liste, même rendu, même retour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Entree {
     Action(&'static str),
@@ -792,9 +796,8 @@ enum Entree {
     Fenetre,
     /// une fenêtre de la liste (index dans `fenetres`)
     Autre(usize),
-    /// séparateur de section ("SON", "AFFICHAGE"…) : un titre + un filet,
-    /// jamais sélectionnable, sauté par la navigation
-    Groupe(&'static str),
+    /// entrée de l'accueil : ouvre la catégorie (libellé, catégorie)
+    SousMenu(&'static str, Cat),
     /// style visuel (NU / DECK / BREEZE), appliqué à chaud
     Style,
     /// optimiser au premier plan : booster cgroup de Plasma (priorité CPU à la
@@ -810,18 +813,150 @@ enum Entree {
     AutoReplay,
 }
 
-/// Pages du panneau : accueil (actions + fenêtre active), réglages (tous les
-/// réglages, par sections) et applications. « Fenetres » est la liste
-/// d'aller-retour ouverte depuis l'en-tête.
+/// L'accueil : les catégories, dans l'ordre du quotidien (le jeu d'abord, le
+/// système en dernier — c'est le coin des actions irréversibles).
+fn accueil_items() -> Vec<Entree> {
+    vec![
+        Entree::SousMenu("JEU", Cat::Jeu),
+        Entree::SousMenu("FENETRES", Cat::Fenetres),
+        Entree::SousMenu("PERF", Cat::Perf),
+        Entree::SousMenu("CAPTURE", Cat::Capture),
+        Entree::SousMenu("SON", Cat::Son),
+        Entree::SousMenu("AFFICHAGE", Cat::Affichage),
+        Entree::SousMenu("MANETTE", Cat::Manette),
+        Entree::SousMenu("SYSTEME", Cat::Systeme),
+    ]
+}
+
+/// Catégories de l'accueil : un sous-menu par domaine. Le contenu est le même
+/// dans les deux sessions pour l'instant ; les différences bureau / console
+/// viendront avec le sélecteur du mode jeu (jeu ⇄ application compagne).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cat {
+    Jeu,
+    Fenetres,
+    Affichage,
+    Perf,
+    Capture,
+    Son,
+    Manette,
+    Systeme,
+}
+
+impl Cat {
+    fn nom(self) -> &'static str {
+        match self {
+            Cat::Jeu => "JEU",
+            Cat::Fenetres => "FENETRES",
+            Cat::Affichage => "AFFICHAGE",
+            Cat::Perf => "PERF",
+            Cat::Capture => "CAPTURE",
+            Cat::Son => "SON",
+            Cat::Manette => "MANETTE",
+            Cat::Systeme => "SYSTEME",
+        }
+    }
+
+    /// Les lignes de la catégorie, dans l'ordre d'affichage. L'en-tête de
+    /// fenêtre est en tête de CHAQUE catégorie : il garde sa hauteur nulle et
+    /// sa ligne propre, mais le curseur doit pouvoir s'y poser partout (A y
+    /// ouvre les actions de la fenêtre active).
+    ///
+    /// `replay_active` décide de la présence de `SAUVER REPLAY` (même règle
+    /// qu'avant : une ligne annonçant « INACTIF » n'apprend rien) ; la
+    /// déconnexion n'apparaît que si une manette Bluetooth est connue.
+    fn entrees(self, replay_active: bool, pad_present: bool) -> Vec<Entree> {
+        match self {
+            Cat::Jeu => vec![
+                Entree::Fenetre,
+                Entree::Action("FERMER"),
+                Entree::Action("PLEIN ECRAN"),
+                Entree::Action("TOUT FERMER"),
+            ],
+            // le sélecteur du mode jeu (jeu ⇄ application compagne) prendra la
+            // première place ici ; aujourd'hui la liste de fenêtres de KWin
+            // fait déjà le travail
+            Cat::Fenetres => vec![Entree::Fenetre, Entree::Action("CHOISIR FENETRE")],
+            Cat::Affichage => vec![
+                Entree::Fenetre,
+                Entree::Action("VRR"),
+                Entree::Style,
+            ],
+            Cat::Perf => vec![
+                Entree::Fenetre,
+                Entree::Mango,
+                Entree::Fps,
+                Entree::Booster,
+            ],
+            Cat::Capture => {
+                let mut v = vec![
+                    Entree::Fenetre,
+                    Entree::Action("ENREGISTRER UNE VIDEO"),
+                    Entree::Action("CAPTURE ECRAN"),
+                    Entree::Action("REPLAY"),
+                ];
+                if replay_active {
+                    v.push(Entree::Action("SAUVER REPLAY"));
+                }
+                v.extend([
+                    Entree::Duree,
+                    Entree::AutoReplay,
+                    Entree::Qualite,
+                    Entree::Codec,
+                    Entree::Reso,
+                    Entree::FpsRec,
+                    Entree::Curseur,
+                ]);
+                v
+            }
+            Cat::Son => vec![Entree::Fenetre, Entree::Volume],
+            Cat::Manette => {
+                let mut v = vec![
+                    Entree::Fenetre,
+                    Entree::Action("MODE SOURIS"),
+                    Entree::Action("CLAVIER VIRTUEL"),
+                ];
+                if pad_present {
+                    v.push(Entree::Action("DECONNECTER LA MANETTE"));
+                }
+                v
+            }
+            Cat::Systeme => vec![
+                Entree::Fenetre,
+                Entree::Action("FERMER LA SESSION"),
+                Entree::Action("REDEMARRER"),
+                Entree::Action("ETEINDRE"),
+            ],
+        }
+    }
+}
+
+/// Pages du panneau : accueil (menu des catégories), une catégorie, la liste
+/// des applications et les deux pages de fenêtres (aller-retour).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Accueil,
-    Reglages,
+    Categorie(Cat),
     Applis,
     /// actions de la fenêtre active (ancienne « boîte de choix ») : une PAGE,
     /// comme la liste des fenêtres — même présentation, même retour
     Fenetre,
     Fenetres,
+}
+
+/// Pages de premier niveau, dans l'ordre de L1/R1. Les sous-pages (une
+/// catégorie, la liste des fenêtres) n'en font pas partie : elles
+/// appartiennent à la page qui les a ouvertes.
+const ORDRE_PAGES: [Page; 2] = [Page::Accueil, Page::Applis];
+
+impl Page {
+    /// Page à hauteurs variables (catégories de 56 px, lignes de réglage de
+    /// 86) : son défilement se compte en lignes, pas en fenêtres fixes.
+    /// L'accueil en fait partie : 8 catégories débordent d'un écran 720p, et
+    /// sans défilement les deux dernières seraient inatteignables.
+    fn defilante(self) -> bool {
+        matches!(self, Page::Accueil | Page::Categorie(_))
+    }
 }
 
 impl Entree {
@@ -834,7 +969,7 @@ impl Entree {
             Entree::Duree => "DUREE REPLAY",
             Entree::Fenetre => "FENETRE ACTIVE",
             Entree::Autre(_) => "FENETRE",
-            Entree::Groupe(t) => t,
+            Entree::SousMenu(t, _) => t,
             Entree::Style => "STYLE",
             // « priorité à la fenêtre active » : le libellé exact demandé
             // (« optimiser au premier plan », 24 caractères) déborderait à
@@ -866,12 +1001,12 @@ impl Entree {
         )
     }
     /// Hauteur de la ligne : les réglages à curseur respirent (86), les
-    /// énumérations tiennent sur une seule ligne (46) — la page RÉGLAGES a
-    /// doublé de taille, c'est ce qui la garde lisible.
+    /// énumérations tiennent sur une seule ligne (46), une catégorie de
+    /// l'accueil un peu plus (56 : c'est un point d'entrée, pas une action).
     fn hauteur(self) -> i32 {
         match self {
             Entree::Fenetre => 0,
-            Entree::Groupe(_) => 52,
+            Entree::SousMenu(..) => 56,
             Entree::Volume
             | Entree::Mango
             | Entree::Fps
@@ -883,9 +1018,10 @@ impl Entree {
             _ => 46,
         }
     }
-    /// le curseur peut s'y poser (tout sauf un séparateur)
+    /// le curseur peut s'y poser (toutes les lignes le sont : les séparateurs
+    /// ont disparu avec les catégories)
     fn selectionnable(self) -> bool {
-        !matches!(self, Entree::Groupe(_))
+        true
     }
 }
 
@@ -1042,11 +1178,12 @@ struct App {
     // menu
     /// page ACCUEIL : fenêtre active et actions courantes
     accueil: Vec<Entree>,
-    /// page RÉGLAGES : sections (titre + filet) et lignes de réglage
-    reglages: Vec<Entree>,
+    /// lignes de la catégorie ouverte (reconstruites à l'entrée et quand leur
+    /// contenu change : `SAUVER REPLAY` n'existe que si le buffer tourne)
+    cat_items: Vec<Entree>,
     /// réglages de capture (recorder.conf partagé avec gpad-rec)
     cap: capture::Conf,
-    /// première ligne affichée de la page RÉGLAGES (défilement)
+    /// première ligne affichée d'une page à hauteurs variables (défilement)
     reg_top: usize,
     /// page applications (L1/R1)
     applis: Vec<Entree>,
@@ -1497,44 +1634,11 @@ impl App {
         Self {
             qh,
             running: true,
-            accueil: vec![
-                // Page ACCUEIL : la fenêtre active et ses actions juste sous
-                // son nom (fermer, plein écran), puis les actions de session
-                // (enregistrement, capture, replay) et les entrées
-                // inhabituelles (manette -> souris/clavier). Les réglages sont
-                // sur la page REGLAGES.
-                Entree::Fenetre,
-                Entree::Action("ENREGISTRER UNE VIDEO"),
-                Entree::Action("CAPTURE ECRAN"),
-                Entree::Action("REPLAY"),
-                Entree::Action("MODE SOURIS"),
-                Entree::Action("CLAVIER VIRTUEL"),
-            ],
-            // page RÉGLAGES : sections, séparateurs non sélectionnables
-            reglages: vec![
-                // l'en-tête est sélectionnable sur TOUTES les pages : A y
-                // propose de fermer la fenêtre ou de basculer son plein écran
-                Entree::Fenetre,
-                Entree::Groupe("SON"),
-                Entree::Volume,
-                Entree::Groupe("AFFICHAGE"),
-                Entree::Mango,
-                Entree::Fps,
-                Entree::Action("VRR"),
-                Entree::Groupe("REPLAY"),
-                Entree::Duree,
-                Entree::AutoReplay,
-                Entree::Groupe("CAPTURE"),
-                Entree::Qualite,
-                Entree::Codec,
-                Entree::Reso,
-                Entree::FpsRec,
-                Entree::Curseur,
-                Entree::Groupe("PERFORMANCE"),
-                Entree::Booster,
-                Entree::Groupe("INTERFACE"),
-                Entree::Style,
-            ],
+            // ACCUEIL : un sous-menu par domaine (le détail vit dans la
+            // catégorie, plus de page à rallonge) ; l'en-tête de fenêtre est
+            // dans chaque catégorie, hauteur nulle.
+            accueil: accueil_items(),
+            cat_items: Vec::new(),
             cap: capture::Conf::lire(),
             reg_top: 0,
             applis: Vec::new(),
@@ -2064,60 +2168,55 @@ impl App {
         }
     }
 
-    /// La liste affichée : accueil, réglages, applications ou fenêtres.
+    /// La liste affichée : accueil, catégorie, applications ou fenêtres.
     fn liste(&self) -> &Vec<Entree> {
         match self.page {
             Page::Accueil => &self.accueil,
-            Page::Reglages => &self.reglages,
+            Page::Categorie(_) => &self.cat_items,
             Page::Applis => &self.applis,
             Page::Fenetre => &self.fen_menu,
             Page::Fenetres => &self.fen_items,
         }
     }
 
-    /// Page ACCUEIL reconstruite : `SAUVER REPLAY` n'y figure que si le buffer
-    /// tourne (demandé le 21/11/2026 — une ligne grisée « INACTIF » n'apprend
-    /// rien). Appelée à chaque changement de `replay_active`, curseur ramené
-    /// dans les bornes si la ligne qu'il visait a disparu.
+    /// Listes dépendantes de l'état, reconstruites d'un seul point :
+    /// l'accueil, et la catégorie ouverte si l'on y est (`SAUVER REPLAY`
+    /// n'existe que si le buffer tourne — une ligne grisée « INACTIF »
+    /// n'apprend rien, demandé le 21/11/2026). Appelée à chaque changement de
+    /// `replay_active` ; le curseur est ramené dans les bornes si la ligne
+    /// qu'il visait a disparu.
     fn maj_accueil(&mut self) {
-        let mut v = vec![
-            Entree::Fenetre,
-            Entree::Action("ENREGISTRER UNE VIDEO"),
-            Entree::Action("CAPTURE ECRAN"),
-            Entree::Action("REPLAY"),
-        ];
-        if self.replay_active {
-            v.push(Entree::Action("SAUVER REPLAY"));
+        self.accueil = accueil_items();
+        if let Page::Categorie(cat) = self.page {
+            self.cat_items = cat.entrees(self.replay_active, self.pad_bt.is_some());
         }
-        v.push(Entree::Action("MODE SOURIS"));
-        v.push(Entree::Action("CLAVIER VIRTUEL"));
-        self.accueil = v;
-        if self.selected >= self.accueil.len() {
-            self.selected = self.accueil.len().saturating_sub(1);
+        let n = self.liste().len();
+        if self.selected >= n {
+            self.selected = n.saturating_sub(1);
         }
     }
 
-    /// Position de la page dans le cycle (les sous-pages FENETRE / FENETRES
-    /// appartiennent à la page qui les a ouvertes : c'est elle qui s'allume).
+    /// Position de la page dans le cycle (une catégorie appartient à
+    /// l'accueil, les pages FENETRE / FENETRES à celle qui les a ouvertes :
+    /// c'est elle qui s'allume).
     fn page_cycle(&self) -> usize {
-        let ordre = [Page::Accueil, Page::Reglages, Page::Applis];
-        let base = if matches!(self.page, Page::Fenetres | Page::Fenetre) {
-            self.fen_retour
-        } else {
-            self.page
+        let base = match self.page {
+            Page::Fenetres | Page::Fenetre => self.fen_retour,
+            Page::Categorie(_) => Page::Accueil,
+            p => p,
         };
-        ordre.iter().position(|p| *p == base).unwrap_or(0)
+        ORDRE_PAGES.iter().position(|p| *p == base).unwrap_or(0)
     }
 
-    /// Suivi de page en bas : trois **ronds**, le courant plein et un peu plus
-    /// gros, les autres en `rail`. (Des carrés à l'origine — `pas de carré`
-    /// pour le titre, mais le suivi reste, en ronds.)
+    /// Suivi de page en bas : un **rond** par page de premier niveau, le
+    /// courant plein et un peu plus gros, les autres en `rail`.
     fn points_pages(&self, cv: &mut Canvas, x_centre: i32, y: i32) {
         const D: i32 = 9;
         const GAP: i32 = 9;
-        let actif = self.page_cycle();
-        let mut x = x_centre - (3 * D + 2 * GAP) / 2;
-        for i in 0..3 {
+        let n = ORDRE_PAGES.len() as i32;
+        let actif = self.page_cycle() as i32;
+        let mut x = x_centre - (n * D + (n - 1) * GAP) / 2;
+        for i in 0..n {
             if i == actif {
                 cv.rrect(x - 2, y - 2, D + 4, D + 4, (D + 4) / 2, self.th.accent);
             } else {
@@ -2684,7 +2783,7 @@ impl App {
             | Entree::Appli(_)
             | Entree::Fenetre
             | Entree::Autre(_)
-            | Entree::Groupe(_) => {}
+            | Entree::SousMenu(..) => {}
         }
     }
 
@@ -3175,16 +3274,16 @@ impl App {
         match a {
             Action::Page(sens) => {
                 // R1 avance, L1 recule (les deux allaient dans le même sens) ;
-                // la liste des fenêtres est un aller-retour : L1/R1 en sortent
-                let ordre = [Page::Accueil, Page::Reglages, Page::Applis];
-                let base = if self.page == Page::Fenetres {
-                    self.fen_retour
-                } else {
-                    self.page
+                // une catégorie et la liste des fenêtres sont des allers-retours :
+                // L1/R1 en sortent, vers la page de premier niveau
+                let base = match self.page {
+                    Page::Fenetres | Page::Fenetre => self.fen_retour,
+                    Page::Categorie(_) => Page::Accueil,
+                    p => p,
                 };
-                let i = ordre.iter().position(|p| *p == base).unwrap_or(0) as i32;
-                let j = (i + sens).rem_euclid(ordre.len() as i32) as usize;
-                self.aller_page(ordre[j], sens);
+                let i = ORDRE_PAGES.iter().position(|p| *p == base).unwrap_or(0) as i32;
+                let j = (i + sens).rem_euclid(ORDRE_PAGES.len() as i32) as usize;
+                self.aller_page(ORDRE_PAGES[j], sens);
             }
             Action::Up => {
                 self.selected = self.pas_selectable(self.selected, -1);
@@ -3234,6 +3333,24 @@ impl App {
                 self.arme = None;
                 self.status = "RETOUR".to_string();
                 println!("FENETRES retour {:?}", self.page);
+            }
+            Action::Cancel if self.est_categorie() => {
+                // B dans une catégorie : retour à l'accueil, **curseur sur la
+                // catégorie** d'où l'on vient (on enchaîne sur la voisine)
+                let cat = match self.page {
+                    Page::Categorie(cat) => cat,
+                    _ => unreachable!(),
+                };
+                self.page = Page::Accueil;
+                self.selected = self
+                    .accueil
+                    .iter()
+                    .position(|e| matches!(e, Entree::SousMenu(_, c) if *c == cat))
+                    .unwrap_or(0);
+                self.reg_top = 0;
+                self.arme = None;
+                self.status = "RETOUR".to_string();
+                println!("CATEGORIE retour {:?}", cat);
             }
             Action::Cancel => {
                 self.status = "FERMETURE".to_string();
@@ -3319,13 +3436,36 @@ impl App {
         self.fen_top = 0;
         self.arme = None;
         self.status = match p {
-            Page::Accueil => "MENU: ACTIONS".to_string(),
-            Page::Reglages => "MENU: REGLAGES".to_string(),
+            Page::Accueil => "MENU: CATEGORIES".to_string(),
+            Page::Categorie(cat) => format!("MENU: {}", cat.nom()),
             Page::Applis => "MENU: APPLICATIONS".to_string(),
             Page::Fenetre => "MENU: FENETRE".to_string(),
             Page::Fenetres => "MENU: FENETRES".to_string(),
         };
         println!("PAGE {:?} sens={sens}", p);
+    }
+
+    /// Ouvre une catégorie. Son contenu est figé à l'entrée (reconstruit par
+    /// `maj_accueil` s'il change), le curseur va sur la première action.
+    ///
+    /// **Pas de glissement** : l'animation de `aller_page` rejoue l'ancienne
+    /// liste en changeant `page`, or toutes les catégories partagent le même
+    /// `cat_items` — l'ancienne serait dessinée avec le contenu de la
+    /// nouvelle (deux menus mélangés).
+    fn entrer_categorie(&mut self, cat: Cat) {
+        let items = cat.entrees(self.replay_active, self.pad_bt.is_some());
+        self.cat_items = items;
+        self.page = Page::Categorie(cat);
+        self.pdep = None;
+        self.reg_top = 0;
+        self.selected = self.premier_action();
+        self.arme = None;
+        self.status = format!("MENU: {}", cat.nom());
+        println!("PAGE {:?}", cat);
+    }
+
+    fn est_categorie(&self) -> bool {
+        matches!(self.page, Page::Categorie(_))
     }
 
     /// Exécute l'entrée sélectionnée. Ce qui n'est pas câblé le dit
@@ -3410,8 +3550,10 @@ impl App {
                     self.request_close();
                 }
             }
-            // un séparateur n'agit pas (il n'est pas sélectionnable)
-            Entree::Groupe(_) => {}
+            // A sur une catégorie : on l'ouvre (aucun redémarrage de liste,
+            // juste la page qui change ; le gate BPF suit le panneau, pas la
+            // profondeur du menu)
+            Entree::SousMenu(_, cat) => self.entrer_categorie(cat),
             // A sur le nom de la fenêtre : proposer de la fermer ou de
             // basculer son plein écran (sur toutes les pages)
             // sans fenêtre active, la boîte n'aurait rien à fermer : on va
@@ -4184,7 +4326,7 @@ impl App {
     /// 46 px) — on cumule donc les hauteurs réelles, et on ne retire que les
     /// lignes entièrement sorties en haut.
     fn ajuster_defilement(&mut self) {
-        if self.page == Page::Reglages {
+        if self.page.defilante() {
             self.fen_top = 0;
             let budget = self.liste_budget().max(46);
             let hauteurs: Vec<i32> = self.liste().iter().map(|e| e.hauteur()).collect();
@@ -4232,8 +4374,8 @@ impl App {
     /// sans lire de raccourci (l'aide rappelle déjà les gâchettes).
     fn nom_menu(&self, cv: &mut Canvas, x_centre: i32, y: i32, x0: i32, x1: i32) {
         let nom = match self.page {
-            Page::Accueil => "ACTIONS",
-            Page::Reglages => "REGLAGES",
+            Page::Accueil => "MENU",
+            Page::Categorie(cat) => cat.nom(),
             Page::Applis => "APPLIS",
             Page::Fenetre => "FENETRE",
             Page::Fenetres => "FENETRES",
@@ -4374,7 +4516,7 @@ impl App {
         // fin de fenêtre doit s'en retirer — sinon, défilé, il compte deux fois
         // ces lignes et coupe la liste trop tôt (mesuré : les trois dernières
         // sections disparaissaient dès que la page défilait).
-        let dessus: i32 = if self.page == Page::Reglages {
+        let dessus: i32 = if self.page.defilante() {
             self.liste().iter().take(self.reg_top).map(|e| e.hauteur()).sum()
         } else {
             0
@@ -4396,10 +4538,10 @@ impl App {
             // au lieu de `y0` (mesuré 21/11/2026 : la dernière ligne passait
             // sous l'aide et sous les pastilles, et le test de fin ne pouvait
             // plus se déclencher).
-            if self.page == Page::Reglages && i < self.reg_top {
+            if self.page.defilante() && i < self.reg_top {
                 continue;
             }
-            if self.page == Page::Reglages && y - y0 + h > self.liste_budget() {
+            if self.page.defilante() && y - y0 + h > self.liste_budget() {
                 break;
             }
             // l'en-tête a déjà son propre surlignage (hauteur nulle ici)
@@ -4459,13 +4601,13 @@ impl App {
                     cv.text_fit(px0 + pad + 36, y, "PLEIN ECRAN", 3, color, inner - 36 - 52);
                     self.interrupteur(&mut cv, px0 + pad + inner, y, self.win.fullscreen, false);
                 }
-                // séparateur de section : titre en petit + filet qui court
-                // jusqu'au bord (largeur d'un caractère à l'échelle 2 = 12 px)
-                Entree::Groupe(titre) => {
-                    let largeur = titre.len() as i32 * 12;
-                    cv.rect(px0 + pad, y + 11, 4, 4, th.accent);
-                    cv.text(px0 + pad + 12, y + 10, titre, 2, th.accent);
-                    cv.filet_fondu(px0 + pad + largeur + 22, y + 16, inner - largeur - 26, 0x70, cc_dim);
+                // catégorie : le libellé et un chevron au bord droit — il y a
+                // un niveau de plus derrière, on le voit sans essayer
+                Entree::SousMenu(titre, _) => {
+                    let dispo = inner - 36 - 28;
+                    cv.text_fit(px0 + pad + 36, y, titre, 3, color, dispo);
+                    let w = cv.largeur(">", 3);
+                    cv.text(px0 + pad + inner - w, y, ">", 3, cc_dim);
                 }
                 Entree::Action("FERMER") => {
                     let arme = self.arme.as_deref() == Some("FERMER");
@@ -4679,7 +4821,7 @@ impl App {
         // (section CAPTURE). Un rail fin au bord droit et un curseur de la
         // taille de la fenêtre visible : on sait qu'il y a une suite, et où
         // l'on est. Muet quand tout tient.
-        if self.page == Page::Reglages {
+        if self.page.defilante() {
             let hauteurs: Vec<i32> = self.liste().iter().map(|e| e.hauteur()).collect();
             let total: i32 = hauteurs.iter().sum();
             let budget = self.liste_budget().max(46);
@@ -7000,21 +7142,32 @@ fn main() {
     // `--focus` (Home+bas) impose sa ligne : ne pas la déplacer ensuite
     let mut focus_force = false;
     if let Some(f) = arg_value(&args, "--focus") {
-        // combo Home+haut/bas : le panneau s'ouvre avec la ligne déjà choisie
+        // combo Home+haut/bas : le panneau s'ouvre dans la bonne CATÉGORIE,
+        // avec la ligne déjà choisie (les réglages ont quitté la page
+        // « RÉGLAGES » à plat pour les sous-menus)
         let cible = match f.as_str() {
-            "fps" => Some(Entree::Fps),
-            "mango" => Some(Entree::Mango),
-            "volume" => Some(Entree::Volume),
+            "fps" => Some((Cat::Perf, Entree::Fps)),
+            "mango" => Some((Cat::Perf, Entree::Mango)),
+            "volume" => Some((Cat::Son, Entree::Volume)),
             // section CAPTURE (enregistreur / replay) : banc visuel
-            "capture" => Some(Entree::Qualite),
-            // dernière ligne de la page : vérifie le bas de liste (défilement)
-            "fin" => Some(Entree::Style),
+            "capture" => Some((Cat::Capture, Entree::Qualite)),
+            // dernière ligne de la catégorie la plus longue : vérifie le bas
+            // de liste (défilement)
+            "fin" => Some((Cat::Capture, Entree::Curseur)),
             _ => None,
         };
-        if let Some(c) = cible {
-            // ces lignes vivent sur la page RÉGLAGES : on s'y place
-            app.page = Page::Reglages;
-            if let Some(i) = app.reglages.iter().position(|e| *e == c) {
+        if f == "accueil" {
+            // menu des catégories : la page d'ouverture est imposée, sinon la
+            // boucle bascule sur APPLICATIONS faute de fenêtre active
+            app.page = Page::Accueil;
+            app.selected = 0;
+            app.status = "MENU: CATEGORIES".to_string();
+            println!("FOCUS accueil");
+            app.dirty = true;
+            focus_force = true;
+        } else if let Some((cat, c)) = cible {
+            app.entrer_categorie(cat);
+            if let Some(i) = app.liste().iter().position(|e| *e == c) {
                 app.selected = i;
             }
             app.refresh_mangohud();
@@ -7842,5 +7995,65 @@ mod tests {
             frappe_nouvelle(&mut tenues, &mut derniere, sud, 2, t3),
             Frappe::Neuve
         );
+    }
+
+    /// L'accueil est le menu des catégories : chacune une seule fois, toutes
+    /// avec un contenu, et l'en-tête de fenêtre en tête — il a une hauteur
+    /// nulle mais le curseur doit pouvoir s'y poser partout (A y ouvre les
+    /// actions de la fenêtre active).
+    #[test]
+    fn accueil_est_le_menu_des_categories() {
+        let accueil = accueil_items();
+        let cats: Vec<Cat> = accueil
+            .iter()
+            .map(|e| match e {
+                Entree::SousMenu(_, cat) => *cat,
+                autre => panic!("entrée {autre:?} à l'accueil : ce n'est pas une catégorie"),
+            })
+            .collect();
+        assert_eq!(cats.len(), 8, "une catégorie par domaine");
+
+        for cat in &cats {
+            let items = cat.entrees(false, false);
+            assert_eq!(
+                items.first(),
+                Some(&Entree::Fenetre),
+                "{cat:?} doit commencer par l'en-tête de fenêtre"
+            );
+            assert!(items.len() >= 2, "{cat:?} sans aucune action");
+            assert!(!cat.nom().is_empty(), "{cat:?} sans libellé");
+            assert!(
+                items.iter().all(|e| e.selectionnable()),
+                "{cat:?} : une ligne non sélectionnable"
+            );
+        }
+
+        // une catégorie ne doit pas apparaître deux fois (le retour depuis une
+        // catégorie retrouve son entrée par ce libellé)
+        let mut uniques: Vec<String> = cats.iter().map(|c| format!("{c:?}")).collect();
+        uniques.sort();
+        uniques.dedup();
+        assert_eq!(uniques.len(), cats.len(), "catégorie en double");
+    }
+
+    /// Présence conditionnelle : `SAUVER REPLAY` seulement quand le buffer
+    /// tourne, la déconnexion seulement quand une manette Bluetooth est connue.
+    #[test]
+    fn entrees_conditionnelles_des_categories() {
+        let sauvable = |replay| {
+            Cat::Capture
+                .entrees(replay, false)
+                .contains(&Entree::Action("SAUVER REPLAY"))
+        };
+        assert!(!sauvable(false), "pas de ligne morte au repos");
+        assert!(sauvable(true));
+
+        let deconnectable = |pad| {
+            Cat::Manette
+                .entrees(false, pad)
+                .contains(&Entree::Action("DECONNECTER LA MANETTE"))
+        };
+        assert!(!deconnectable(false));
+        assert!(deconnectable(true));
     }
 }
