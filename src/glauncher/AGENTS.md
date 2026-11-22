@@ -78,6 +78,10 @@ leurs icônes, pour l'interface.
   des jeux (`identities.txt`), années (`years.txt`)
 - `src/dialog.rs` — sélecteur de fichiers du système pour les images perso
   (`kdialog`, puis `zenity`), lancé hors de l'UI
+- `src/thumbs.rs` — miniatures 320 px de la grille (deux voies : `now`
+  puis `sweep`), invalidation par `.settings` et mtime
+- `src/updates.rs` — mise à jour de l'image : commande en tâche de fond, lue
+  sur le protocole `::gablue:` (le même que les dialogues de Gablue Manager)
 - `src/watch.rs` — surveillance inotify : rafale → chemins touchés
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
@@ -289,6 +293,25 @@ leurs icônes, pour l'interface.
   À la lecture, le plus grand total gagne entre les fichiers (format changé,
   fichier recopié) : additionner compterait deux fois une partie. Un lancement
   de moins de 5 s ne compte pas.
+- **Mise à jour de l'image** (`src/updates.rs`) : `M` (clavier seul tant que
+  le menu réglages n'existe pas) lance `sudo -n bootc upgrade` — autorisé sans
+  mot de passe par `sudoers.d/nopasswd` — et lit sa sortie sur le protocole
+  `::gablue:` (`step n total libellé`, `busy`, `percent`, `done`), **le même
+  que les dialogues de Gablue Manager** (`parse_gablue_progress`) : une seule
+  vérité, deux rendus, une commande branchable sur l'un ou l'autre sans
+  réécriture. `step` compte en `(n-1)/total` (100 % seulement au `done`),
+  `busy` = barre indéterminée (35 %), `percent` = mesuré. Fin : code 0 →
+  « prête — s'appliquera au redémarrage » (bootc **stage**, jamais appliqué à
+  chaud), « no changes » → « déjà à jour » ; code ≠ 0 → barre pleine en rouge
+  et la **dernière ligne de journal** (`detail`) plutôt qu'un code de sortie.
+  La barre vit au-dessus de l'aide du pied de page, **16 px de haut même au
+  repos** (le pied de page ne saute pas), son libellé **à côté d'elle** : dans
+  le message d'état il passait sous l'aide centrée (constaté au banc le 22/11).
+  Le remplissage ne change qu'un `FillPortion`, sur message — jamais une
+  horloge, jamais une mise en page par image. `GLAUNCHER_UPDATE_CMD` remplace
+  la commande et `GLAUNCHER_UPDATE_DEMO=1` la lance au démarrage (banc, faux
+  émetteur) ; `PR_SET_PDEATHSIG` évite qu'un launcher tué laisse une commande
+  root orpheline.
 - **Musique de fond** (`music = true`, défaut) : piste **embarquée**
   (`assets/music/menu.opus`) — 22 Mo de WAV source → **1,6 Mo** en Opus 96 kb/s,
   préparée une fois par

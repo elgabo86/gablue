@@ -21,6 +21,7 @@ mod sparkles;
 mod spinner;
 mod state;
 mod thumbs;
+mod updates;
 mod watch;
 
 use iced::window;

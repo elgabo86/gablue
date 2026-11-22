@@ -39,6 +39,7 @@ use crate::sparkles;
 use crate::spinner;
 use crate::state::{self, SortBy};
 use crate::thumbs;
+use crate::updates;
 
 // --- palette -----------------------------------------------------------------
 
@@ -489,6 +490,11 @@ pub enum Message {
     Tick,
     /// Une image de la poussière d'étoiles (minuteur de `sparkles`).
     Sparkle,
+    /// Progression d'une mise à jour : étape du protocole `::gablue:` ou fin
+    /// de la commande (voir `src/updates.rs`).
+    Update(updates::Event),
+    /// Lance la mise à jour de l'image (clavier `M` pour l'instant).
+    UpdateApply,
     /// Un téléchargement commence (le worker de visuels réveille l'interface,
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
@@ -737,6 +743,9 @@ pub struct App {
     /// Filtre d'année actif (None = toutes les années).
     year_filter: Option<u32>,
     status: Option<(String, bool)>,
+    /// Mise à jour en cours (ou la dernière) : sa barre et son libellé vivent
+    /// dans le pied de page.
+    update: Option<updates::Update>,
     notice: Option<String>,
     pad: Option<PadKind>,
     /// Toutes les manettes connectées : en débrancher une ne doit pas effacer
@@ -968,6 +977,7 @@ impl App {
             selected: 0,
             running: None,
             status: None,
+            update: None,
             notice,
             pad: None,
             pads: Vec::new(),
@@ -1081,6 +1091,12 @@ impl App {
         if open_picker {
             // crochet de test : --picker ouvre le menu de choix d'image
             tasks.push(Task::done(Message::OpenPicker(covers::ArtKind::Grid)));
+        }
+        if std::env::var_os("GLAUNCHER_UPDATE_DEMO").is_some() {
+            // crochet de banc : lance la mise à jour au démarrage (avec un
+            // `GLAUNCHER_UPDATE_CMD` factice) pour regarder la barre sans
+            // toucher au clavier ni au système
+            tasks.push(Task::done(Message::UpdateApply));
         }
 
         crate::stamp("préparation");
@@ -2445,8 +2461,42 @@ impl App {
             // que de faire reconstruire la vue et démarrer les images (la roue
             // de chargement apparaît ainsi au DÉBUT de la requête)
             Message::Activity => Task::none(),
-            Message::Quit => iced::exit(),
-            Message::Nothing => Task::none(),
+            // mise à jour de l'image : une seule à la fois, et jamais deux
+            // commandes concurrentes sur le même déploiement
+            Message::UpdateApply => {
+                let deja = self
+                    .update
+                    .as_ref()
+                    .is_some_and(|update| !update.done && update.error.is_none());
+                if deja {
+                    return Task::none();
+                }
+                self.update = Some(updates::Update::default());
+                updates::spawn(updates::default_command(), |event| {
+                    post(Message::Update(event));
+                });
+                Task::none()
+            }
+            Message::Update(event) => {
+                let Some(update) = self.update.as_mut() else {
+                    return Task::none();
+                };
+                match event {
+                    updates::Event::Line(step) => update.apply(step),
+                    updates::Event::Detail(line) => {
+                        if !line.trim().is_empty() {
+                            update.detail = line;
+                        }
+                    }
+                    updates::Event::Exited(code) => update.finish(code),
+                    updates::Event::Failed(err) => {
+                        update.error = Some(err.clone());
+                        update.label = format!("mise à jour impossible : {err}");
+                    }
+                }
+                Task::none()
+            }
+            Message::Quit => iced::exit(),            Message::Nothing => Task::none(),
         }
     }
 
@@ -3677,6 +3727,7 @@ impl App {
                 "+" | "=" | "＋" => return Task::done(Message::Zoom(1)),
                 "-" | "_" | "−" | "–" | "‐" => return Task::done(Message::Zoom(-1)),
                 "f" => return Task::done(Message::ToggleFullscreen),
+                "m" => return Task::done(Message::UpdateApply),
                 "q" if self.mode.is_console() => return Task::none(),
                 "q" => return Task::done(Message::Quit),
                 _ => {}
@@ -5717,7 +5768,7 @@ impl App {
         )
         .width(Fill);
 
-        container(stack![sides, hints_centered])
+        container(column![self.update_bar(), stack![sides, hints_centered]].spacing(6))
             .padding(Padding {
                 top: 14.0,
                 right: 4.0,
@@ -5725,6 +5776,67 @@ impl App {
                 left: 4.0,
             })
             .into()
+    }
+
+    /// Barre de progression de la mise à jour, au-dessus de l'aide, avec son
+    /// libellé **à côté d'elle** (et non dans le message d'état : un libellé
+    /// long y passait sous l'aide centrée — constaté au banc le 22/11).
+    ///
+    /// Hauteur **fixe même au repos** : le pied de page ne doit pas sauter
+    /// quand elle apparaît, et le remplissage ne change qu'un `FillPortion`,
+    /// sur message, jamais sur une horloge (aucune mise en page par image).
+    fn update_bar(&self) -> Element<'_, Message> {
+        let (percent, color) = match &self.update {
+            // échec : barre pleine en rouge, le libellé dit pourquoi (le code
+            // de sortie seul n'aide personne)
+            Some(update) if update.error.is_some() => (100.0, DANGER),
+            Some(update) => (update.percent.unwrap_or(35.0), ACCENT),
+            None => (0.0, Color::TRANSPARENT),
+        };
+        let filled = (percent.clamp(0.0, 100.0) * 100.0).round() as u16;
+        let (left_color, right_color) = if filled == 0 {
+            (Color::TRANSPARENT, Color::TRANSPARENT)
+        } else {
+            (color, CELL_BG)
+        };
+        let segment = |portion: u16, tint: Color| {
+            container(Row::new())
+                .width(Length::FillPortion(portion.max(1)))
+                .height(Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(tint)),
+                    border: Border {
+                        radius: 2.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                })
+        };
+        // piste + remplissage : deux portions d'une même rangée, donc le
+        // pourcentage est exact quelle que soit la largeur de la fenêtre
+        let track = row![
+            segment(filled, left_color),
+            segment(100u16.saturating_sub(filled), right_color),
+        ];
+
+        let (label, label_color) = match &self.update {
+            Some(update) if update.error.is_some() => (update.label.clone(), DANGER),
+            Some(update) if update.done => (update.label.clone(), ACCENT),
+            Some(update) => (update.label.clone(), MUTED),
+            None => (String::new(), MUTED),
+        };
+
+        container(
+            row![
+                container(track).width(Fill).height(Length::Fixed(3.0)),
+                text(label).size(12).font(HELP_FONT).color(label_color),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .height(Length::Fixed(16.0))
+        .into()
     }
 }
 
