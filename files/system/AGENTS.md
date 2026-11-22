@@ -59,7 +59,15 @@
   **0 = fin voulue** (KWin s'arrête, retour au greeter), **≠ 0 = plantage** →
   relance après 1 s. En session console le launcher n'expose aucune sortie
   (retour/Échap inertes) : la sortie passe par le menu système de `gpad`
-  (Home maintenu). Détail → `src/glauncher/AGENTS.md`.
+  (Home maintenu). Il honore aussi **une** entrée d'autostart XDG — celle de
+  Syncthing — parce qu'une session sans plasmashell ne lance aucun autostart
+  et que la synchronisation de dossiers n'a rien à voir avec l'interface : il
+  relit `Exec=` telle quelle (une entrée `flatpak run`, cas de SyncThingy,
+  démarre donc l'application flatpak sans code spécial), respecte
+  `Hidden`/`X-GNOME-Autostart-enabled`/`OnlyShowIn`, retire les codes de champ
+  et ne double pas une instance déjà lancée (`flatpak ps`). C'est le bon
+  endroit et non `gablue-gaming-session` : ce script tourne **dans** KWin,
+  donc `WAYLAND_DISPLAY` et le bus utilisateur existent déjà.
 - **Pas encore là** (lots suivants) : la session « choix » avec compte à
   rebours (autologin retardé sans passer par le greeter), les entrées
   Mode console / Mode bureau de `gpad`, les réglages `session`/`autologin`/

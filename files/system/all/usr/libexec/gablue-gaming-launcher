@@ -13,6 +13,62 @@
 set -uo pipefail
 : "${GLAUNCHER:=/usr/bin/glauncher}"   # surchargeable pour le banc d'essai
 
+log() { printf 'gablue-gaming: %s\n' "$*" >&2; }
+
+# Syncthing : une session console ne lance AUCUN autostart XDG (c'est
+# plasmashell qui s'en charge, et il n'est pas là — volontairement : pas de
+# barre d'état, pas de panneaux). Or Syncthing synchronise des dossiers et n'a
+# rien à voir avec l'interface : on honore donc SON entrée d'autostart, et
+# elle seule. On relit la ligne `Exec=` de l'utilisateur telle quelle : si elle
+# passe par `flatpak run` (c'est le cas de SyncThingy), c'est l'application
+# flatpak qui démarre, sans code spécial. Respecte `Hidden=true` et
+# `X-GNOME-Autostart-enabled=false`, comme le gestionnaire de session.
+#
+# Lancé ici et non dans `gablue-gaming-session` : ce script est déjà dans la
+# session KWin, donc `WAYLAND_DISPLAY` et le bus utilisateur existent — une app
+# Qt/AppIndicator lancée avant le compositeur n'aurait pas de session.
+demarrer_syncthing() {
+    local f exec_ligne app_id deja only
+    for f in "$HOME/.config/autostart"/*.desktop /etc/xdg/autostart/*.desktop; do
+        [ -r "$f" ] || continue
+        grep -qiE '^(Name|Exec|X-Flatpak)=.*syncthing' "$f" || continue
+        grep -qiE '^Hidden=true' "$f" && continue
+        grep -qiE '^X-GNOME-Autostart-enabled=false' "$f" && continue
+        # `OnlyShowIn` : notre session s'appelle GablueGaming, mais elle porte
+        # aussi « KDE » (nécessaire au portail) — une entrée KDE reste valable
+        only=$(sed -n 's/^OnlyShowIn=//p' "$f" | head -1)
+        if [ -n "$only" ] && ! printf '%s' "$only" | grep -qiE '(^|;)(KDE|GablueGaming)(;|$)'; then
+            continue
+        fi
+        exec_ligne=$(sed -n 's/^Exec=//p' "$f" | head -1)
+        [ -n "$exec_ligne" ] || continue
+
+        # déjà en marche (relance du launcher après un plantage, ou unité
+        # systemd générée depuis la même entrée) : ne pas doubler l'instance
+        app_id=$(sed -n 's/^X-Flatpak=//p' "$f" | head -1)
+        if [ -n "$app_id" ]; then
+            deja=$(flatpak ps --columns=application 2>/dev/null | grep -Fx "$app_id")
+        else
+            deja=$(pgrep -f -- "$exec_ligne" 2>/dev/null | head -1)
+        fi
+        if [ -n "$deja" ]; then
+            log "syncthing : déjà lancé (rien à faire)"
+            return 0
+        fi
+
+        # codes de champ `%U`/`%f`… : sans objet ici, l'application est lancée
+        # une fois ; `%%` devient un vrai pour cent
+        exec_ligne=$(printf '%s' "$exec_ligne" \
+            | sed 's/%%/%/g; s/%[a-zA-Z]//g; s/[[:space:]]*$//')
+        setsid sh -c "$exec_ligne" </dev/null >/dev/null 2>&1 &
+        log "syncthing : démarré depuis $f"
+        return 0
+    done
+    log "syncthing : aucun autostart actif (rien lancé)"
+}
+
+demarrer_syncthing
+
 while :; do
     "$GLAUNCHER"
     code=$?
