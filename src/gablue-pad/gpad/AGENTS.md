@@ -17,7 +17,9 @@ l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliqué
 
 | Section / ligne | Curseur | Effet |
 |---|---|---|
-| `SON` / `VOLUME` | 21 crans, 0..100 % | ±5 % par cran (`pactl`, sink par défaut) ; **A = muet / non muet** (le niveau est conservé) |
+| `SON` / `VOLUME GENERAL` | 21 crans, 0..100 % | ±5 % par cran (`pactl`, sink par défaut) ; **A = muet / non muet** (le niveau est conservé) |
+| `SON` / `VOLUME JEU` | idem, sur le flux du jeu | visible seulement si le jeu émet du son : flux dont `application.process.id` appartient aux PID du paquet (lanceur + descendants), donc indépendant du général |
+| `SON` / `VOLUME APP` | idem, sur l'application compagne | visible seulement si une vidéo à côté émet du son (`VacuumTube`, `Jellyfin`, `tvqt`/`gablue-tv`, `YouTube` — `audio::est_compagne`) |
 | `AFFICHAGE` / `MANGOHUD` | 3 positions, `MASQUE` **à gauche** → `PAR DEFAUT` → `HORIZONTAL` | `mangohud.sh set-vue` — **même source que le dialogue « MangoHud… » de Gablue Manager** (`~/.config/MangoHud/MangoHud.conf`), voir plus bas |
 | `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` ; une limite **hors crans** (MangoJuice, dialogue « MangoHud… » de Gablue Manager) est affichée **telle quelle** et le curseur se pose sur le cran le plus proche — le premier gauche/droite repart de la vraie valeur (`refresh_mangohud` → `fps_reel`) |
 | `AFFICHAGE` / `VRR` | **interrupteur** (A) | VRR **automatique** (Adaptive Sync de KWin) sur toutes les sorties capables ↔ désactivé : `vrr.sh toggle` → `kscreen-doctor output.<nom>.vrrpolicy.automatic\|never` |
@@ -85,6 +87,9 @@ Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
   demandé est « dans le menu même » : ne pas y revenir). Marge layer-shell :
   **positive honorée** (bordure mesurée à x=1600 pour `--test-margin 480`),
   **négative ignorée** par KWin → le panneau glisse par décalage du **dessin**.
+- `GPAD_SON_DEMO=1` : deux flux audio factices (jeu 80 %, app 35 %) injectés à
+  l'entrée de la catégorie SON — banc visuel des trois volumes sans lancer un
+  jeu et une vidéo.
 - `FOCUS fps|mango|volume|capture|fin|accueil` : le panneau s'ouvre **dans la
   catégorie** de la ligne, curseur dessus (c'est ce que passe le combo
   Home+bas). Mesuré : `FOCUS fps` → catégorie `PERF`, `FPS` sélectionné.
@@ -722,6 +727,19 @@ Navigation : la liste **boucle** (bas depuis la dernière ligne revient à la
 première) — pendant un test, un « bas » de trop a relancé le clavier virtuel au
 lieu de tuer ; en cas de doute, relire `SELECT …` dans le journal avant de
 conclure.
+
+## Trois volumes (`src/audio.rs`)
+
+`pactl list sink-inputs` donne, pour chaque flux, son `application.process.id`
+et son volume : c'est la seule source qui permet de régler le **jeu** ou
+l'**application compagne** sans toucher à la musique de fond (le volume général
+n'est qu'un flux parmi d'autres). `audio::parser` est pur (testé sur une sortie
+réelle figée), `regler`/`basculer_mute` passent par `pactl
+set-sink-input-volume|mute`. Un flux n'existe que **pendant la lecture** : une
+app ouverte mais muette n'a pas de ligne, et c'est voulu (pas de ligne morte).
+Après chaque réglage, les flux sont relus : `pactl` peut borner ou refuser, et
+l'écran ne doit jamais afficher un chiffre inventé. Le libellé « VOLUME
+GENERAL » évite la confusion avec les deux autres.
 
 ## Enregistrement et replay : deux pistes indépendantes
 

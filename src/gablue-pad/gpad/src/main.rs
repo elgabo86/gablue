@@ -32,6 +32,7 @@ use wayland_client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
+mod audio;
 mod capture;
 mod clavier;
 
@@ -787,7 +788,12 @@ enum Entree {
     Action(&'static str),
     /// application/media : ouvre si fermé, ferme si ouvert
     Appli(&'static str),
+    /// sortie par défaut (« volume général »)
     Volume,
+    /// volume du flux du jeu en cours (PID du lanceur et descendants)
+    VolumeJeu,
+    /// volume du flux d'une application compagne (vidéo lancée à côté)
+    VolumeApp,
     Mango,
     Fps,
     /// durée du buffer de replay (secondes)
@@ -843,6 +849,24 @@ enum Cat {
     Systeme,
 }
 
+/// Quel flux audio une ligne de volume pilote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cible {
+    Jeu,
+    App,
+}
+
+/// Ce qui existe au moment où une catégorie est construite : une ligne dont
+/// l'objet n'existe pas (pas de replay, pas de manette BT, pas de flux audio)
+/// n'est pas proposée du tout.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Dispo {
+    replay: bool,
+    manette: bool,
+    jeu: bool,
+    app: bool,
+}
+
 impl Cat {
     fn nom(self) -> &'static str {
         match self {
@@ -862,10 +886,9 @@ impl Cat {
     /// sa ligne propre, mais le curseur doit pouvoir s'y poser partout (A y
     /// ouvre les actions de la fenêtre active).
     ///
-    /// `replay_active` décide de la présence de `SAUVER REPLAY` (même règle
-    /// qu'avant : une ligne annonçant « INACTIF » n'apprend rien) ; la
-    /// déconnexion n'apparaît que si une manette Bluetooth est connue.
-    fn entrees(self, replay_active: bool, pad_present: bool) -> Vec<Entree> {
+    /// `Dispo` décide des lignes conditionnelles (même règle qu'avant : une
+    /// ligne annonçant « INACTIF » n'apprend rien).
+    fn entrees(self, dispo: Dispo) -> Vec<Entree> {
         match self {
             Cat::Jeu => vec![
                 Entree::Fenetre,
@@ -895,7 +918,7 @@ impl Cat {
                     Entree::Action("CAPTURE ECRAN"),
                     Entree::Action("REPLAY"),
                 ];
-                if replay_active {
+                if dispo.replay {
                     v.push(Entree::Action("SAUVER REPLAY"));
                 }
                 v.extend([
@@ -909,14 +932,25 @@ impl Cat {
                 ]);
                 v
             }
-            Cat::Son => vec![Entree::Fenetre, Entree::Volume],
+            // le général d'abord, puis le jeu et l'app compagne : trois flux
+            // distincts, chacun réglable sans toucher aux autres
+            Cat::Son => {
+                let mut v = vec![Entree::Fenetre, Entree::Volume];
+                if dispo.jeu {
+                    v.push(Entree::VolumeJeu);
+                }
+                if dispo.app {
+                    v.push(Entree::VolumeApp);
+                }
+                v
+            }
             Cat::Manette => {
                 let mut v = vec![
                     Entree::Fenetre,
                     Entree::Action("MODE SOURIS"),
                     Entree::Action("CLAVIER VIRTUEL"),
                 ];
-                if pad_present {
+                if dispo.manette {
                     v.push(Entree::Action("DECONNECTER LA MANETTE"));
                 }
                 v
@@ -963,7 +997,9 @@ impl Entree {
     fn nom(self) -> &'static str {
         match self {
             Entree::Action(n) | Entree::Appli(n) => n,
-            Entree::Volume => "VOLUME",
+            Entree::Volume => "VOLUME GENERAL",
+            Entree::VolumeJeu => "VOLUME JEU",
+            Entree::VolumeApp => "VOLUME APP",
             Entree::Mango => "MANGOHUD",
             Entree::Fps => "FPS MAX",
             Entree::Duree => "DUREE REPLAY",
@@ -989,6 +1025,8 @@ impl Entree {
         matches!(
             self,
             Entree::Volume
+                | Entree::VolumeJeu
+                | Entree::VolumeApp
                 | Entree::Mango
                 | Entree::Fps
                 | Entree::Duree
@@ -1008,6 +1046,8 @@ impl Entree {
             Entree::Fenetre => 0,
             Entree::SousMenu(..) => 56,
             Entree::Volume
+            | Entree::VolumeJeu
+            | Entree::VolumeApp
             | Entree::Mango
             | Entree::Fps
             | Entree::Duree
@@ -1362,8 +1402,12 @@ struct App {
     /// position dans REPR_OPTS (30 s par défaut)
     repr_idx: usize,
     vol: i32,
-    /// sortie muette (A sur la ligne VOLUME bascule)
+    /// sortie muette (A sur la ligne VOLUME GENERAL bascule)
     vol_mute: bool,
+    /// flux audio du jeu en cours et d'une application compagne, s'ils
+    /// existent : chacun a son propre volume, indépendant du général
+    son_jeu: Option<audio::Flux>,
+    son_app: Option<audio::Flux>,
     // diagnostic du canal : qui lit encore la manette pendant l'overlay
     evdev_node: Option<String>,
     hidraw_node: Option<String>,
@@ -1737,6 +1781,8 @@ impl App {
             repr_idx: 1,
             vol: 50,
             vol_mute: false,
+            son_jeu: None,
+            son_app: None,
             evdev_node: None,
             hidraw_node: None,
             last_scan: Instant::now(),
@@ -2188,7 +2234,7 @@ impl App {
     fn maj_accueil(&mut self) {
         self.accueil = accueil_items();
         if let Page::Categorie(cat) = self.page {
-            self.cat_items = cat.entrees(self.replay_active, self.pad_bt.is_some());
+            self.cat_items = cat.entrees(self.dispo());
         }
         let n = self.liste().len();
         if self.selected >= n {
@@ -2722,6 +2768,8 @@ impl App {
         let entree = self.liste()[self.selected];
         match entree {
             Entree::Volume => self.set_vol(self.vol + 5 * sens),
+            Entree::VolumeJeu => self.regler_flux(Cible::Jeu, 5 * sens),
+            Entree::VolumeApp => self.regler_flux(Cible::App, 5 * sens),
             Entree::Fps => {
                 let max = FPS_OPTS.len() as i32 - 1;
                 // Valeur hors crans : on part de la vraie valeur et on va au
@@ -3134,6 +3182,55 @@ impl App {
         println!("MUTE {}", self.vol_mute);
     }
 
+    /// Règle le volume d'un flux (jeu ou app compagne). On relit ensuite la
+    /// valeur réelle : `pactl` peut borner ou refuser, l'écran ne doit pas
+    /// afficher un chiffre inventé.
+    fn regler_flux(&mut self, cible: Cible, delta: i32) {
+        let flux = match cible {
+            Cible::Jeu => self.son_jeu.clone(),
+            Cible::App => self.son_app.clone(),
+        };
+        let Some(flux) = flux else {
+            self.status = "CE FLUX N'EXISTE PLUS".to_string();
+            self.refresh_sons();
+            return;
+        };
+        let cible_pct = (flux.pourcent as i32 + delta).clamp(0, 100) as u8;
+        if audio::regler(flux.index, cible_pct) {
+            self.refresh_sons();
+            self.status = format!(
+                "{}: {}%",
+                match cible {
+                    Cible::Jeu => "VOLUME JEU",
+                    Cible::App => "VOLUME APP",
+                },
+                cible_pct
+            );
+            println!("VOLUME FLUX {} {}%", flux.index, cible_pct);
+        } else {
+            self.status = "VOLUME: ECHEC".to_string();
+        }
+    }
+
+    /// A sur une ligne de flux : muet / non muet, sans toucher aux autres.
+    fn muter_flux(&mut self, cible: Cible) {
+        let flux = match cible {
+            Cible::Jeu => self.son_jeu.clone(),
+            Cible::App => self.son_app.clone(),
+        };
+        let Some(flux) = flux else {
+            self.status = "CE FLUX N'EXISTE PLUS".to_string();
+            self.refresh_sons();
+            return;
+        };
+        if audio::basculer_mute(flux.index) {
+            self.refresh_sons();
+            self.status = "MUET BASCULE".to_string();
+        } else {
+            self.status = "MUET: ECHEC".to_string();
+        }
+    }
+
     fn refresh_volume(&mut self) {
         self.vol_mute = Self::lire_mute();
         if let Ok(o) = std::process::Command::new("/usr/bin/pactl")
@@ -3453,7 +3550,31 @@ impl App {
     /// `cat_items` — l'ancienne serait dessinée avec le contenu de la
     /// nouvelle (deux menus mélangés).
     fn entrer_categorie(&mut self, cat: Cat) {
-        let items = cat.entrees(self.replay_active, self.pad_bt.is_some());
+        // les flux audio changent à chaque lancement de jeu ou de vidéo :
+        // on relit à l'entrée de la catégorie qui les propose
+        if cat == Cat::Son {
+            if std::env::var_os("GPAD_SON_DEMO").is_some() {
+                // crochet de banc : deux flux factices, pour photographier les
+                // trois lignes sans lancer un jeu et une vidéo
+                self.son_jeu = Some(audio::Flux {
+                    index: 9001,
+                    pid: 1,
+                    nom: "gwine".to_string(),
+                    pourcent: 80,
+                    mute: false,
+                });
+                self.son_app = Some(audio::Flux {
+                    index: 9002,
+                    pid: 2,
+                    nom: "VacuumTube".to_string(),
+                    pourcent: 35,
+                    mute: false,
+                });
+            } else {
+                self.refresh_sons();
+            }
+        }
+        let items = cat.entrees(self.dispo());
         self.cat_items = items;
         self.page = Page::Categorie(cat);
         self.pdep = None;
@@ -3466,6 +3587,41 @@ impl App {
 
     fn est_categorie(&self) -> bool {
         matches!(self.page, Page::Categorie(_))
+    }
+
+    /// Ce qui existe maintenant : pilote les lignes conditionnelles.
+    fn dispo(&self) -> Dispo {
+        Dispo {
+            replay: self.replay_active,
+            manette: self.pad_bt.is_some(),
+            jeu: self.son_jeu.is_some(),
+            app: self.son_app.is_some(),
+        }
+    }
+
+    /// Relit les flux audio : celui du jeu (PID du lanceur et ses descendants)
+    /// et celui d'une application compagne (vidéo lancée à côté). Un flux
+    /// n'existe que pendant la lecture : une app ouverte mais muette n'en a
+    /// pas, et sa ligne n'est alors pas proposée.
+    fn refresh_sons(&mut self) {
+        let mut pids: Vec<i32> = Vec::new();
+        if let Some(jeu) = self.jeu_actif() {
+            for racine in jeu.pids.clone() {
+                pids.push(racine);
+                pids.extend(descendants(racine));
+            }
+        }
+        let flux = audio::flux();
+        self.son_jeu = flux.iter().find(|f| f.pid > 0 && pids.contains(&f.pid)).cloned();
+        self.son_app = flux
+            .iter()
+            .find(|f| !f.nom.is_empty() && audio::est_compagne(&f.nom))
+            .cloned();
+        println!(
+            "SON jeu={:?} app={:?}",
+            self.son_jeu.as_ref().map(|f| (f.index, f.pourcent)),
+            self.son_app.as_ref().map(|f| (f.index, f.pourcent))
+        );
     }
 
     /// Exécute l'entrée sélectionnée. Ce qui n'est pas câblé le dit
@@ -3492,6 +3648,8 @@ impl App {
         match item {
             // les lignes de réglage n'ont rien à valider : gauche/droite agit
             Entree::Volume => self.toggle_mute(),
+            Entree::VolumeJeu => self.muter_flux(Cible::Jeu),
+            Entree::VolumeApp => self.muter_flux(Cible::App),
             Entree::Fps => self.status = "FPS: GAUCHE/DROITE".to_string(),
             Entree::Duree => self.status = "DUREE REPLAY: GAUCHE/DROITE".to_string(),
             Entree::Codec
@@ -4189,6 +4347,41 @@ impl App {
         self.dirty = true;
     }
 
+    /// Ligne de volume d'un flux audio (jeu, app compagne) : valeur à droite,
+    /// curseur gradué dessous — même présentation que VOLUME GENERAL, pour
+    /// qu'on voie d'un coup d'œil qu'on règle bien trois choses différentes.
+    #[allow(clippy::too_many_arguments)]
+    fn ligne_flux(
+        &self,
+        cv: &mut Canvas,
+        px0: i32,
+        pad: i32,
+        inner: i32,
+        y: i32,
+        label: &str,
+        flux: Option<&audio::Flux>,
+        couleur: u32,
+        muet_couleur: u32,
+        sel: bool,
+    ) {
+        let (valeur, teinte) = match flux {
+            Some(flux) if flux.mute => ("MUET".to_string(), muet_couleur),
+            Some(flux) => (format!("{}%", flux.pourcent), couleur),
+            None => ("—".to_string(), muet_couleur),
+        };
+        cv.text_fit(px0 + pad + 36, y, label, 3, couleur, inner - 36);
+        self.valeur_droite(cv, px0 + pad + inner, y, &valeur, 2, teinte);
+        self.curseur_ligne(
+            cv,
+            px0 + pad + 36,
+            y + 40,
+            inner - 36,
+            21,
+            flux.map(|flux| (flux.pourcent / 5) as usize).unwrap_or(0),
+            sel,
+        );
+    }
+
     /// Texte aligné à droite (police à chasse fixe : 6 px par caractère).
     fn valeur_droite(&self, cv: &mut Canvas, x_droite: i32, y: i32, s: &str, scale: i32, color: u32) {
         let w = cv.largeur(s, scale);
@@ -4670,13 +4863,17 @@ impl App {
                         );
                     }
                 }
+                Entree::VolumeJeu => self.ligne_flux(
+                    &mut cv, px0, pad, inner, y, "VOLUME JEU", self.son_jeu.as_ref(), color, cc_warn, sel),
+                Entree::VolumeApp => self.ligne_flux(
+                    &mut cv, px0, pad, inner, y, "VOLUME APP", self.son_app.as_ref(), color, cc_warn, sel),
                 Entree::Volume => {
                     let (v, vc) = if self.vol_mute {
                         ("MUET".to_string(), cc_warn)
                     } else {
                         (format!("{}%", self.vol), color)
                     };
-                    cv.text_fit(px0 + pad + 36, y, "VOLUME", 3, color, inner - 36);
+                    cv.text_fit(px0 + pad + 36, y, "VOLUME GENERAL", 3, color, inner - 36);
                     // valeur au même corps que MANGOHUD / DURÉE / STYLE : à
                     // l'échelle 3 les nombres écrasaient les autres lignes
                     self.valeur_droite(&mut cv, px0 + pad + inner, y, &v, 2, vc);
@@ -8014,7 +8211,7 @@ mod tests {
         assert_eq!(cats.len(), 8, "une catégorie par domaine");
 
         for cat in &cats {
-            let items = cat.entrees(false, false);
+            let items = cat.entrees(Dispo::default());
             assert_eq!(
                 items.first(),
                 Some(&Entree::Fenetre),
@@ -8042,7 +8239,10 @@ mod tests {
     fn entrees_conditionnelles_des_categories() {
         let sauvable = |replay| {
             Cat::Capture
-                .entrees(replay, false)
+                .entrees(Dispo {
+                    replay,
+                    ..Dispo::default()
+                })
                 .contains(&Entree::Action("SAUVER REPLAY"))
         };
         assert!(!sauvable(false), "pas de ligne morte au repos");
@@ -8050,7 +8250,10 @@ mod tests {
 
         let deconnectable = |pad| {
             Cat::Manette
-                .entrees(false, pad)
+                .entrees(Dispo {
+                    manette: pad,
+                    ..Dispo::default()
+                })
                 .contains(&Entree::Action("DECONNECTER LA MANETTE"))
         };
         assert!(!deconnectable(false));
