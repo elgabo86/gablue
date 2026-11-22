@@ -5636,11 +5636,15 @@ fn lire_jeu(chemin: &std::path::Path, cache: &std::path::Path) -> Option<JeuActi
     if jeu.nom.is_empty() {
         jeu.nom = origine;
     }
+    // Les visuels sont nommés d'après le JEU SteamGridDB (`assets/identities.txt`
+    // partagé par Syncthing), pas d'après le paquet : deux `.wgp`/`.lgp` du
+    // même jeu dont les noms diffèrent tombent sur les mêmes images.
+    let cle = cle_visuels(cache, &jeu.slug);
     if jeu.logo.is_empty() {
-        jeu.logo = visuel_png(cache, "logos", &jeu.slug);
+        jeu.logo = visuel_png(cache, "logos", &cle);
     }
     if jeu.icone.is_empty() {
-        jeu.icone = icone_png(cache, &jeu.slug);
+        jeu.icone = icone_png(cache, &cle, &jeu.slug);
     }
     if jeu.nom.is_empty() {
         return None;
@@ -5670,17 +5674,17 @@ fn slugify(nom: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
-/// `<cache>/assets/<type>/<slug>.png` s'il existe. **PNG seulement** :
+/// `<cache>/assets/<type>/<clé>.png` s'il existe. **PNG seulement** :
 /// l'overlay ne décode que ça, les autres formats du cache sont convertis par
 /// `glauncher --art`.
-fn visuel_png(cache: &std::path::Path, genre: &str, slug: &str) -> String {
-    if slug.is_empty() {
+fn visuel_png(cache: &std::path::Path, genre: &str, cle: &str) -> String {
+    if cle.is_empty() {
         return String::new();
     }
     let chemin = cache
         .join("assets")
         .join(genre)
-        .join(format!("{slug}.png"));
+        .join(format!("{cle}.png"));
     if chemin.is_file() {
         chemin.display().to_string()
     } else {
@@ -5688,18 +5692,64 @@ fn visuel_png(cache: &std::path::Path, genre: &str, slug: &str) -> String {
     }
 }
 
-/// Icône du paquet, même ordre que le launcher : **`assets/icons/<slug>.png`
-/// d'abord** (icône SteamGridDB, y compris celle choisie à la main — le dossier
-/// `assets/` est partagé entre postes, un choix fait ailleurs doit gagner), puis
-/// l'icône extraite du paquet (`pack-icons/`).
-fn icone_png(cache: &std::path::Path, slug: &str) -> String {
+/// Clé des visuels d'un paquet : celle de **son jeu SteamGridDB** quand il est
+/// identifié, sinon son slug. Même règle que `covers::key` du launcher :
+/// `<id>-<nom slugifié>` (`8103-doom`), ou `<id>` seul si le nom manque.
+///
+/// L'identification vit dans `assets/identities.txt` (dossier partagé par
+/// Syncthing), format `slug=<id>` puis, après une tabulation, le nom SGDB. Un
+/// paquet absent du fichier (jamais identifié) garde son slug : ses visuels
+/// restent alors propres à la machine.
+fn cle_visuels(cache: &std::path::Path, slug: &str) -> String {
     if slug.is_empty() {
         return String::new();
     }
-    let essais = [
-        cache.join("assets/icons").join(format!("{slug}.png")),
-        cache.join("pack-icons").join(format!("{slug}.png")),
-    ];
+    let Ok(texte) = std::fs::read_to_string(cache.join("assets/identities.txt")) else {
+        return slug.to_string();
+    };
+    for ligne in texte.lines() {
+        let ligne = ligne.trim();
+        if ligne.is_empty() || ligne.starts_with('#') {
+            continue;
+        }
+        let Some((paquet, valeur)) = ligne.split_once('=') else {
+            continue;
+        };
+        if paquet.trim() != slug {
+            continue;
+        }
+        let valeur = valeur.trim();
+        let (id, nom) = match valeur.split_once('\t') {
+            Some((id, nom)) => (id.trim(), nom.trim()),
+            None => match valeur.split_once(' ') {
+                Some((id, nom)) => (id.trim(), nom.trim()),
+                None => (valeur, ""),
+            },
+        };
+        let Ok(id) = id.parse::<u64>() else {
+            continue;
+        };
+        return if nom.is_empty() {
+            id.to_string()
+        } else {
+            format!("{id}-{}", slugify(nom))
+        };
+    }
+    slug.to_string()
+}
+
+/// Icône du jeu, même ordre que le launcher : **`assets/icons/<clé>.png`
+/// d'abord** (icône SteamGridDB, y compris celle choisie à la main — le dossier
+/// `assets/` est partagé entre postes, un choix fait ailleurs doit gagner),
+/// puis `<id>.png` (visuel écrit avant de connaître le nom du jeu), puis
+/// l'icône extraite du paquet (`pack-icons/<slug>.png`, propre à la machine).
+fn icone_png(cache: &std::path::Path, cle: &str, slug: &str) -> String {
+    let icons = cache.join("assets/icons");
+    let mut essais = vec![icons.join(format!("{cle}.png"))];
+    if let Some((id, _)) = cle.split_once('-') {
+        essais.push(icons.join(format!("{id}.png")));
+    }
+    essais.push(cache.join("pack-icons").join(format!("{slug}.png")));
     essais
         .into_iter()
         .find(|chemin| chemin.is_file())
@@ -7534,6 +7584,53 @@ mod tests {
             jeu.icone.ends_with("pack-icons/croc-2-kingdom-of-the-gobbos.png"),
             "icône: {}",
             jeu.icone
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Les visuels suivent le **jeu SteamGridDB** (`assets/identities.txt`,
+    /// partagé par Syncthing), pas le nom du paquet : deux `.wgp`/`.lgp` du
+    /// même jeu dont les noms diffèrent tombent sur les mêmes fichiers. Un
+    /// paquet jamais identifié garde son slug.
+    #[test]
+    fn visuels_nommes_d_apres_le_jeu() {
+        let dir = bac("identites");
+        std::fs::create_dir_all(dir.join("assets/logos")).unwrap();
+        std::fs::create_dir_all(dir.join("assets/icons")).unwrap();
+        std::fs::create_dir_all(dir.join("pack-icons")).unwrap();
+        // identification apprise par le launcher (id + nom après tabulation)
+        std::fs::write(
+            dir.join("assets/identities.txt"),
+            "# identification SteamGridDB : slug=<id>\t<nom>\ncroc-2-fr=1234\tCroc 2\nsans-nom=5678\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("assets/logos/1234-croc-2.png"), b"png").unwrap();
+        std::fs::write(dir.join("assets/icons/5678.png"), b"png").unwrap();
+
+        assert_eq!(cle_visuels(&dir, "croc-2-fr"), "1234-croc-2");
+        assert_eq!(cle_visuels(&dir, "sans-nom"), "5678", "id seul si le nom manque");
+        assert_eq!(
+            cle_visuels(&dir, "mon-homebrew"),
+            "mon-homebrew",
+            "jamais identifié : le paquet"
+        );
+
+        // deux paquets du même jeu : même clé, donc même logo
+        assert_eq!(
+            visuel_png(&dir, "logos", &cle_visuels(&dir, "croc-2-fr")),
+            dir.join("assets/logos/1234-croc-2.png").display().to_string()
+        );
+        assert_eq!(
+            icone_png(&dir, &cle_visuels(&dir, "sans-nom"), "sans-nom"),
+            dir.join("assets/icons/5678.png").display().to_string(),
+            "un visuel rangé sous l'id seul est retrouvé"
+        );
+        // icône extraite du paquet : dernier recours, propre à la machine
+        std::fs::write(dir.join("pack-icons/mon-homebrew.png"), b"png").unwrap();
+        assert_eq!(
+            icone_png(&dir, &cle_visuels(&dir, "mon-homebrew"), "mon-homebrew"),
+            dir.join("pack-icons/mon-homebrew.png").display().to_string()
         );
 
         let _ = std::fs::remove_dir_all(&dir);

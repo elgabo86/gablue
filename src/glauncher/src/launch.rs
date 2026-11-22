@@ -58,7 +58,11 @@ pub fn build(config: &Config, game: &Game) -> Launch {
 /// les PID du jeu (et le logo s'il est en cache).
 ///
 /// Bloquant : à appeler depuis une tâche iced, jamais depuis l'UI.
-pub fn run(launch: &Launch, cache: &Path, slug: &str, nom: &str) -> Result<i32, String> {
+///
+/// `slug` = paquet (temps de jeu, `running.txt`), `key` = nom **partagé** de
+/// ses visuels dans `assets/` (le jeu SteamGridDB, voir `covers::key`) : c'est
+/// sous ce nom que l'overlay manette trouvera logo et icône.
+pub fn run(launch: &Launch, cache: &Path, slug: &str, key: &str, nom: &str) -> Result<i32, String> {
     eprintln!("glauncher : lancement de {}", launch.describe());
 
     let mut child = std::process::Command::new(&launch.program)
@@ -67,7 +71,7 @@ pub fn run(launch: &Launch, cache: &Path, slug: &str, nom: &str) -> Result<i32, 
         .spawn()
         .map_err(|err| format!("lancement impossible ({}) : {err}", launch.program))?;
 
-    let kwin_stop = kwin::watch(child.id(), cache, slug, nom);
+    let kwin_stop = kwin::watch(child.id(), cache, slug, key, nom);
 
     let status = child
         .wait()

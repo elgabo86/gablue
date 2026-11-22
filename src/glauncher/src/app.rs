@@ -95,6 +95,23 @@ const MOSAIC_SCALE: f32 = 0.55;
 const QUIT_WINDOW: Duration = Duration::from_millis(1500);
 /// Zoom des vignettes : pas, bornes (px de largeur).
 const ZOOM_STEP: f32 = 40.0;
+/// Durée par défaut de la glissade d'un changement de taille (`+`/`−`, L2/R2) :
+/// les vignettes partent de leur ancienne case et s'installent dans la nouvelle.
+/// `GLAUNCHER_ZOOM_MS` règle la durée sans recompiler (40 à 2000 ms), pour juger
+/// le mouvement sur place — même esprit que `GLAUNCHER_FX_MS`.
+const ZOOM_SECONDS: f32 = 0.16;
+
+/// Durée réellement utilisée (variable d'environnement ou valeur par défaut).
+fn zoom_seconds() -> f32 {
+    static VALUE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::env::var("GLAUNCHER_ZOOM_MS")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u64>().ok())
+            .map(|ms| (ms.clamp(40, 2000) as f32) / 1000.0)
+            .unwrap_or(ZOOM_SECONDS)
+    })
+}
 const CELL_MIN: f32 = 120.0;
 const CELL_MAX: f32 = 520.0;
 /// Bornes du nombre de colonnes atteignables au zoom (grille qui remplit la
@@ -252,16 +269,17 @@ fn cover_message(event: covers::CoverEvent) -> Message {
             query,
             result,
         },
-        covers::CoverEvent::Year { slug, year } => Message::Year { slug, year },
+        covers::CoverEvent::Year { slug, key, year } => Message::Year { slug, key, year },
+        covers::CoverEvent::Identified { slug, identity } => Message::Identified { slug, identity },
     }
 }
 
 /// Lance le jeu et attend sa fin, puis renvoie le résultat par le bus.
-fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf, slug: String) {
+fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf, slug: String, key: String) {
     let _ = std::thread::Builder::new()
         .name(format!("glauncher-run:{name}"))
         .spawn(move || {
-            let result = launch::run(&command, &cache, &slug, &name);
+            let result = launch::run(&command, &cache, &slug, &key, &name);
             post(Message::Launched { name, result });
         });
 }
@@ -457,10 +475,18 @@ pub enum Message {
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
     /// Année de sortie apprise par le worker pour ce jeu (`None` : SGDB n'en
-    /// donne pas, c'est noté pour ne plus redemander).
+    /// donne pas, c'est noté pour ne plus redemander). `key` = sous quel nom
+    /// elle est rangée dans `assets/years.txt` (le jeu SteamGridDB, partagé).
     Year {
         slug: String,
+        key: String,
         year: Option<u32>,
+    },
+    /// Le jeu SteamGridDB d'un paquet a été appris par le worker (et écrit dans
+    /// `assets/identities.txt`) : c'est lui qui nomme les visuels partagés.
+    Identified {
+        slug: String,
+        identity: covers::Identity,
     },
     ToggleView,
     /// Retour (clic droit, comme Échap/B) : referme menu, page, prompt.
@@ -534,9 +560,36 @@ struct IdentifyMenu {
 /// ne servent qu'à lancer le téléchargement si l'utilisateur dit oui.
 struct Replace {
     slug: String,
+    /// Clé des visuels de l'ANCIEN jeu (celle qu'on oublie si on remplace).
+    old_key: String,
     game: covers::FoundGame,
     /// 0 = « Non, garder » (choix par défaut), 1 = « Oui, remplacer ».
     index: usize,
+}
+
+/// Géométrie de la grille (ou de la mosaïque) à un instant donné. Capturée
+/// avant un changement de taille, elle sert à faire **glisser** chaque vignette
+/// de son ancienne case vers la nouvelle au lieu de la faire sauter.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    cell: f32,
+    art: f32,
+    columns: usize,
+    slot_height: f32,
+    gap: f32,
+    inset: f32,
+    scroll: f32,
+}
+
+/// Changement de taille des vignettes (`+`/`−`, L2/R2) : la nouvelle
+/// disposition est posée tout de suite, et chaque vignette part de sa case
+/// précédente (position ET taille) pour s'y installer en `ZOOM_SECONDS`
+/// (`App::zoom_pose`). Un second cran pendant l'animation repart de la
+/// position visuelle courante, donc appuyer sur R2 ne fait pas de sauts.
+#[derive(Debug, Clone, Copy)]
+struct Zoom {
+    old: Layout,
+    elapsed: f32,
 }
 
 /// Selon le cas : « Jouer », « Favori » ou « Options » (les quatre visuels,
@@ -637,6 +690,12 @@ pub struct App {
     running: Option<String>,
     /// Slug du jeu lancé, pour le temps de jeu (rempli au lancement effectif).
     pending_slug: Option<String>,
+    /// Nom partagé de ses visuels ([`covers::key`]), publié dans `running.txt`
+    /// pour l'overlay manette (logo et icône).
+    pending_key: Option<String>,
+    /// Changement de taille des vignettes en cours (`+`/`−`, L2/R2) : les
+    /// vignettes glissent de leur ancienne case vers la nouvelle.
+    zoom: Option<Zoom>,
     /// Format du jeu en cours de lancement (fichier du temps de jeu).
     pending_kind: Option<library::Kind>,
     /// Départ du chrono du jeu en cours (slug, format, instant).
@@ -802,6 +861,19 @@ impl App {
     ) -> (Self, Task<Message>) {
         // ancienne disposition (covers/, icons/ à la racine) → assets/
         config.migrate_cache();
+        // visuels déjà là, renommés d'après le JEU SteamGridDB (et non d'après
+        // le paquet) : deux postes dont les `.wgp`/`.lgp` portent des noms
+        // différents partagent alors les mêmes fichiers par Syncthing
+        let renommes = covers::migrate_names(
+            &config.assets_dir(),
+            &config.cache_dir().join("marks"),
+        );
+        if renommes > 0 {
+            eprintln!("glauncher : {renommes} visuel(s) renommé(s) d'après le jeu");
+        }
+        // identifications partagées (même dossier Syncthing que les visuels) :
+        // elles nomment les fichiers, donc lues AVANT la bibliothèque
+        let identities = covers::load_identities(&covers::identities_path(&config.assets_dir()));
         let (bus, receiver) = unbounded();
         let _ = BUS.set(bus);
         if let Ok(mut slot) = BUS_RX.lock() {
@@ -843,7 +915,7 @@ impl App {
             .ok()
             .and_then(|db| db.as_ref().and_then(|db| db.all().ok()))
             .unwrap_or_default();
-        let all_games = library::from_rows(&config, &rows, &mut artwork, &[]);
+        let all_games = library::from_rows(&config, &rows, &mut artwork, &[], &identities);
         let favorites = favorites::load(&config.favorites_path());
         // temps de jeu : avec les sauvegardes (lgp-saves / LocalSavesWGP).
         // L'ancien fichier du cache est rangé ici, une fois la liste connue,
@@ -912,6 +984,8 @@ impl App {
             to_launch: None,
             music: None,
             pending_slug: None,
+            pending_key: None,
+            zoom: None,
             pending_kind: None,
             play_started: None,
             playtime,
@@ -935,7 +1009,7 @@ impl App {
             identify: None,
             identify_menu: None,
             replace: None,
-            identities: BTreeMap::new(),
+            identities,
             date: None,
             asked_year: None,
             input_id: Id::unique(),
@@ -951,9 +1025,6 @@ impl App {
         };
         // années déjà connues (fichier partagé dans `assets/`)
         app.years = covers::load_years(&covers::years_path(&app.config.assets_dir()));
-        // identifications partagées (même dossier Syncthing que les visuels)
-        app.identities =
-            covers::load_identities(&covers::identities_path(&app.config.assets_dir()));
         app.apply_filter();
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
@@ -1016,7 +1087,11 @@ impl App {
             && self.identify_menu.is_none()
             && self.replace.is_none()
             && self.date.is_none()
-            && self.to_launch.is_none();
+            && self.to_launch.is_none()
+            // respiration : ce sont les images de la fenêtre qui la cadence
+            // (60 Hz, `breath_pulses` plus bas) ; le minuteur à 20 Hz
+            // s'arrête, sinon deux horloges font avancer le même temps
+            && !self.breath_pulses();
         sparkles::set_running(sparkles_running);
         let animating = self.animating();
         let mut subscriptions = vec![
@@ -1051,6 +1126,11 @@ impl App {
             || self.to_launch.is_some()
             || self.title_scrolls()
             || self.loading()
+            // respiration de la vignette sélectionnée : continue, donc à la
+            // cadence de la fenêtre (voir `subscription`)
+            || self.breath_pulses()
+            // changement de taille : chaque vignette glisse vers sa place
+            || self.zoom.is_some()
     }
 
     /// Téléchargements en cours (ou tout juste finis) : la roue de chargement
@@ -1123,6 +1203,12 @@ impl App {
         }
     }
 
+    /// Nom des fichiers de ce jeu dans `assets/` partagé ([`covers::key`]) :
+    /// le jeu SteamGridDB quand il est identifié, sinon le paquet.
+    fn key_of(&self, slug: &str) -> String {
+        covers::key_of(&self.identities, slug)
+    }
+
     /// Retient l'identification choisie dans la liste, écrit le fichier
     /// partagé (`assets/identities.txt`), puis met les visuels à jour — en
     /// demandant d'abord quand le paquet en a déjà (voir [`Replace`]).
@@ -1131,6 +1217,9 @@ impl App {
             .identities
             .get(slug)
             .is_some_and(|identity| identity.id == game.id);
+        // les visuels de l'ANCIEN jeu (le plus souvent ceux du paquet) : c'est
+        // leur clé qu'il faudra oublier
+        let old_key = self.key_of(slug);
         let mut identities = self.identities.clone();
         identities.insert(
             slug.to_string(),
@@ -1144,8 +1233,10 @@ impl App {
             &identities,
         );
         self.identities = identities;
-        // le jeu identifié apporte sa date (ou « pas de date »)
-        self.remember_year(slug, game.year);
+        // le jeu identifié apporte sa date (ou « pas de date »), rangée sous
+        // la clé du jeu
+        let key = self.key_of(slug);
+        self.remember_year(&key, game.year);
 
         // les menus se referment : on revient à la page (ou à la liste)
         self.identify = None;
@@ -1165,23 +1256,24 @@ impl App {
         // Le paquet a DÉJÀ des visuels (SteamGridDB ou choisis à la main) :
         // on demande avant de les remplacer. Les effacer d'office jetait le
         // travail de l'utilisateur (demandé le 20/11), d'où « Non » par défaut.
-        if covers::has_art(&self.config.assets_dir(), slug) {
+        if covers::has_art(&self.config.assets_dir(), self.identities.get(slug), slug) {
             self.pause_covers();
             self.replace = Some(Replace {
                 slug: slug.to_string(),
+                old_key,
                 game,
                 index: 0,
             });
             return;
         }
 
-        self.replace_art(slug, &game);
+        self.replace_art(slug, &game, &old_key);
     }
 
     /// Efface les visuels de l'ancien jeu et redemande les quatre types du jeu
     /// identifié, en fond. Appelé quand le paquet n'avait aucune image, ou
     /// après un « Oui, remplacer ».
-    fn replace_art(&mut self, slug: &str, game: &covers::FoundGame) {
+    fn replace_art(&mut self, slug: &str, game: &covers::FoundGame, old_key: &str) {
         // Les visuels en cache sont ceux de l'ANCIEN jeu : les garder ferait
         // garder la cover, le logo et la date de « Hoobadventure » sur
         // « Marsupilami 2 ». Le fichier partagé et les marqueurs de la machine
@@ -1190,6 +1282,7 @@ impl App {
             &self.config.assets_dir(),
             &self.config.cache_dir().join("marks"),
             slug,
+            old_key,
         );
         self.forget_local_art(slug);
         self.picked = None;
@@ -1204,6 +1297,7 @@ impl App {
                 slug: slug.to_string(),
                 name: game.name.clone(),
                 id: Some(game.id),
+                key: Some(self.key_of(slug)),
                 kinds: covers::ArtKind::ALL.to_vec(),
             });
         }
@@ -1352,8 +1446,8 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Year { slug, year } => {
-                self.remember_year(&slug, year);
+            Message::Year { slug, key, year } => {
+                self.remember_year(&key, year);
                 // demandé depuis le prompt « date » : on annonce le résultat
                 if self.asked_year.as_deref() == Some(slug.as_str()) {
                     self.asked_year = None;
@@ -1362,6 +1456,17 @@ impl App {
                         None => ("SteamGridDB ne donne pas de date".to_string(), true),
                     });
                 }
+                Task::none()
+            }
+            Message::Identified { slug, identity } => {
+                // le worker a résolu le jeu et l'a écrit dans
+                // `assets/identities.txt` : sa table locale suit, c'est cette
+                // identification qui nomme les visuels à partir de maintenant
+                eprintln!(
+                    "glauncher : {} identifié « {} » (id {})",
+                    slug, identity.name, identity.id
+                );
+                self.identities.insert(slug, identity);
                 Task::none()
             }
             Message::Icon { slug, bytes } => {
@@ -1669,16 +1774,17 @@ impl App {
                 let Some(slug) = self.current_slug() else {
                     return Task::none();
                 };
+                let key = self.key_of(&slug);
                 let value = value.trim().to_string();
                 // vide = on ne sait pas / on ne veut pas de date pour ce jeu
                 if value.is_empty() {
-                    self.remember_year(&slug, None);
+                    self.remember_year(&key, None);
                     self.status = Some(("date de sortie effacée".to_string(), false));
                     return Task::none();
                 }
                 match value.parse::<u32>() {
                     Ok(year) if (1950..=2100).contains(&year) => {
-                        self.remember_year(&slug, Some(year));
+                        self.remember_year(&key, Some(year));
                         self.status = Some((format!("date de sortie : {year}"), false));
                     }
                     _ => {
@@ -1702,9 +1808,15 @@ impl App {
                     return Task::none();
                 };
                 let (name, id) = self.who(&slug, &name);
+                let key = id.map(|_| self.key_of(&slug));
                 self.asked_year = Some(slug.clone());
                 self.status = Some(("recherche de la date…".to_string(), false));
-                self.send_cover_query(covers::Query::Year { slug, name, id });
+                self.send_cover_query(covers::Query::Year {
+                    slug,
+                    name,
+                    id,
+                    key,
+                });
                 Task::none()
             }
             Message::ClosePicker => {
@@ -1767,8 +1879,10 @@ impl App {
                 };
                 let (slug, kind) = (picker.slug.clone(), picker.kind);
                 let (url, ext) = (choice.url.clone(), choice.ext.clone());
+                let key = self.key_of(&slug);
                 self.send_cover_query(covers::Query::Pick {
                     slug: slug.clone(),
+                    key,
                     kind,
                     url,
                     ext,
@@ -1827,7 +1941,13 @@ impl App {
                 self.picked = Some((slug.clone(), kind));
                 self.status = Some(("application de l'image…".to_string(), false));
                 self.resume_covers();
-                self.send_cover_query(covers::Query::UseFile { slug, kind, path });
+                let key = self.key_of(&slug);
+                self.send_cover_query(covers::Query::UseFile {
+                    slug,
+                    key,
+                    kind,
+                    path,
+                });
                 Task::none()
             }
             Message::ReplaceNav(delta) => {
@@ -1857,7 +1977,7 @@ impl App {
                     self.resume_covers();
                     return Task::none();
                 }
-                self.replace_art(&replace.slug, &replace.game);
+                self.replace_art(&replace.slug, &replace.game, &replace.old_key);
                 Task::none()
             }
             Message::Choices {
@@ -2003,8 +2123,16 @@ impl App {
                 if let Some(game) = self.games.get(index) {
                     let (slug, name) = (game.slug.clone(), game.name.clone());
                     let (name, id) = self.who(&slug, &name);
-                    if !self.years.contains_key(&slug) {
-                        self.send_cover_query(covers::Query::Year { slug, name, id });
+                    let key = id.map(|_| self.key_of(&slug));
+                    if self.year_of(&slug).is_none()
+                        && !self.years.contains_key(&self.key_of(&slug))
+                    {
+                        self.send_cover_query(covers::Query::Year {
+                            slug,
+                            name,
+                            id,
+                            key,
+                        });
                     }
                 }
                 Task::none()
@@ -2086,6 +2214,9 @@ impl App {
                 Task::none()
             }
             Message::Zoom(step) => {
+                // la géométrie AVANT le cran : les vignettes partiront de là
+                // (un cran pendant l'animation repart de la position visuelle)
+                let avant = self.layout_blend();
                 match self.config.view {
                     // mosaïque : la densité est continue, `cell_size` la règle
                     ViewMode::Mosaic => {
@@ -2113,6 +2244,14 @@ impl App {
                 }
                 // les colonnes et la hauteur de rangée changent avec la taille
                 self.update_scroll_target();
+                // glissade vers la nouvelle disposition (aucune en liste, où le
+                // zoom ne change pas la taille des vignettes)
+                if matches!(self.config.view, ViewMode::Grid | ViewMode::Mosaic) {
+                    self.zoom = Some(Zoom {
+                        old: avant,
+                        elapsed: 0.0,
+                    });
+                }
                 self.request_visible_covers();
                 self.status = None;
                 Task::none()
@@ -2339,6 +2478,7 @@ impl App {
         let command = launch::build(&self.config, &game);
         self.running = Some(game.name.clone());
         self.pending_slug = Some(game.slug.clone());
+        self.pending_key = Some(self.key_of(&game.slug));
         self.pending_kind = Some(game.kind);
         self.status = None;
         // le jeu démarre quand le fondu au noir est terminé (voir tick)
@@ -2369,6 +2509,22 @@ impl App {
             .as_secs_f32()
             .clamp(0.001, 0.05);
         self.last_tick = now;
+
+        // Poussière et respiration : le temps avance du pas RÉEL quand la
+        // fenêtre fournit les images (`window::frames`, 60 Hz). Quand le
+        // minuteur à 20 Hz tourne, c'est `Message::Sparkle` qui l'avance (pas
+        // fixe) : jamais les deux, sinon le temps courrait 1,3× trop vite.
+        if !sparkles::running() {
+            self.sparkles.advance_by(dt);
+        }
+
+        // Changement de taille : la glissade vers la nouvelle disposition
+        if let Some(zoom) = self.zoom.as_mut() {
+            zoom.elapsed += dt;
+        }
+        if self.zoom.is_some_and(|zoom| zoom.elapsed >= zoom_seconds()) {
+            self.zoom = None;
+        }
 
         // roue de chargement : elle tourne tant qu'un téléchargement court ou
         // vient de finir
@@ -2471,6 +2627,7 @@ impl App {
             );
             // le chrono du temps de jeu part au lancement EFFECTIF du jeu
             let slug = self.pending_slug.take().unwrap_or_default();
+            let key = self.pending_key.take().unwrap_or_else(|| slug.clone());
             let kind = self.pending_kind.take();
             self.play_started = if slug.is_empty() {
                 None
@@ -2481,7 +2638,7 @@ impl App {
                     std::time::Instant::now(),
                 ))
             };
-            spawn_launch(name, command, self.config.cache_dir(), slug);
+            spawn_launch(name, command, self.config.cache_dir(), slug, key);
         }
 
         // Bascule de liste : montée vers le fond, échange au sommet, descente.
@@ -2548,28 +2705,95 @@ impl App {
     /// `update_scroll_target` (marges, colonnes, pas de rangée, défilement).
     /// Grille et favoris seulement.
     fn slot_rect(&self, index: usize) -> Option<(Rectangle, Rectangle)> {
-        self.games.get(index)?;
         if !matches!(self.config.view, ViewMode::Grid) {
             return None;
         }
-        let (cell, art_width, columns) = self.metrics();
-        let gap = self.gap();
-        let inset = self.cell_inset();
-        let columns = columns.max(1);
+        self.rects_in(index, &self.layout_now())
+    }
+
+    /// Géométrie de la disposition courante (grille ou mosaïque).
+    fn layout_now(&self) -> Layout {
+        let (cell, art, columns) = self.metrics();
+        Layout {
+            cell,
+            art,
+            columns,
+            slot_height: self.slot_height(),
+            gap: self.gap(),
+            inset: self.cell_inset(),
+            scroll: self.scroll_drawn(),
+        }
+    }
+
+    /// Géométrie **visuelle** d'une vignette : si un changement de taille est en
+    /// cours, `old` et `now` sont mélangés au prorata de l'animation. Un second
+    /// cran capturé ici repart donc exactement d'où les vignettes sont, et non
+    /// de la disposition précédente déjà quittée.
+    fn layout_blend(&self) -> Layout {
+        let now = self.layout_now();
+        let Some(zoom) = self.zoom.as_ref() else {
+            return now;
+        };
+        let e = ease_reveal((zoom.elapsed / zoom_seconds()).clamp(0.0, 1.0));
+        let old = zoom.old;
+        Layout {
+            cell: old.cell + (now.cell - old.cell) * e,
+            art: old.art + (now.art - old.art) * e,
+            // les colonnes ne se mélangent pas : c'est la disposition NOUVELLE
+            // qui place les vignettes, l'animation rattrape leur ancienne case
+            columns: now.columns,
+            slot_height: old.slot_height + (now.slot_height - old.slot_height) * e,
+            gap: now.gap,
+            inset: now.inset,
+            scroll: now.scroll,
+        }
+    }
+
+    /// Position de la vignette `index` dans une géométrie donnée : la case (fond
+    /// de sélection, titre) et la cover, en coordonnées écran.
+    fn rects_in(&self, index: usize, layout: &Layout) -> Option<(Rectangle, Rectangle)> {
+        self.games.get(index)?;
+        let columns = layout.columns.max(1);
         let column = (index % columns) as f32;
         let row = (index / columns) as f32;
+        let mosaic = matches!(self.config.view, ViewMode::Mosaic);
+        let pad = if mosaic { 0.0 } else { PADDING };
+        let height = layout.art * ART_RATIO + 2.0 * pad + if mosaic { 0.0 } else { CARD_CAPTION };
         let card = Rectangle::new(
             Point::new(
-                PAGE_PADDING_X + column * (cell + gap) + inset,
-                PAGE_PADDING_Y + row * (self.slot_height() + gap) + inset - self.scroll_drawn(),
+                PAGE_PADDING_X + column * (layout.cell + layout.gap) + layout.inset,
+                PAGE_PADDING_Y + row * (height + 2.0 * layout.inset + layout.gap) + layout.inset
+                    - layout.scroll,
             ),
-            Size::new(cell - 2.0 * inset, self.row_height()),
+            Size::new(layout.cell - 2.0 * layout.inset, height),
         );
         let art = Rectangle::new(
-            Point::new(card.x + PADDING, card.y + PADDING),
-            Size::new(art_width, art_width * ART_RATIO),
+            Point::new(card.x + pad, card.y + pad),
+            Size::new(layout.art, layout.art * ART_RATIO),
         );
         Some((card, art))
+    }
+
+    /// Animation du changement de taille : échelle et décalage à appliquer à la
+    /// vignette `index` pour qu'elle parte de son ancienne case et arrive à la
+    /// nouvelle. `None` au repos (aucune transformation, aucun coût).
+    fn zoom_pose(&self, index: usize) -> Option<(f32, Vector)> {
+        let zoom = self.zoom.as_ref()?;
+        if !matches!(self.config.view, ViewMode::Grid | ViewMode::Mosaic) {
+            return None;
+        }
+        let (_, old_art) = self.rects_in(index, &zoom.old)?;
+        let (card, art) = self.slot_rect_for(index)?;
+        if old_art.width <= 0.0 || art.width <= 0.0 {
+            return None;
+        }
+        let e = ease_reveal((zoom.elapsed / zoom_seconds()).clamp(0.0, 1.0));
+        Some(zoom_transform(&old_art, &card, &art, e))
+    }
+
+    /// Case d'une vignette dans la disposition courante, mosaïque comprise.
+    fn slot_rect_for(&self, index: usize) -> Option<(Rectangle, Rectangle)> {
+        self.rects_in(index, &self.layout_now())
     }
 
     /// Le canvas des particules dessine lui-même le cadre de sélection — il
@@ -2583,19 +2807,27 @@ impl App {
     /// Calculé une seule fois par image et partagé par la carte (`Pose`) et par
     /// le cadre du canvas, qui doivent grossir **exactement** ensemble.
     fn breath_factor(&self) -> f32 {
+        sparkles::breath_factor(self.sparkles.time(), self.breath_pulses())
+    }
+
+    /// La vignette sélectionnée respire-t-elle ? Sert au facteur d'échelle
+    /// **et** à l'abonnement aux images : la respiration est continue, donc
+    /// cadencée par la fenêtre (60 Hz) et non par le minuteur des particules
+    /// (20 Hz), qui la faisait avancer par paliers de 50 ms — « pas assez
+    /// fluide » (retour du 22/11).
+    fn breath_pulses(&self) -> bool {
         if !self.canvas_frame() || self.returning {
-            return 1.0;
+            return false;
         }
         let Some((_, art)) = self.slot_rect(self.selected) else {
-            return 1.0;
+            return false;
         };
         // une respiration qui mord le pied de page reste moche : la vignette
         // se pose alors sans bouger. Sous le voile du lancement, elle s'arrête
         // aussi (la cover ne « flotte » pas dans un écran noir).
-        let pulse = art.y >= PAGE_PADDING_Y - 0.5
+        art.y >= PAGE_PADDING_Y - 0.5
             && art.y + art.height <= self.viewport.1 - FOOTER_BAND
-            && self.fade <= sparkles::VEIL_CLEAR;
-        sparkles::breath_factor(self.sparkles.time(), pulse)
+            && self.fade <= sparkles::VEIL_CLEAR
     }
 
     /// La vignette sélectionnée confiée au canvas : il ne redessine que son
@@ -2610,13 +2842,18 @@ impl App {
         }
         self.games.get(self.selected)?;
         let (card, art) = self.slot_rect(self.selected)?;
+        // la glissade du changement de taille s'applique au cadre comme à la
+        // carte, sinon il resterait à la nouvelle place pendant que l'image
+        // arrive de l'ancienne
+        let (zoom_scale, zoom_offset) = self.zoom_pose(self.selected).unwrap_or((1.0, Vector::ZERO));
         Some(sparkles::Breath {
             card,
             art,
             radius: CARD_RADIUS,
             frame_color: ACCENT,
             frame_width: FOCUS_BORDER,
-            factor: self.breath_factor(),
+            factor: self.breath_factor() * zoom_scale,
+            offset: zoom_offset,
         })
     }
 
@@ -2678,6 +2915,7 @@ impl App {
             &refresh.rows,
             &mut self.artwork,
             &refresh.changed,
+            &self.identities,
         );
         self.games = self.all_games.clone();
         self.apply_filter();
@@ -2866,8 +3104,10 @@ impl App {
         };
         let mut kinds = Vec::new();
         // l'identification du jeu fait foi : c'est SON id qui part chez
-        // SteamGridDB, sinon le premier résultat de la recherche par nom
+        // SteamGridDB, sinon le premier résultat de la recherche par nom — et
+        // c'est elle qui donne le nom partagé des fichiers (`key`)
         let (name, id) = self.who(&game.slug, &game.name);
+        let key = self.key_of(&game.slug);
         for &kind in demande {
             let present = match kind {
                 covers::ArtKind::Grid => game.cover.is_some(),
@@ -2902,6 +3142,9 @@ impl App {
             slug: game.slug.clone(),
             name,
             id,
+            // clé connue seulement si le jeu est identifié : sinon c'est le
+            // worker qui résout le jeu (et retient l'identification)
+            key: id.map(|_| key),
             kinds,
         })
     }
@@ -2914,7 +3157,14 @@ impl App {
         if !self.thumb_requested.insert(slug.to_string()) {
             return;
         }
-        let Some(source) = covers::cached(&self.config.cover_cache_dir(), slug) else {
+        // les miniatures sont locales (nommées d'après le paquet) mais leur
+        // source est le fichier partagé, nommé d'après le jeu
+        let source = covers::cached_for(
+            &self.config.cover_cache_dir(),
+            self.identities.get(slug),
+            slug,
+        );
+        let Some(source) = source else {
             self.thumb_requested.remove(slug);
             return;
         };
@@ -2962,7 +3212,8 @@ impl App {
             .iter()
             .filter(|game| game.thumb.is_none())
             .filter_map(|game| {
-                let source = covers::cached(&cover_dir, &game.slug)?;
+                let source =
+                    covers::cached_for(&cover_dir, self.identities.get(&game.slug), &game.slug)?;
                 Some(thumbs::Job::new(game.slug.clone(), source))
             })
             .collect();
@@ -2981,17 +3232,17 @@ impl App {
     /// Année de sortie du jeu, si on la connaît (la table est chargée une
     /// fois au démarrage ; `None` = inconnue ou « SGDB n'en donne pas »).
     fn year_of(&self, slug: &str) -> Option<u32> {
-        self.years.get(slug).copied().flatten()
+        self.years.get(&self.key_of(slug)).copied().flatten()
     }
 
-    /// Retient l'année apprise et l'écrit dans `assets/years.txt` (fusionné
-    /// avec ce qui est déjà sur le disque : `--update` peut écrire en même
-    /// temps).
-    fn remember_year(&mut self, slug: &str, year: Option<u32>) {
-        if self.years.get(slug) == Some(&year) {
+    /// Retient l'année apprise sous la **clé du jeu** et l'écrit dans
+    /// `assets/years.txt` (fusionné avec ce qui est déjà sur le disque :
+    /// `--update` peut écrire en même temps).
+    fn remember_year(&mut self, key: &str, year: Option<u32>) {
+        if self.years.get(key) == Some(&year) {
             return;
         }
-        self.years.insert(slug.to_string(), year);
+        self.years.insert(key.to_string(), year);
         covers::save_years(&covers::years_path(&self.config.assets_dir()), &self.years);
     }
 
@@ -4981,9 +5232,15 @@ impl App {
         // sélection, cover, tranche, étoile et titre — donc le halo de
         // sélection suit enfin l'image (constaté 20/11). Le cadre d'accent est
         // peint par le canvas à la même échelle, par-dessus.
-        let factor = if selected { self.breath_factor() } else { 1.0 };
-        if (factor - 1.0).abs() > 0.0001 {
-            return Pose::new(card).scale(factor).into();
+        // Changement de taille : la même `Pose` porte la glissade (position et
+        // échelle) ; les deux se multiplient sans se marcher dessus.
+        let breath = if selected { self.breath_factor() } else { 1.0 };
+        let (zoom_scale, zoom_offset) = self
+            .zoom_pose(index)
+            .unwrap_or((1.0, Vector::ZERO));
+        let scale = breath * zoom_scale;
+        if (scale - 1.0).abs() > 0.0001 || zoom_offset != Vector::ZERO {
+            return Pose::new(card).scale(scale).offset(zoom_offset).into();
         }
         card
     }
@@ -5053,9 +5310,14 @@ impl App {
         let tile = container(tile)
             .width(Length::Fixed(cell))
             .height(Length::Fixed(cell * ART_RATIO));
-        mouse_area(tile)
+        let card: Element<'_, Message> = mouse_area(tile)
             .on_press(Message::CardClicked(index))
-            .into()
+            .into();
+        // changement de taille : la tuile glisse et grandit comme en grille
+        if let Some((scale, offset)) = self.zoom_pose(index) {
+            return Pose::new(card).scale(scale).offset(offset).into();
+        }
+        card
     }
 
     /// Disposition en lignes : vignette à gauche, nom à droite.
@@ -5443,6 +5705,27 @@ fn visible_items(
     start..end.max(start)
 }
 
+/// Échelle et décalage d'une vignette pendant la glissade d'un changement de
+/// taille : `e` va de 0 (elle est encore à sa case d'avant) à 1 (elle a rejoint
+/// la nouvelle). L'échelle part du rapport des **covers** (c'est l'image qu'on
+/// regarde) et le décalage est calculé sur le centre de la cover, pas sur celui
+/// de la case : à `e = 0`, la cover dessinée avec cette pose occupe EXACTEMENT
+/// son ancien rectangle (la case suit à quelques pixels près).
+fn zoom_transform(
+    old_art: &Rectangle,
+    card: &Rectangle,
+    art: &Rectangle,
+    e: f32,
+) -> (f32, Vector) {
+    let start = old_art.width / art.width;
+    let scale = start + (1.0 - start) * e;
+    // la cover n'est pas au centre de la case (marge interne) : son centre est
+    // décalé de `shift`, que la mise à l'échelle déplace aussi
+    let shift = art.center() - card.center();
+    let offset = (old_art.center() - card.center() - shift * scale) * (1.0 - e);
+    (scale, offset)
+}
+
 fn grid_metrics(
     window_width: f32,
     min_cell: f32,
@@ -5758,6 +6041,39 @@ mod tests {
         assert_eq!(zoom_columns(5, -1), 6, "zoom − : vignettes plus petites");
         assert_eq!(zoom_columns(COLUMNS_MIN, 1), COLUMNS_MIN, "borne basse");
         assert_eq!(zoom_columns(COLUMNS_MAX, -1), COLUMNS_MAX, "borne haute");
+    }
+
+    #[test]
+    fn la_glissade_de_taille_part_de_l_ancienne_case() {
+        // 6 → 5 colonnes sur 1920 : la cover passe de 218 à 250 px de large
+        let old_art = Rectangle::new(Point::new(100.0, 60.0), Size::new(218.0, 327.0));
+        let card = Rectangle::new(Point::new(400.0, 300.0), Size::new(292.0, 480.0));
+        let art = Rectangle::new(Point::new(412.0, 312.0), Size::new(250.0, 375.0));
+
+        // e = 0 : la cover est encore exactement à son ancienne place et taille
+        let (scale, offset) = zoom_transform(&old_art, &card, &art, 0.0);
+        assert!((scale - 218.0 / 250.0).abs() < 1e-4, "échelle de départ {scale}");
+        let centre = card.center() + offset + (art.center() - card.center()) * scale;
+        assert!((centre.x - old_art.center().x).abs() < 0.01, "x {centre:?}");
+        assert!((centre.y - old_art.center().y).abs() < 0.01, "y {centre:?}");
+        assert!((art.width * scale - old_art.width).abs() < 0.01);
+        assert!((art.height * scale - old_art.height).abs() < 0.01);
+
+        // e = 1 : aucune transformation, la cover est à sa nouvelle place
+        let (scale, offset) = zoom_transform(&old_art, &card, &art, 1.0);
+        assert!((scale - 1.0).abs() < 1e-6);
+        assert_eq!(offset, Vector::ZERO);
+
+        // entre les deux : l'écart se referme, sans dépassement
+        let mut precedent = zoom_transform(&old_art, &card, &art, 0.0);
+        for step in 1..=40 {
+            let e = step as f32 / 40.0;
+            let (scale, offset) = zoom_transform(&old_art, &card, &art, e);
+            assert!(scale >= 218.0 / 250.0 - 1e-4 && scale <= 1.0 + 1e-4, "{e} : {scale}");
+            assert!(offset.x.abs() <= precedent.1.x.abs() + 1e-3, "{e} : {offset:?}");
+            assert!(offset.y.abs() <= precedent.1.y.abs() + 1e-3, "{e} : {offset:?}");
+            precedent = (scale, offset);
+        }
     }
 
     #[test]

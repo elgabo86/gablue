@@ -113,6 +113,8 @@ pub struct Game {
 
 /// Construit la liste affichable depuis les lignes de l'index.
 ///
+/// `identities` donne le **jeu SteamGridDB** de chaque paquet : c'est lui qui
+/// nomme les visuels dans `assets/` partagé (`covers::key`), pas le paquet.
 /// `changed` liste les chemins modifiés : un visuel mémorisé dont le nom
 /// correspond est oublié (icône remplacée à côté du paquet…).
 pub fn from_rows(
@@ -120,6 +122,7 @@ pub fn from_rows(
     rows: &[PackRow],
     cache: &mut ArtworkCache,
     changed: &[PathBuf],
+    identities: &std::collections::BTreeMap<String, covers::Identity>,
 ) -> Vec<Game> {
     let icons_cache = config.icon_cache_dir();
     let covers_dir = config.cover_cache_dir();
@@ -136,13 +139,15 @@ pub fn from_rows(
     let mut games = Vec::with_capacity(rows.len());
     for row in dedupe(rows) {
         let slug = row.slug();
+        let identity = identities.get(&slug);
+        let cle = covers::key(identity, &slug);
         // AUCUN accès au dossier du paquet ici (voir `icon_cached`) : le
         // voisinage est lu au second plan par `assets::spawn`
         let artwork = cache.entry(slug.clone()).or_insert_with(|| Artwork {
-            icon: icon_cached(&slug, &icons_cache, &config.pack_icon_dir()),
-            cover: art_for(&covers_dir, &slug),
-            hero: art_for(&heroes_dir, &slug),
-            logo: art_for(&logos_dir, &slug),
+            icon: icon_cached(&slug, &cle, &icons_cache, &config.pack_icon_dir()),
+            cover: art_for_game(&covers_dir, identity, &slug),
+            hero: art_for_game(&heroes_dir, identity, &slug),
+            logo: art_for_game(&logos_dir, identity, &slug),
             thumb: art_for(&thumbs_dir, &slug),
         });
 
@@ -498,8 +503,8 @@ fn mtime_of(meta: &std::fs::Metadata) -> i64 {
 /// C'est la seule lecture d'icône faite au démarrage : le voisinage du paquet
 /// vit souvent sur un disque externe, et 666 paquets × 6 `stat` réveillaient un
 /// disque endormi (plusieurs secondes avant la première image).
-fn icon_cached(slug: &str, icons_cache: &Path, pack_dir: &Path) -> Option<image::Handle> {
-    art_for(icons_cache, slug).or_else(|| art_for(pack_dir, slug))
+fn icon_cached(slug: &str, cle: &str, icons_cache: &Path, pack_dir: &Path) -> Option<image::Handle> {
+    art_for(icons_cache, cle).or_else(|| art_for(pack_dir, slug))
 }
 
 /// Icône posée **à côté du paquet** : `<nom>.png`, `icons/<slug>.png` ou
@@ -534,8 +539,20 @@ pub fn icon_near_pack(
 }
 
 /// Cover en cache (téléchargée par `covers`), s'il y en a une.
-fn art_for(dir: &Path, slug: &str) -> Option<image::Handle> {
-    let path = covers::cached(dir, slug)?;
+fn art_for(dir: &Path, nom: &str) -> Option<image::Handle> {
+    let path = covers::cached(dir, nom)?;
+    let bytes = std::fs::read(path).ok()?;
+    Some(image::Handle::from_bytes(bytes))
+}
+
+/// Visuel SteamGridDB d'un jeu : le fichier est nommé d'après le jeu
+/// (`covers::key`), pas d'après le paquet — c'est ce qui le rend partageable.
+fn art_for_game(
+    dir: &Path,
+    identity: Option<&covers::Identity>,
+    slug: &str,
+) -> Option<image::Handle> {
+    let path = covers::cached_for(dir, identity, slug)?;
     let bytes = std::fs::read(path).ok()?;
     Some(image::Handle::from_bytes(bytes))
 }

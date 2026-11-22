@@ -121,15 +121,30 @@ leurs icônes, pour l'interface.
 - **Remplissage** : la grille occupe toute la largeur de la fenêtre.
   `columns` = nombre MAXIMAL de colonnes, `cell_size` = largeur MINIMALE d'une
   vignette ; le reste est étalé (agrandir la fenêtre ne laisse pas de bande
-  noire). En mosaïque, `columns` ne s'applique pas : `cell_size × 0.55` règle
-  la densité. `+`/`−` (ou L2/R2) : en mosaïque ils changent `cell_size` en
-  direct (bornes 120 à 520 px), ailleurs ils changent le **nombre de colonnes**
-  (un cran = une colonne, bornes 3 à 12) et `cell_size` est recalculée À
-  L'ENVERS (`cell_for_columns`) pour produire exactement ce nombre de colonnes.
+  noire). **6 colonnes par défaut** (5 avant le 22/11 : les covers mangeaient
+  l'écran et le fond ne se voyait plus) — sur 1920 px, une cover passe de 312 à
+  250 px de large. En mosaïque, `columns` ne s'applique pas : `cell_size × 0.55`
+  règle la densité. `+`/`−` (ou L2/R2) : en mosaïque ils changent `cell_size`
+  en direct (bornes 120 à 520 px), ailleurs ils changent le **nombre de
+  colonnes** (un cran = une colonne, bornes 3 à 12) et `cell_size` est
+  recalculée À L'ENVERS (`cell_for_columns`) pour produire exactement ce nombre
+  de colonnes.
   Pourquoi : `cell_size` n'est qu'une largeur MINIMALE — la fixer sur la largeur
   affichée plafonnait `fitted` au nombre de colonnes courant, donc le zoom
   arrière ne pouvait plus jamais en rajouter (constaté 18/11 : colonnes 5 → 6 en
   mémoire, 4 à l'écran, « je ne peux toujours pas dézoomer »).
+- **Changement de taille ANIMÉ** (`Zoom`, `ZOOM_SECONDS` 0,16 s) : la nouvelle
+  disposition est posée tout de suite, et chaque vignette **glisse** de
+  l'ancienne case vers la nouvelle — position **et** taille — via `Pose`
+  (`App::zoom_pose`). Le calcul se fait sur la **cover**, pas sur la case
+  (`zoom_transform`) : à l'instant 0 la cover occupe exactement son ancien
+  rectangle, l'écart se referme ensuite (échelle → 1, décalage → 0). Un cran
+  pendant l'animation repart de la position **visuelle** courante
+  (`layout_blend`) : appuyer sur R2 plusieurs fois ne fait aucun saut. Le cadre
+  du canvas suit la même transformation (`sparkles::Breath::offset`) et la
+  respiration se multiplie à l'échelle de la glissade. La liste n'anime rien
+  (le zoom n'y change pas la taille des vignettes). `GLAUNCHER_ZOOM_MS` change
+  la durée sans recompiler (40 à 2000 ms).
 - **Marge de droite et taille des boîtes** : `usable_width()` retire la marge
   gauche et une marge droite plus large (`SCROLLBAR_GUTTER`), parce que la
   barre de défilement d'iced est une surimpression qui ne réserve aucune place —
@@ -148,7 +163,11 @@ leurs icônes, pour l'interface.
   18/11 : « on ne voit pas ce qui est sélectionné »).
 - **Sans cover** : sample portrait (600×900, `assets/cover-sample.png`) à la
   taille exacte d'une cover, avec l'**icône du paquet** en petit (ratio
-  conservé) et le **nom du jeu** par-dessus. Jamais d'image étirée.
+  conservé) et le **nom du jeu** par-dessus. Le sample ne porte **aucun
+  texte** : le mot « glauncher » qu'il affichait en bas faisait doublon avec le
+  nom du jeu et salissait toutes les vignettes sans cover (retiré le 22/11) —
+  seul compte le dégradé, la tuile et le rond qui accueille l'emblème.
+  Jamais d'image étirée.
 - **Icône** : `<nom du paquet>.png` à côté du paquet, puis `icons/<slug>.png`,
   puis `<slug>.png` dans les `icon_dirs`, puis **`.icon.png` extrait du paquet**
   (`unsquashfs -no-progress -cat <pack> .icon.png`, ~15 ms) — même source que
@@ -170,10 +189,30 @@ leurs icônes, pour l'interface.
 - **Assets** : `~/.local/share/glauncher/assets/` contient les visuels
   SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) **et deux fichiers
   texte volontairement partagés** : `years.txt` (années de sortie) et
-  `identities.txt` (jeu SteamGridDB choisi pour chaque paquet) : c'est le
+  `identities.txt` (jeu SteamGridDB de chaque paquet) : c'est le
   dossier **partageable** (Syncthing entre machines et entre amis), donc les
-  visuels, les dates ET l'identification suivent. Tout le reste est sorti
-  du dossier au démarrage par `Config::migrate_cache` — miniatures
+  visuels, les dates ET l'identification suivent.
+- **Nom des visuels = le JEU, pas le paquet** (`covers::key`) :
+  `<id SteamGridDB>-<nom slugifié>` (`8103-doom.jpg`), ou `<id>` seul si le nom
+  manque ; jeu jamais identifié → slug du paquet (visuels locaux). Pourquoi :
+  deux `.wgp`/`.lgp` du même jeu nommés différemment (postes, amis via
+  Syncthing) doivent partager les **mêmes** fichiers — le slug du paquet, lui,
+  change avec le nom de fichier. L'id en tête évite que « Doom » 1993 et 2016
+  se marchent dessus. `covers::key_of` (table) et `gpad::cle_visuels` (relecture
+  de `identities.txt`) appliquent la MÊME règle : les deux doivent rester
+  d'accord. `covers::cached_for` accepte aussi le fichier `<id>` seul (écrit
+  avant que le nom soit connu). Miniatures, marqueurs `.miss`/`.choice` et
+  `pack-icons/` restent par paquet (propres à la machine).
+- **Apprentissage automatique** : le premier résultat de l'autocomplete (ou la
+  fiche d'un id) est retenu dans `assets/identities.txt` par le worker
+  (`CoverEvent::Identified`) et ses visuels déjà là sont **renommés** vers la
+  clé (`rename_to_key`). Sans ça le redémarrage — qui ne fait aucune requête
+  réseau — ne saurait plus sous quel nom les fichiers sont rangés.
+  `covers::migrate_names` fait le même renommage au démarrage pour les
+  installations antérieures (et re-clé `years.txt`), **sans jamais écraser**
+  (une clé déjà présente gagne : c'est l'image arrivée de l'autre poste).
+- **Le reste est hors du dossier partagé** : sorti au démarrage par
+  `Config::migrate_cache` — miniatures
   (`<cache>/thumbs/`), icônes de paquets (`<cache>/pack-icons/`) et marqueurs
   (`<cache>/marks/<type>/` pour `.miss` et `.choice`). Pourquoi : les
   miniatures se régénèrent en boucle, les icônes de paquets viennent des
@@ -422,14 +461,15 @@ leurs icônes, pour l'interface.
   disparu.
 - **Année de sortie** : SteamGridDB la donne dans l'autocomplete
   (`data[0].release_date`, secondes Unix) des deux API. Requête **dédiée**
-  (`Query::Year`, file `urgent`) à l'ouverture de la page quand le slug est
-  absent de la table : un jeu dont les visuels sont déjà en cache ne fait sinon
+  (`Query::Year`, file `urgent`) à l'ouverture de la page quand la clé du jeu
+  est absente de la table : un jeu dont les visuels sont déjà en cache ne fait sinon
   aucune requête, donc n'aurait jamais son année. Avec une identification, la
   date vient de la **fiche du jeu choisi** (`/api/v2/games/id/<id>` ou
   `/api/public/game/<id>`), pas du premier résultat.
   **Mémoire : `assets/years.txt`** — le dossier partagé (Syncthing), donc les
-  années suivent les visuels chez un autre poste. `slug=1998` par ligne, trié ;
-  `slug=` note « regardé, SGDB n'en donne pas », et **rien n'est jamais
+  années suivent les visuels chez un autre poste. `<clé>=1998` par ligne (la
+  clé du jeu, comme les visuels : `8103-doom=2016`), trié ;
+  `<clé>=` note « regardé, SGDB n'en donne pas », et **rien n'est jamais
   redemandé** (ni par l'interface, ni par `--update`), sauf demande explicite
   « Demander à SteamGridDB » du prompt de date. Écriture atomique en
   **fusion** (`covers::save_years` relit le disque avant d'écrire) : le mode
@@ -465,7 +505,7 @@ leurs icônes, pour l'interface.
 - **Jeu en cours publié pour l'overlay manette** : tant qu'un jeu tourne,
   `<cache>/running.txt` porte `slug=`, `nom=` (nom affiché du paquet), `pids=`,
   puis `logo=` et `icone=` — chemins absolus, **seulement s'ils existent**
-  (`assets/logos/<slug>.png` ; icône : `assets/icons/<slug>.png` d'abord —
+  (`assets/logos/<clé>.png` ; icône : `assets/icons/<clé>.png` d'abord —
   c'est là qu'arrive une icône choisie, et `assets/` est partagé par Syncthing
   entre postes —, puis l'icône extraite du paquet, en PNG). C'est ce que lit `gpad` pour afficher le logo du jeu
   au-dessus de l'en-tête et remplacer le nom/icône de la fenêtre : le lien est
@@ -493,7 +533,10 @@ leurs icônes, pour l'interface.
   n'est pas réessayé, et tout est **ré-encodé en PNG** — `gpad` ne décode que le
   PNG, un logo en JPEG du cache serait invisible. Pas de fenêtre, pas d'index,
   pas de scan : deux requêtes au plus. `gpad` relit le cache une fois par
-  seconde, donc le logo apparaît tout seul après le téléchargement.
+  seconde, donc le logo apparaît tout seul après le téléchargement. Comme
+  `--update`, il **retient l'identification** qu'il résout (fichier partagé,
+  visuels déjà là renommés vers la clé du jeu) : c'est ce qui fait converger un
+  cache existant, lancé depuis `gwine`/`lgplaunch` sans passer par le launcher.
 - **Page d'un jeu** : un clic sur une vignette déjà sélectionnée, ou Entrée/A,
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
   cover, nom, **année de sortie** (sous le titre) et temps de jeu, puis trois
@@ -532,7 +575,7 @@ leurs icônes, pour l'interface.
   les carrés et les formats larges) — le type `grid` de l'API publique mélange
   600×900, 512×512, 1024×1024 et 920×430, d'où l'impression de « pas que des
   grilles » dans le menu (constaté 18/11) ; si rien ne reste en portrait, tout
-  est rendu plutôt que d'afficher un menu vide. L'image choisie est écrite dans `assets/<type>/`, un
+  est rendu plutôt que d'afficher un menu vide. L'image choisie est écrite dans `assets/<type>/<clé>`, un
   `<slug>.choice` garde l'URL ; comme un visuel présent n'est plus redemandé,
   **le choix est permanent**. Une image choisie et le marqueur vivent dans deux
   dossiers différents : le **fichier** dans `assets/` (partagé entre postes, donc
@@ -564,12 +607,15 @@ leurs icônes, pour l'interface.
   d'un autre jeu (constaté 20/11). Le choix est écrit dans
   **`assets/identities.txt`** (`slug=<id>TAB<nom>`, fusion à l'écriture,
   temporaire + renommage) : c'est le dossier **partagé par Syncthing**, donc
-  les copains et les autres postes téléchargent les visuels du MÊME jeu. Les
+  les copains et les autres postes téléchargent les visuels du MÊME jeu — et
+  c'est cette identification qui **nomme** les fichiers (`<id>-<nom>`, voir
+  *Nom des visuels*). Les
   requêtes `Auto`/`Choices`/`Year` portent alors l'`id` et court-circuitent la
   recherche par nom (y compris `--update`, `--date` et `--art`). Choisir une
   identification **oublie les visuels de l'ancien jeu** (`covers::forget` :
-  fichiers des quatre types, `.choice` et `.miss` de la machine, handles en
-  mémoire, miniature) puis redemande les quatre en fond ; l'icône du paquet,
+  fichiers des quatre types **sous l'ancienne clé**, `.choice` et `.miss` de
+  la machine, handles en mémoire, miniature) puis redemande les quatre en fond
+  sous la nouvelle clé ; l'icône du paquet,
   correcte par définition, est relue du cache. **Mais si le paquet a déjà des
   visuels, on demande d'abord** (`covers::has_art` → question « Remplacer les
   visuels ? », « Non, garder » sélectionné par défaut) : les écraser d'office
@@ -652,9 +698,10 @@ leurs icônes, pour l'interface.
   focus, menu, prompt, écran noir (`fade >= 0.999`), et pendant un
   lancement (`to_launch`). La page ouverte ne coupe plus le minuteur (c'est un
   écran regardé). Ne jamais le brancher sur `window::frames()` :
-  60 Hz inutiles. Réglages sans recompiler : `GLAUNCHER_FX_MS` (16-200,
-  intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par image) ; `sparkles = false`
-  coupe tout (aucun fil lancé).
+  60 Hz inutiles **pour la poussière** (la respiration, elle, en a besoin :
+  voir sa puce — une seule horloge tourne à la fois). Réglages sans recompiler :
+  `GLAUNCHER_FX_MS` (16-200, intervalle) et `GLAUNCHER_FX_DEBUG=1` (ms par
+  image) ; `sparkles = false` coupe tout (aucun fil lancé).
 - **Hyperespace au lancement** : pendant le voile noir (0,9 s), chaque
   particule est poussée vers l'extérieur depuis le centre (`fade²`, traînée
   `95 px`, opacité `1 + 2.8 × fade`) et le même calcul joué à l'envers les
@@ -703,7 +750,7 @@ leurs icônes, pour l'interface.
   applique la transformation **dans l'arbre**, avec `Renderer::with_transformation` :
   ordre des couches conservé et découpage de la zone défilante respecté.
 - **Respiration de la sélection (vignette entière)** : la carte sélectionnée
-  est **grossie par elle-même** de 0 à 2,8 % (période 4 s) via `Pose` : fond
+  est **grossie par elle-même** de 0 à **5 %** (période 4 s) via `Pose` : fond
   bleu de sélection, cover, tranche, étoile et titre bougent d'un seul bloc,
   autour du centre de la vignette, sans refaire la mise en page. Le canvas
   (`sparkles::draw_breath`) ne peint plus que le **cadre d'accent** autour de
@@ -719,6 +766,16 @@ leurs icônes, pour l'interface.
   entoure la cover seule, pas le titre (demandé le 20/11). La respiration
   s'arrête pour une vignette qui mord sur le pied de page ou sous le voile du
   lancement (`VEIL_CLEAR`).
+  **Cadence : 60 Hz, pas le minuteur de particules** (retour du 22/11 : « pas
+  assez fluide »). `App::breath_pulses` alimente `animating`, donc
+  `window::frames` redessine à la fréquence de l'écran pendant que la sélection
+  respire, et le minuteur à 20 Hz s'arrête (`sparkles::set_running(false)`) :
+  une seule horloge à la fois. C'est `App::tick` qui avance le temps du pas
+  RÉEL (`Sparkles::advance_by(dt)`) quand le minuteur est arrêté ; quand il
+  tourne, `Message::Sparkle` avance d'un pas fixe comme avant — jamais les
+  deux, sinon le temps courrait 1,3× trop vite. Le temps n'avance que pendant
+  les images : une pause (menu, page, fenêtre sans focus) fige la phase et la
+  respiration reprend où elle s'était arrêtée.
   **Pas de gerbe d'étincelles** au changement de jeu : essayée puis retirée le
   20/11 (jugée « nulle » à l'usage) — ne pas la réintroduire sans demande.
 - **Coins arrondis de la cover** : `ART_RADIUS` (5 px), appliqué à l'image

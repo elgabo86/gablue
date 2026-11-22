@@ -115,6 +115,8 @@ fn update(config: &config::Config, dates_only: bool) -> iced::Result {
     }
 
     let marks = config.cache_dir().join("marks");
+    // visuels déjà là renommés d'après le jeu SteamGridDB (voir App::boot)
+    covers::migrate_names(&config.assets_dir(), &marks);
     let mut report = |line: String| println!("{line}");
     let totals = covers::update_all(
         &config.assets_dir(),
@@ -127,8 +129,13 @@ fn update(config: &config::Config, dates_only: bool) -> iced::Result {
 
     // miniatures des covers : la grille s'en sert, autant les préparer ici
     let mut thumbs = 0;
+    let identities = covers::load_identities(&covers::identities_path(&config.assets_dir()));
     for (slug, _, _) in &games {
-        let Some(cover) = covers::cached(&config.cover_cache_dir(), slug) else {
+        let Some(cover) = covers::cached_for(
+            &config.cover_cache_dir(),
+            identities.get(slug),
+            slug,
+        ) else {
             continue;
         };
         let job = thumbs::Job::new(slug.clone(), cover);
@@ -192,6 +199,8 @@ fn art(config: &config::Config, pack: &std::path::Path) -> iced::Result {
     };
     let slug = library::slugify(&stem);
     config.migrate_cache();
+    // visuels déjà là renommés d'après le jeu SteamGridDB (voir App::boot)
+    covers::migrate_names(&config.assets_dir(), &config.cache_dir().join("marks"));
     let mut report = |line: String| eprintln!("glauncher : {line}");
     let totals = covers::fetch_game(
         &config.assets_dir(),
@@ -218,6 +227,8 @@ fn art(config: &config::Config, pack: &std::path::Path) -> iced::Result {
 /// vignettes de 300. Les téléchargements suivants sont normalisés d'office
 /// (`covers::save`) ; un fichier déjà bon n'est jamais réécrit.
 fn shrink(config: &config::Config) -> iced::Result {
+    // les fichiers déjà là prennent d'abord leur nom de jeu partagé
+    covers::migrate_names(&config.assets_dir(), &config.cache_dir().join("marks"));
     let mut report = |line: String| println!("{line}");
     let totals = covers::shrink_assets(&config.assets_dir(), &config.thumb_dir(), &mut report);
     println!(

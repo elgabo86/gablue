@@ -611,9 +611,15 @@ lui-même prend le **nom du paquet** et **son icône**.
   ne peut donc pas être reconnu par la seule classe (`steam_proton`).
 - **`paquet=` donne le slug**, donc les visuels du cache, résolus à chaque
   lecture (une fois par seconde) : `slugify` est la règle exacte du launcher
-  (`library::slugify`, accents conservés). Logo :
-  `assets/logos/<slug>.png` ; icône : `assets/icons/<slug>.png` d'abord (une
+  (`library::slugify`, accents conservés). Les fichiers, eux, sont nommés
+  d'après le **jeu SteamGridDB** (`assets/identities.txt`, partagé par
+  Syncthing) et non d'après le paquet : `cle_visuels` applique la même règle
+  que `covers::key` du launcher (`<id>-<nom slugifié>`, `<id>` seul si le nom
+  manque, slug du paquet si le jeu n'est jamais identifié) — les deux doivent
+  rester d'accord, sinon plus de logo. Logo :
+  `assets/logos/<clé>.png` ; icône : `assets/icons/<clé>.png` d'abord (une
   icône choisie y arrive, et le dossier est partagé entre postes), puis
+  `<id>.png` (visuel rangé avant que le nom soit connu), puis
   `pack-icons/<slug>.png`. **PNG seulement** (l'overlay ne décode pas le
   JPEG) : `glauncher --art <paquet>`, lancé en fond par gwine/lgplaunch juste
   après la publication, convertit et écrit ce qui manque dans son cache. Le

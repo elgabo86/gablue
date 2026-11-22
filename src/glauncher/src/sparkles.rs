@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use iced::widget::canvas::{Canvas, Frame, Geometry, Image, Path, Program, Stroke};
 use iced::widget::image::Handle;
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, Vector, mouse};
 
 use crate::app::{FOOTER_BAND, Message, PAGE_PADDING_Y};
 
@@ -58,6 +58,14 @@ static NANOS: AtomicU64 = AtomicU64::new(0);
 /// Demande (ou non) une image à chaque tour du minuteur.
 pub fn set_running(running: bool) {
     RUNNING.store(running, Ordering::Relaxed);
+}
+
+/// Le minuteur envoie-t-il les images ? Sinon c'est la fenêtre
+/// (`window::frames`, 60 Hz) qui cadence le temps de l'animation : `App::tick`
+/// avance alors la poussière et la respiration du pas réel écoulé, et le
+/// minuteur ne compte pas une seconde fois (voir `Sparkles::advance_by`).
+pub fn running() -> bool {
+    RUNNING.load(Ordering::Relaxed)
 }
 
 /// Démarre le minuteur des particules : un fil endormi qui ne réveille l'UI
@@ -100,11 +108,19 @@ pub struct Breath {
     /// par image, dans `App::breathing`, pour que la carte et le cadre du
     /// canvas bougent EXACTEMENT ensemble.
     pub factor: f32,
+    /// Décalage écran de la vignette (glissade d'un changement de taille) :
+    /// la carte est dessinée à cette position par une `Pose`, le cadre doit la
+    /// suivre au pixel près.
+    pub offset: Vector,
 }
 
-/// Respiration de la vignette sélectionnée : période (s) et amplitude (2,8 %).
+/// Respiration de la vignette sélectionnée : période (s) et amplitude (5 %).
+/// Doublée le 22/11 (« pas assez fort ») et rendue continue à 60 Hz (voir
+/// `advance_by` et `App::subscription` : c'est l'image de la fenêtre qui
+/// cadence la respiration, le minuteur de particules à 20 Hz la faisait
+/// avancer par paliers visibles).
 const BREATH_PERIOD: f32 = 4.0;
-const BREATH_AMPLITUDE: f32 = 0.028;
+const BREATH_AMPLITUDE: f32 = 0.05;
 /// Rayon du cadre d'accent, plus court que celui de la carte : le rectangle
 /// qu'il entoure est plus petit (la cover seule).
 const FRAME_RADIUS_RATIO: f32 = 0.72;
@@ -139,10 +155,18 @@ impl Sparkles {
         self.time
     }
 
-    /// Avance le temps d'une image du minuteur.
+    /// Avance le temps d'une image du minuteur (pas fixe, 20 Hz).
     pub fn advance(&mut self) {
-        let dt = interval_ms() as f32 / 1000.0;
-        self.time += dt;
+        self.advance_by(interval_ms() as f32 / 1000.0);
+    }
+
+    /// Avance le temps du pas RÉEL écoulé (`App::tick`), pour que la
+    /// respiration suive la cadence de la fenêtre (60 Hz) au lieu de sauter
+    /// toutes les 50 ms. Le temps n'avance que pendant les images : une pause
+    /// (menu, page, fenêtre sans focus) fige la phase et la respiration reprend
+    /// où elle s'était arrêtée, sans saut d'échelle.
+    pub fn advance_by(&mut self, dt: f32) {
+        self.time += dt.clamp(0.0, 0.25);
         // bornée : après une heure la précision de f32 sur des sinus se dégrade
         if self.time > 3600.0 {
             self.time -= 3600.0;
@@ -313,9 +337,9 @@ fn draw_breath(shapes: &mut Frame, breath: &Breath, bounds: Rectangle) {
     }
 
     let factor = breath.factor;
-    let middle = breath.card.center();
+    let middle = breath.card.center() + breath.offset;
     let art = breath.art;
-    let center = art.center();
+    let center = art.center() + breath.offset;
     let art = Rectangle::new(
         Point::new(
             middle.x + (center.x - middle.x) * factor - art.width * factor * 0.5,

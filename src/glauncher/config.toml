@@ -8,7 +8,7 @@ fullscreen = true
 
 # Nombre MAXIMAL de colonnes de la grille : la grille s'étale pour remplir la
 # largeur de la fenêtre (moins de colonnes si elle est étroite).
-columns = 5
+columns = 6
 
 # Largeur MINIMALE d'une vignette, en pixels (monter à 300+ sur une TV 4K).
 # C'est aussi la taille de départ : +/− (ou L2/R2) l'ajustent en direct.

@@ -15,8 +15,14 @@
 //! votes ne sont pas exposés par l'API publique, donc reclasser sur les votes
 //! (ancien comportement) faisait justement perdre la première image du top.
 //!
-//! Tout est écrit dans le cache (`<cache>/covers`, `heroes`, `logos`, `icons`),
-//! jamais dans les dossiers de jeux : les sources restent en lecture seule.
+//! Tout est écrit dans le dossier partagé `assets/` (`grids/`, `heroes/`,
+//! `logos/`, `icons/`), jamais dans les dossiers de jeux : les sources restent
+//! en lecture seule.
+//!
+//! Les fichiers sont nommés d'après **le jeu SteamGridDB** et non d'après le
+//! paquet (voir [`key`]) : deux postes dont les `.wgp`/`.lgp` portent des noms
+//! différents (ou deux amis par Syncthing) tombent donc sur les mêmes fichiers
+//! et ne téléchargent qu'une fois.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -89,11 +95,15 @@ pub enum Query {
     /// Télécharge le **premier** visuel de chaque type demandé (ordre « top »
     /// de SteamGridDB, sans reclassement). `id` vient de
     /// `assets/identities.txt` (jeu identifié) : les visuels sont alors ceux
-    /// de CE jeu, sans repasser par une recherche par nom.
+    /// de CE jeu, sans repasser par une recherche par nom. `key` est le nom
+    /// partagé des fichiers ([`key`]) quand l'identification est **déjà
+    /// connue** ; sinon le worker résout le jeu lui-même et retient
+    /// l'identification (c'est elle qui donne la clé).
     Auto {
         slug: String,
         name: String,
         id: Option<u64>,
+        key: Option<String>,
         kinds: Vec<ArtKind>,
     },
     /// Renvoie toutes les images possibles d'un type, vignettes comprises
@@ -111,9 +121,11 @@ pub enum Query {
     Search { slug: String, name: String },
     /// Enregistre le choix de l'utilisateur. `url` peut être une URL du CDN ou
     /// un `file://` (icône extraite du paquet) : le fichier écrit dans le cache
-    /// fait foi et n'est jamais remplacé automatiquement.
+    /// fait foi et n'est jamais remplacé automatiquement. `key` = nom partagé
+    /// du fichier ([`key`]), `slug` = paquet (marqueurs locaux).
     Pick {
         slug: String,
+        key: String,
         kind: ArtKind,
         url: String,
         ext: String,
@@ -124,6 +136,7 @@ pub enum Query {
     /// choisie comme cover doit remplir la vignette, pas laisser des bandes.
     UseFile {
         slug: String,
+        key: String,
         kind: ArtKind,
         path: PathBuf,
     },
@@ -138,6 +151,7 @@ pub enum Query {
         slug: String,
         name: String,
         id: Option<u64>,
+        key: Option<String>,
     },
 }
 
@@ -157,6 +171,32 @@ pub struct FoundGame {
 pub struct Identity {
     pub id: u64,
     pub name: String,
+}
+
+/// Nom de fichier d'un visuel dans `assets/` : **le jeu SteamGridDB**, pas le
+/// paquet — `<id>-<nom slugifié>` (`8103-doom.jpg`).
+///
+/// Pourquoi : le dossier `assets/` est partagé par Syncthing (entre postes et
+/// entre amis). Deux `.wgp`/`.lgp` du même jeu dont les noms diffèrent un peu
+/// (`Marsupilami 2 Salsa Palombia.lgp` / `Marsupilami 2 (FR).lgp`) tombent sur
+/// la **même** clé, donc sur les mêmes images : le second poste ne télécharge
+/// rien. L'id en tête évite les collisions de noms (« Doom » 1993 et 2016
+/// portent le même nom chez SteamGridDB). Un jeu jamais identifié garde son
+/// slug de paquet : ses visuels restent alors propres à la machine.
+pub fn key(identity: Option<&Identity>, slug: &str) -> String {
+    let Some(identity) = identity else {
+        return slug.to_string();
+    };
+    let name = identity.name.trim();
+    if name.is_empty() {
+        return identity.id.to_string();
+    }
+    format!("{}-{}", identity.id, crate::library::slugify(name))
+}
+
+/// [`key`] pour un paquet, d'après les identifications partagées.
+pub fn key_of(identities: &BTreeMap<String, Identity>, slug: &str) -> String {
+    key(identities.get(slug), slug)
 }
 
 /// Visuel du « top » : URL d'origine, octets et extension.
@@ -212,11 +252,18 @@ pub enum CoverEvent {
         result: Result<Vec<FoundGame>, String>,
     },
     /// Année de sortie trouvée pour ce jeu (`None` = SteamGridDB n'en donne
-    /// pas : c'est noté, on ne redemandera plus).
+    /// pas : c'est noté, on ne redemandera plus). `key` = sous quel nom elle
+    /// est rangée dans `assets/years.txt` (le jeu, pas le paquet).
     Year {
         slug: String,
+        key: String,
         year: Option<u32>,
     },
+    /// Le jeu SteamGridDB d'un paquet vient d'être appris (premier résultat de
+    /// l'autocomplete, ou fiche d'un id) : le choix est retenu dans
+    /// `assets/identities.txt` et c'est lui qui donne la clé partagée des
+    /// visuels. L'interface met sa table à jour, sans réécrire le fichier.
+    Identified { slug: String, identity: Identity },
 }
 
 /// Travail en attente du worker, réparti en deux voies.
@@ -323,16 +370,97 @@ where
                         slug,
                         name,
                         id,
+                        key: known,
                         kinds,
                     } => {
+                        // Quel jeu SteamGridDB ? Avec une identification, l'id
+                        // suffit ; sans, on la résout ici et on la retient (une
+                        // seule requête) : c'est elle qui donne la clé partagée
+                        // des fichiers, sans quoi deux postes retéléchargeraient
+                        // tout.
+                        let resolved = match (&known, id) {
+                            (Some(key), Some(id)) => Ok(Some((Identity { id, name: name.clone() }, key.clone()))),
+                            _ => client.find(&name, id).map(|found| {
+                                found.map(|game| {
+                                    let identity = Identity {
+                                        id: game.id,
+                                        name: game.name.clone(),
+                                    };
+                                    (identity.clone(), key(Some(&identity), &slug))
+                                })
+                            }),
+                        };
+                        let resolved = match resolved {
+                            Ok(Some((identity, key))) => {
+                                // identification encore inconnue : on la
+                                // partage (elle sert au prochain démarrage et
+                                // aux autres postes)
+                                if known.is_none() {
+                                    learn_identity(&cache, &slug, &identity, &emit);
+                                }
+                                Some((identity, key))
+                            }
+                            Ok(None) => None,
+                            Err(error) => {
+                                for kind in kinds {
+                                    eprintln!(
+                                        "glauncher : {} SGDB « {name} » : {error}",
+                                        kind.label()
+                                    );
+                                    emit(CoverEvent::Failed {
+                                        slug: slug.clone(),
+                                        kind,
+                                        error: error.clone(),
+                                    });
+                                }
+                                continue;
+                            }
+                        };
+                        let Some((identity, key)) = resolved else {
+                            // jeu inconnu de SteamGridDB : rien à télécharger
+                            for kind in kinds {
+                                let dir = cache.join(kind.dir());
+                                let marks = marks.join(kind.dir());
+                                mark_missing(&dir, &marks, &key(None, &slug), &slug);
+                                eprintln!(
+                                    "glauncher : {} SGDB « {name} » introuvable",
+                                    kind.label()
+                                );
+                                emit(CoverEvent::Missing {
+                                    slug: slug.clone(),
+                                    kind,
+                                });
+                            }
+                            continue;
+                        };
                         for kind in kinds {
                             let dir = cache.join(kind.dir());
                             let marks = marks.join(kind.dir());
-                            let fetched = client.top(&name, id, kind);
+                            // Déjà là sous la clé du jeu : téléchargé par un
+                            // autre poste et arrivé par Syncthing. On le sert
+                            // sans réseau — c'est tout l'intérêt du nommage.
+                            if let Some(path) = cached_for(&dir, Some(&identity), &slug)
+                                && let Ok(bytes) = std::fs::read(&path)
+                            {
+                                eprintln!(
+                                    "glauncher : {} « {} » déjà partagé → {}",
+                                    kind.label(),
+                                    identity.name,
+                                    path.display()
+                                );
+                                emit(CoverEvent::Found {
+                                    slug: slug.clone(),
+                                    kind,
+                                    bytes,
+                                });
+                                continue;
+                            }
+                            let fetched = client.top(identity.id, kind);
                             std::thread::sleep(THROTTLE);
                             match fetched {
                                 Ok(Some((url, bytes, ext))) => {
-                                    let path = save(kind, &dir, &marks, &slug, ext, &bytes, None);
+                                    let path =
+                                        save(kind, &dir, &marks, &key, &slug, ext, &bytes, None);
                                     eprintln!(
                                         "glauncher : {} SGDB « {name} » → {}",
                                         kind.label(),
@@ -346,7 +474,7 @@ where
                                     });
                                 }
                                 Ok(None) => {
-                                    mark_missing(&dir, &marks, &slug);
+                                    mark_missing(&dir, &marks, &key, &slug);
                                     eprintln!(
                                         "glauncher : {} SGDB « {name} » introuvable",
                                         kind.label()
@@ -377,7 +505,40 @@ where
                         name,
                         id,
                         kind,
-                    } => match client.choices(&name, id, kind) {
+                    } => {
+                        // même résolution que `Auto` : l'identification apprise
+                        // ici est celle sous laquelle le choix sera écrit
+                        let game = match id {
+                            Some(id) => FoundGame {
+                                id,
+                                name: name.clone(),
+                                year: None,
+                            },
+                            None => match client.find(&name, None) {
+                                Ok(Some(game)) => {
+                                    let identity = Identity {
+                                        id: game.id,
+                                        name: game.name.clone(),
+                                    };
+                                    learn_identity(&cache, &slug, &identity, &emit);
+                                    game
+                                }
+                                Ok(None) => {
+                                    emit(CoverEvent::Choices {
+                                        slug: slug.clone(),
+                                        kind,
+                                        choices: Vec::new(),
+                                    });
+                                    continue;
+                                }
+                                Err(error) => {
+                                    eprintln!("glauncher : choix « {name} » : {error}");
+                                    emit(CoverEvent::Failed { slug, kind, error });
+                                    continue;
+                                }
+                            },
+                        };
+                        match client.assets(game.id, kind) {
                         Ok(candidates) => {
                             let premiers: Vec<Candidate> =
                                 candidates.into_iter().take(MAX_CHOICES).collect();
@@ -422,11 +583,13 @@ where
                             eprintln!("glauncher : choix « {name} » : {error}");
                             emit(CoverEvent::Failed { slug, kind, error });
                         }
-                    },
+                        }
+                    }
 
                     // --- image choisie par l'utilisateur ---
                     Query::Pick {
                         slug,
+                        key,
                         kind,
                         url,
                         ext,
@@ -441,8 +604,16 @@ where
                             Ok(bytes) => {
                                 let dir = cache.join(kind.dir());
                                 let marks = marks.join(kind.dir());
-                                let path =
-                                    save(kind, &dir, &marks, &slug, &ext, &bytes, Some(&url));
+                                let path = save(
+                                    kind,
+                                    &dir,
+                                    &marks,
+                                    &key,
+                                    &slug,
+                                    &ext,
+                                    &bytes,
+                                    Some(&url),
+                                );
                                 eprintln!(
                                     "glauncher : {} choisi → {}",
                                     kind.label(),
@@ -458,7 +629,12 @@ where
                     }
 
                     // --- image locale fournie par l'utilisateur ---
-                    Query::UseFile { slug, kind, path } => {
+                    Query::UseFile {
+                        slug,
+                        key,
+                        kind,
+                        path,
+                    } => {
                         let dir = cache.join(kind.dir());
                         let marks = marks.join(kind.dir());
                         match std::fs::read(&path) {
@@ -467,8 +643,15 @@ where
                                     // marqueur `.choice` : cette image fait foi,
                                     // elle ne sera jamais remplacée toute seule
                                     let url = format!("file://{}", path.display());
-                                    let ecrit =
-                                        ecrire(&dir, &marks, &slug, ext, &adaptees, Some(&url));
+                                    let ecrit = ecrire(
+                                        &dir,
+                                        &marks,
+                                        &key,
+                                        &slug,
+                                        ext,
+                                        &adaptees,
+                                        Some(&url),
+                                    );
                                     eprintln!(
                                         "glauncher : {} perso « {} » → {}",
                                         kind.label(),
@@ -524,19 +707,45 @@ where
                     },
 
                     // --- année de sortie (page d'un jeu) ---
-                    Query::Year { slug, name, id } => match client.release_year(&name, id) {
-                        Ok(year) => {
-                            if year.is_none() {
-                                eprintln!("glauncher : année de « {name} » inconnue");
+                    Query::Year {
+                        slug,
+                        name,
+                        id,
+                        key: known,
+                    } => {
+                        // la fiche du jeu donne à la fois son nom et sa date :
+                        // une seule requête, et l'identification apprise ici
+                        // range l'année sous la clé du jeu (partagée)
+                        let found = match client.find(&name, id) {
+                            Ok(found) => found,
+                            // erreur réseau : on ne note RIEN, la question
+                            // pourra être reposée (contrairement à « SGDB n'a
+                            // pas de date »)
+                            Err(error) => {
+                                eprintln!("glauncher : année « {name} » : {error}");
+                                continue;
                             }
-                            emit(CoverEvent::Year { slug, year });
-                        }
-                        // erreur réseau : on ne note RIEN, la question pourra
-                        // être reposée (contrairement à « SGDB n'a pas de date »)
-                        Err(error) => {
-                            eprintln!("glauncher : année « {name} » : {error}")
-                        }
-                    },
+                        };
+                        let (key, year) = match found {
+                            Some(game) => {
+                                let identity = Identity {
+                                    id: game.id,
+                                    name: game.name.clone(),
+                                };
+                                if known.is_none() {
+                                    learn_identity(&cache, &slug, &identity, &emit);
+                                }
+                                if game.year.is_none() {
+                                    eprintln!("glauncher : année de « {name} » inconnue");
+                                }
+                                (key(Some(&identity), &slug), game.year)
+                            }
+                            // jeu inconnu de SteamGridDB : « pas de date » sous
+                            // le nom du paquet, on ne redemandera plus
+                            None => (key(None, &slug), None),
+                        };
+                        emit(CoverEvent::Year { slug, key, year });
+                    }
 
                     // --- icône du paquet ---
                     Query::Icon { slug, pack } => match pack_icon(&pack) {
@@ -647,15 +856,79 @@ pub fn save_identities(path: &Path, identities: &BTreeMap<String, Identity>) {
     write_atomic(path, text.as_bytes());
 }
 
-/// Oublie les visuels d'un jeu (identification changée, jeu mal reconnu) :
-/// les quatre fichiers et les marqueurs de CETTE machine. La miniature est
-/// refaite à partir de la nouvelle cover ; l'appelant efface les handles en
-/// mémoire et redemande les visuels du jeu identifié.
-pub fn forget(assets: &Path, marks_root: &Path, slug: &str) {
+/// Range les visuels déjà téléchargés sous la **clé du jeu** plutôt que sous le
+/// slug du paquet : sans ça, apprendre l'identification d'un jeu ferait
+/// retélécharger toutes ses images (le cache ne les retrouverait plus).
+///
+/// Renommage seulement, jamais d'écrasement : si le fichier de la clé existe
+/// déjà (image arrivée d'un autre poste par Syncthing), l'ancien reste où il
+/// est et la nouvelle clé gagne à la lecture. Rend le nombre de fichiers
+/// déplacés.
+fn rename_to_key(assets: &Path, slug: &str, identity: &Identity) -> usize {
+    let cle = key(Some(identity), slug);
+    if cle == slug {
+        return 0;
+    }
+    let mut bouges = 0;
     for kind in ArtKind::ALL {
         let dir = assets.join(kind.dir());
         for ext in IMAGE_EXT {
-            let _ = std::fs::remove_file(dir.join(format!("{slug}.{ext}")));
+            let from = dir.join(format!("{slug}.{ext}"));
+            let to = dir.join(format!("{cle}.{ext}"));
+            if from.is_file() && !to.exists() && std::fs::rename(&from, &to).is_ok() {
+                bouges += 1;
+            }
+        }
+    }
+    bouges
+}
+
+/// Retient une identification apprise **automatiquement** (premier résultat de
+/// l'autocomplete, ou fiche d'un jeu) dans `assets/identities.txt`, le fichier
+/// partagé, et prévient l'interface.
+///
+/// Pourquoi l'écrire : c'est l'identification qui donne la **clé** des visuels
+/// ([`key`]). Tant qu'elle n'est pas notée, un redémarrage ne saurait plus sous
+/// quel nom les fichiers ont été rangés (le démarrage ne fait aucune requête
+/// réseau). Une identification choisie à la main passe par l'interface
+/// (`apply_identity`), avec la question « remplacer les visuels ? ».
+fn learn_identity<F>(assets: &Path, slug: &str, identity: &Identity, emit: &F)
+where
+    F: Fn(CoverEvent),
+{
+    let mut map = BTreeMap::new();
+    map.insert(slug.to_string(), identity.clone());
+    save_identities(&identities_path(assets), &map);
+    // visuels déjà là, rangés sous le nom du paquet (installation antérieure,
+    // ou téléchargés avant l'identification) : on les renomme au lieu de les
+    // retélécharger
+    let bouges = rename_to_key(assets, slug, identity);
+    if bouges > 0 {
+        eprintln!("glauncher : {bouges} visuel(s) de {slug} renommé(s) d'après le jeu");
+    }
+    emit(CoverEvent::Identified {
+        slug: slug.to_string(),
+        identity: identity.clone(),
+    });
+}
+
+/// Oublie les visuels d'un jeu (identification changée, jeu mal reconnu) :
+/// les fichiers de la clé donnée, l'ancien nom en `<id>` s'il existe, et les
+/// marqueurs de CETTE machine (eux, par paquet). La miniature est refaite à
+/// partir de la nouvelle cover ; l'appelant efface les handles en mémoire et
+/// redemande les visuels du jeu identifié.
+pub fn forget(assets: &Path, marks_root: &Path, slug: &str, key: &str) {
+    let mut noms = vec![key.to_string()];
+    // clé `<id>-<nom>` : le même jeu a pu être écrit sous son seul id
+    if let Some((id, _)) = key.split_once('-') {
+        noms.push(id.to_string());
+    }
+    for kind in ArtKind::ALL {
+        let dir = assets.join(kind.dir());
+        for nom in &noms {
+            for ext in IMAGE_EXT {
+                let _ = std::fs::remove_file(dir.join(format!("{nom}.{ext}")));
+            }
         }
         let marks = marks_root.join(kind.dir());
         let _ = std::fs::remove_file(marks.join(format!("{slug}.miss")));
@@ -666,9 +939,11 @@ pub fn forget(assets: &Path, marks_root: &Path, slug: &str) {
 /// Fichier des années de sortie, dans `assets/` : c'est le dossier partagé
 /// (Syncthing), donc les années suivent les visuels chez un autre poste.
 ///
-/// Format : `slug=1998` par ligne, trié par slug ; `slug=` veut dire
-/// « regardé, SteamGridDB ne donne pas de date » — une année connue n'est
-/// **jamais** redemandée, ni par l'interface ni par `--update`.
+/// Format : `<clé>=1998` par ligne, trié ; la clé est celle des **visuels**
+/// ([`key`], le jeu SteamGridDB) et non le paquet, sinon deux noms de paquet
+/// légèrement différents redemanderaient la date. `<clé>=` veut dire « regardé,
+/// SteamGridDB ne donne pas de date » — une année connue n'est **jamais**
+/// redemandée, ni par l'interface ni par `--update`.
 pub fn years_path(assets: &Path) -> PathBuf {
     assets.join("years.txt")
 }
@@ -723,6 +998,7 @@ pub fn save_years(path: &Path, years: &BTreeMap<String, Option<u32>>) {
 /// Nom et identifiant à utiliser pour un paquet : l'identification partagée
 /// s'il y en a une, sinon le nom du paquet (comportement historique, premier
 /// résultat de l'autocomplete).
+#[cfg(test)]
 fn who(identities: &BTreeMap<String, Identity>, slug: &str, name: &str) -> (String, Option<u64>) {
     match identities.get(slug) {
         Some(identity) if !identity.name.is_empty() => (identity.name.clone(), Some(identity.id)),
@@ -731,42 +1007,31 @@ fn who(identities: &BTreeMap<String, Identity>, slug: &str, name: &str) -> (Stri
     }
 }
 
-/// Apprend l'année d'un jeu si elle manque, et l'écrit tout de suite (arrêt
-/// brutal = rien de perdu). Rend `true` si une requête a eu lieu : l'appelant
-/// gère l'attente entre deux requêtes.
-#[allow(clippy::too_many_arguments)]
-fn learn_year<F>(
-    client: &mut Client,
-    path: &Path,
-    years: &mut BTreeMap<String, Option<u32>>,
+/// Identification complète déjà connue pour un paquet, s'il y en a une.
+fn known(identities: &BTreeMap<String, Identity>, slug: &str) -> Option<Identity> {
+    identities
+        .get(slug)
+        .filter(|identity| !identity.name.is_empty())
+        .cloned()
+}
+
+/// Retient une identification apprise hors interface (`--update`, `--date`,
+/// `--art`) : fusion dans le fichier partagé et table en mémoire.
+fn remember_identity(
+    assets: &Path,
+    identities: &mut BTreeMap<String, Identity>,
     slug: &str,
-    name: &str,
-    id: Option<u64>,
-    totals: &mut UpdateReport,
-    report: &mut F,
-) -> bool
-where
-    F: FnMut(String),
-{
-    if years.contains_key(slug) {
-        return false;
+    identity: &Identity,
+) {
+    let mut map = BTreeMap::new();
+    map.insert(slug.to_string(), identity.clone());
+    save_identities(&identities_path(assets), &map);
+    // visuels déjà là, rangés sous le nom du paquet : renommés, pas retéléchargés
+    let bouges = rename_to_key(assets, slug, identity);
+    if bouges > 0 {
+        eprintln!("glauncher : {bouges} visuel(s) de {slug} renommé(s) d'après le jeu");
     }
-    match client.release_year(name, id) {
-        Ok(year) => {
-            years.insert(slug.to_string(), year);
-            totals.years += 1;
-            save_years(path, years);
-            report(match year {
-                Some(year) => format!("année « {name} » → {year}"),
-                None => format!("année « {name} » inconnue"),
-            });
-        }
-        Err(error) => {
-            totals.failed += 1;
-            report(format!("année « {name} » : {error}"));
-        }
-    }
-    true
+    identities.insert(slug.to_string(), identity.clone());
 }
 
 /// `--date` : n'apprend que les années de sortie manquantes, sans toucher aux
@@ -784,23 +1049,53 @@ where
     let mut totals = UpdateReport::default();
     let path = years_path(assets);
     let mut years = load_years(&path);
-    let identities = load_identities(&identities_path(assets));
+    let mut identities = load_identities(&identities_path(assets));
 
     for (slug, name) in games {
-        let (name, id) = who(&identities, slug, name);
-        if !learn_year(
-            &mut client,
-            &path,
-            &mut years,
-            slug,
-            &name,
-            id,
-            &mut totals,
-            report,
-        ) {
+        // identification locale : elle donne la clé sans aucune requête
+        let local = known(&identities, slug);
+        let cle = key(local.as_ref(), slug);
+        if years.contains_key(&cle) {
             totals.skipped += 1;
             continue;
         }
+        // résolution : fiche du jeu identifié (nom + date), ou autocomplete
+        let (identity, year) = match local {
+            Some(identity) => match client.find(&identity.name, Some(identity.id)) {
+                Ok(found) => (Some(identity), found.and_then(|game| game.year)),
+                Err(error) => {
+                    totals.failed += 1;
+                    report(format!("année « {name} » : {error}"));
+                    std::thread::sleep(THROTTLE);
+                    continue;
+                }
+            },
+            None => match client.find(name, None) {
+                Ok(Some(game)) => {
+                    let identity = Identity {
+                        id: game.id,
+                        name: game.name.clone(),
+                    };
+                    remember_identity(assets, &mut identities, slug, &identity);
+                    (Some(identity), game.year)
+                }
+                Ok(None) => (None, None),
+                Err(error) => {
+                    totals.failed += 1;
+                    report(format!("année « {name} » : {error}"));
+                    std::thread::sleep(THROTTLE);
+                    continue;
+                }
+            },
+        };
+        let cle = key(identity.as_ref(), slug);
+        years.insert(cle, year);
+        totals.years += 1;
+        save_years(&path, &years);
+        report(match year {
+            Some(year) => format!("année « {name} » → {year}"),
+            None => format!("année « {name} » inconnue"),
+        });
         std::thread::sleep(THROTTLE);
     }
     totals
@@ -827,29 +1122,65 @@ where
     // années déjà connues (fichier partagé) : une seule requête par jeu
     let years_file = years_path(assets);
     let mut years = load_years(&years_file);
-    let identities = load_identities(&identities_path(assets));
+    let mut identities = load_identities(&identities_path(assets));
 
     for (slug, name, pack) in games {
-        // jeu identifié : ce sont SES visuels et SA date, pas ceux du premier
-        // résultat de la recherche par nom
-        let (name, id) = who(&identities, slug, name);
+        // Identification et clé : l'identification locale ne coûte rien, un jeu
+        // jamais identifié passe par l'autocomplete — son résultat est retenu,
+        // c'est lui qui donne les fichiers partagés. Avec l'identification, ce
+        // sont SES visuels et SA date, pas ceux du premier résultat.
+        let (identity, autocomplete_year) = match known(&identities, slug) {
+            Some(identity) => (identity, None),
+            None => match client.find(name, None) {
+                Ok(Some(game)) => {
+                    let identity = Identity {
+                        id: game.id,
+                        name: game.name.clone(),
+                    };
+                    remember_identity(assets, &mut identities, slug, &identity);
+                    std::thread::sleep(THROTTLE);
+                    (identity, Some(game.year))
+                }
+                Ok(None) => {
+                    totals.missing += 1;
+                    report(format!("« {name} » inconnu de SteamGridDB"));
+                    continue;
+                }
+                Err(error) => {
+                    totals.failed += 1;
+                    report(format!("« {name} » : {error}"));
+                    continue;
+                }
+            },
+        };
+        let cle = key(Some(&identity), slug);
         // --- année de sortie : une requête, puis plus jamais ---
-        if learn_year(
-            &mut client,
-            &years_file,
-            &mut years,
-            slug,
-            &name,
-            id,
-            &mut totals,
-            report,
-        ) {
+        if !years.contains_key(&cle) {
+            let year = match autocomplete_year {
+                Some(year) => year,
+                None => match client.find(&identity.name, Some(identity.id)) {
+                    Ok(found) => found.and_then(|game| game.year),
+                    Err(error) => {
+                        totals.failed += 1;
+                        report(format!("année « {name} » : {error}"));
+                        std::thread::sleep(THROTTLE);
+                        continue;
+                    }
+                },
+            };
+            years.insert(cle.clone(), year);
+            totals.years += 1;
+            save_years(&years_file, &years);
+            report(match year {
+                Some(year) => format!("année « {name} » → {year}"),
+                None => format!("année « {name} » inconnue"),
+            });
             std::thread::sleep(THROTTLE);
         }
         for kind in ArtKind::ALL {
             let dir = assets.join(kind.dir());
             let marks = marks_root.join(kind.dir());
-            if cached(&dir, slug).is_some() {
+            if cached_for(&dir, Some(&identity), slug).is_some() {
                 totals.skipped += 1;
                 continue;
             }
@@ -866,21 +1197,26 @@ where
                 totals.skipped += 1;
                 continue;
             }
-            match client.top(&name, id, kind) {
+            match client.top(identity.id, kind) {
                 Ok(Some((url, bytes, ext))) => {
-                    let path = save(kind, &dir, &marks, slug, ext, &bytes, None);
+                    let path = save(kind, &dir, &marks, &cle, slug, ext, &bytes, None);
                     let _ = url;
                     totals.downloaded += 1;
-                    report(format!("{} « {name} » → {}", kind.label(), path.display()));
+                    report(format!(
+                        "{} « {} » → {}",
+                        kind.label(),
+                        identity.name,
+                        path.display()
+                    ));
                 }
                 Ok(None) => {
-                    mark_missing(&dir, &marks, slug);
+                    mark_missing(&dir, &marks, &cle, slug);
                     totals.missing += 1;
-                    report(format!("{} « {name} » introuvable", kind.label()));
+                    report(format!("{} « {} » introuvable", kind.label(), identity.name));
                 }
                 Err(error) => {
                     totals.failed += 1;
-                    report(format!("{} « {name} » : {error}", kind.label()));
+                    report(format!("{} « {} » : {error}", kind.label(), identity.name));
                 }
             }
             std::thread::sleep(THROTTLE);
@@ -997,9 +1333,9 @@ fn normaliser(kind: ArtKind, bytes: &[u8]) -> Option<(Vec<u8>, &'static str)> {
 /// Visuel déjà au format et à la taille cibles — on ne réécrit pas : un JPEG
 /// ré-encodé à chaque passe perdrait de la qualité pour rien. Seules les
 /// dimensions sont lues (en-tête), pas l'image entière.
-fn deja_bon(kind: ArtKind, dir: &Path, slug: &str) -> bool {
+fn deja_bon(kind: ArtKind, dir: &Path, nom: &str) -> bool {
     let (ext, max_w, max_h) = cible(kind);
-    let Ok(bytes) = std::fs::read(dir.join(format!("{slug}.{ext}"))) else {
+    let Ok(bytes) = std::fs::read(dir.join(format!("{nom}.{ext}"))) else {
         return false;
     };
     let dimensions = image::ImageReader::new(std::io::Cursor::new(&bytes))
@@ -1037,21 +1373,41 @@ where
 {
     let mut client = Client::new(api_key);
     let mut totals = UpdateReport::default();
-    // identification partagée : le logo et l'icône sont ceux du jeu choisi
-    let identities = load_identities(&identities_path(assets));
-    let (name, id) = who(&identities, slug, name);
-    let name = name.as_str();
+    // identification partagée : le logo et l'icône sont ceux du jeu choisi —
+    // et c'est elle qui donne le nom partagé des fichiers. Sans elle, on
+    // résout le jeu ici et on la retient (gpad relit `identities.txt`).
+    let mut identities = load_identities(&identities_path(assets));
+    let identity = match known(&identities, slug) {
+        Some(identity) => Some(identity),
+        None => match client.find(name, None) {
+            Ok(Some(game)) => {
+                let identity = Identity {
+                    id: game.id,
+                    name: game.name.clone(),
+                };
+                remember_identity(assets, &mut identities, slug, &identity);
+                std::thread::sleep(THROTTLE);
+                Some(identity)
+            }
+            Ok(None) | Err(_) => None,
+        },
+    };
+    let nom = identity
+        .as_ref()
+        .map(|identity| identity.name.as_str())
+        .unwrap_or(name);
+    let cle = key(identity.as_ref(), slug);
 
     for kind in OVERLAY_KINDS {
         let dir = assets.join(kind.dir());
         let marks = marks_root.join(kind.dir());
         // déjà au bon format et à la bonne taille : rien à faire
-        if deja_bon(kind, &dir, slug) {
+        if deja_bon(kind, &dir, &cle) {
             totals.skipped += 1;
             continue;
         }
         // un visuel existe en un autre format (ou trop grand) : on le réécrit
-        if let Some(autre) = cached(&dir, slug)
+        if let Some(autre) = cached_for(&dir, identity.as_ref(), slug)
             && let Ok(bytes) = std::fs::read(&autre)
             && normaliser(kind, &bytes).is_some()
         {
@@ -1059,10 +1415,10 @@ where
                 .extension()
                 .map(|ext| ext.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let path = save(kind, &dir, &marks, slug, &ext, &bytes, None);
+            let path = save(kind, &dir, &marks, &cle, slug, &ext, &bytes, None);
             totals.downloaded += 1;
             report(format!(
-                "{} « {name} » mis au format de l'overlay → {}",
+                "{} « {nom} » mis au format de l'overlay → {}",
                 kind.label(),
                 path.display()
             ));
@@ -1070,7 +1426,7 @@ where
         }
         if kind == ArtKind::Icon {
             // l'icône choisie par l'utilisateur gagne, puis celle du paquet
-            if chosen(&dir, &marks, slug).is_some() {
+            if chosen(&dir, &marks, &cle, slug).is_some() {
                 totals.skipped += 1;
                 continue;
             }
@@ -1082,7 +1438,7 @@ where
                 let _ = std::fs::create_dir_all(pack_icons);
                 write_atomic(&pack_icons.join(format!("{slug}.png")), &bytes);
                 totals.downloaded += 1;
-                report(format!("Icône « {name} » extraite du paquet"));
+                report(format!("Icône « {nom} » extraite du paquet"));
                 continue;
             }
         }
@@ -1090,25 +1446,31 @@ where
             totals.skipped += 1;
             continue;
         }
-        match client.top(name, id, kind) {
+        let Some(identity) = identity.as_ref() else {
+            // jeu inconnu de SteamGridDB : seul le visuel du paquet reste
+            totals.missing += 1;
+            report(format!("{} « {nom} » introuvable", kind.label()));
+            continue;
+        };
+        match client.top(identity.id, kind) {
             Ok(Some((_url, bytes, ext))) => {
                 if normaliser(kind, &bytes).is_none() {
                     totals.failed += 1;
-                    report(format!("{} « {name} » : image illisible", kind.label()));
+                    report(format!("{} « {nom} » : image illisible", kind.label()));
                     continue;
                 }
-                let path = save(kind, &dir, &marks, slug, ext, &bytes, None);
+                let path = save(kind, &dir, &marks, &cle, slug, ext, &bytes, None);
                 totals.downloaded += 1;
-                report(format!("{} « {name} » → {}", kind.label(), path.display()));
+                report(format!("{} « {nom} » → {}", kind.label(), path.display()));
             }
             Ok(None) => {
-                mark_missing(&dir, &marks, slug);
+                mark_missing(&dir, &marks, &cle, slug);
                 totals.missing += 1;
-                report(format!("{} « {name} » introuvable", kind.label()));
+                report(format!("{} « {nom} » introuvable", kind.label()));
             }
             Err(error) => {
                 totals.failed += 1;
-                report(format!("{} « {name} » : {error}", kind.label()));
+                report(format!("{} « {nom} » : {error}", kind.label()));
             }
         }
         std::thread::sleep(THROTTLE);
@@ -1134,6 +1496,12 @@ where
     F: FnMut(String),
 {
     let mut totals = ShrinkReport::default();
+    // clé partagée → slug du paquet, pour retrouver la miniature d'une grille
+    // (les miniatures sont locales, nommées d'après le paquet)
+    let mut paquets: BTreeMap<String, String> = BTreeMap::new();
+    for (slug, identity) in load_identities(&identities_path(assets)) {
+        paquets.insert(key(Some(&identity), &slug), slug);
+    }
 
     for kind in ArtKind::ALL {
         let dir = assets.join(kind.dir());
@@ -1143,7 +1511,7 @@ where
         let (mut faits, mut avant, mut apres) = (0usize, 0u64, 0u64);
         for entree in entrees.flatten() {
             let chemin = entree.path();
-            let Some(slug) = chemin
+            let Some(cle) = chemin
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())
             else {
@@ -1158,7 +1526,7 @@ where
             if !IMAGE_EXT.contains(&ext.to_ascii_lowercase().as_str()) {
                 continue;
             }
-            if deja_bon(kind, &dir, &slug) {
+            if deja_bon(kind, &dir, &cle) {
                 continue;
             }
             let Ok(bytes) = std::fs::read(&chemin) else {
@@ -1167,13 +1535,14 @@ where
             let Some((normalisees, nouvelle)) = normaliser(kind, &bytes) else {
                 continue;
             };
-            let destination = dir.join(format!("{slug}.{nouvelle}"));
+            let destination = dir.join(format!("{cle}.{nouvelle}"));
             write_atomic(&destination, &normalisees);
             if destination != chemin {
                 let _ = std::fs::remove_file(&chemin);
             }
             // la vignette est dérivée de la grille : elle sera refaite
             if kind == ArtKind::Grid {
+                let slug = paquets.get(&cle).cloned().unwrap_or_else(|| cle.clone());
                 for autre in IMAGE_EXT {
                     let _ = std::fs::remove_file(thumbs.join(format!("{slug}.{autre}")));
                 }
@@ -1206,31 +1575,92 @@ fn poids(octets: u64) -> String {
     }
 }
 
-/// Visuel en cache pour un jeu (png, jpg ou webp).
-pub fn cached(dir: &Path, slug: &str) -> Option<PathBuf> {
+/// Visuel en cache sous un nom donné (png, jpg ou webp).
+pub fn cached(dir: &Path, nom: &str) -> Option<PathBuf> {
     IMAGE_EXT
         .into_iter()
-        .map(|ext| dir.join(format!("{slug}.{ext}")))
+        .map(|ext| dir.join(format!("{nom}.{ext}")))
         .find(|path| path.is_file())
+}
+
+/// Visuel d'un jeu : sa **clé partagée** d'abord ([`key`]), puis son seul id
+/// (`8103.jpg`), au cas où un autre poste l'a écrit avant de connaître le nom
+/// exact du jeu. Deux `stat` de plus, jamais de lecture de dossier.
+pub fn cached_for(dir: &Path, identity: Option<&Identity>, slug: &str) -> Option<PathBuf> {
+    let cle = key(identity, slug);
+    if let Some(path) = cached(dir, &cle) {
+        return Some(path);
+    }
+    match identity {
+        Some(identity) if cle != identity.id.to_string() => cached(dir, &identity.id.to_string()),
+        _ => None,
+    }
 }
 
 /// Visuel **choisi par l'utilisateur** : il y a un marqueur `.choice` dans le
 /// dossier des marqueurs (jamais à côté de l'image : `assets/` est destiné à
 /// être partagé par Syncthing, un marqueur personnel n'y a pas sa place).
-pub fn chosen(dir: &Path, marks: &Path, slug: &str) -> Option<PathBuf> {
+pub fn chosen(dir: &Path, marks: &Path, cle: &str, slug: &str) -> Option<PathBuf> {
     if !marks.join(format!("{slug}.choice")).is_file() {
         return None;
     }
-    cached(dir, slug)
+    cached(dir, cle)
 }
 
 /// Vrai si au moins un des quatre visuels existe déjà pour ce jeu : c'est ce
 /// qui déclenche la question « remplacer les visuels ? » quand on identifie un
 /// paquet qui a déjà des images (elles peuvent avoir été choisies à la main).
-pub fn has_art(assets: &Path, slug: &str) -> bool {
+pub fn has_art(assets: &Path, identity: Option<&Identity>, slug: &str) -> bool {
     ArtKind::ALL
         .iter()
-        .any(|kind| cached(&assets.join(kind.dir()), slug).is_some())
+        .any(|kind| cached_for(&assets.join(kind.dir()), identity, slug).is_some())
+}
+
+/// Range les visuels déjà téléchargés sous la **clé du jeu** et remet les
+/// années sous cette clé aussi (`--shrink`/mise à jour d'une installation
+/// antérieure, où les fichiers portaient le slug du paquet).
+///
+/// Sans ça, changer le nommage orphelinerait tout un cache partagé (110 Mo sur
+/// ce poste). Renommage seulement, jamais d'écrasement : si la clé existe déjà
+/// (image arrivée d'un autre poste), le fichier ancien reste où il est. Rend le
+/// nombre de visuels renommés.
+pub fn migrate_names(assets: &Path, marks_root: &Path) -> usize {
+    let identities = load_identities(&identities_path(assets));
+    if identities.is_empty() {
+        return 0;
+    }
+    let mut renommes = 0;
+    for (slug, identity) in &identities {
+        renommes += rename_to_key(assets, slug, identity);
+    }
+    // les marqueurs (`.miss`, `.choice`) restent par paquet : rien à renommer
+    let _ = marks_root;
+
+    // années : la table partagée suit les visuels
+    let path = years_path(assets);
+    let old = load_years(&path);
+    let mut new: BTreeMap<String, Option<u32>> = BTreeMap::new();
+    let mut bouge = false;
+    for (nom, year) in old {
+        let cle = match identities.get(&nom) {
+            Some(identity) => key(Some(identity), &nom),
+            None => nom.clone(),
+        };
+        bouge |= cle != nom;
+        new.entry(cle).or_insert(year);
+    }
+    if bouge {
+        // réécriture directe : `save_years` fusionnerait avec l'ancien contenu
+        let mut text = String::new();
+        for (nom, year) in &new {
+            match year {
+                Some(year) => text.push_str(&format!("{nom}={year}\n")),
+                None => text.push_str(&format!("{nom}=\n")),
+            }
+        }
+        write_atomic(&path, text.as_bytes());
+    }
+    renommes
 }
 
 /// Vrai si un échec récent est déjà noté pour ce jeu.
@@ -1250,11 +1680,13 @@ pub fn recently_missed(marks: &Path, slug: &str) -> bool {
 /// [`cible`] (un héros de 12 Mo ne sert à rien dans une bande de 1280 px) ; si
 /// elle n'est pas décodable, elle est écrite telle quelle. Les autres formats du
 /// même jeu sont retirés : un seul fichier fait foi, c'est aussi ce que voit
-/// l'autre machine via Syncthing.
+/// l'autre machine via Syncthing. `cle` = nom du fichier dans `assets/`
+/// (partagé), `slug` = paquet (marqueurs locaux).
 fn save(
     kind: ArtKind,
     dir: &Path,
     marks: &Path,
+    cle: &str,
     slug: &str,
     ext: &str,
     bytes: &[u8],
@@ -1264,7 +1696,7 @@ fn save(
         Some((normalisees, cible)) => (normalisees, cible),
         None => (bytes.to_vec(), ext),
     };
-    ecrire(dir, marks, slug, ext, &bytes, url)
+    ecrire(dir, marks, cle, slug, ext, &bytes, url)
 }
 
 /// Écriture commune d'un visuel : un seul fichier par type (les autres
@@ -1273,6 +1705,7 @@ fn save(
 fn ecrire(
     dir: &Path,
     marks: &Path,
+    cle: &str,
     slug: &str,
     ext: &str,
     bytes: &[u8],
@@ -1281,10 +1714,10 @@ fn ecrire(
     let _ = std::fs::create_dir_all(dir);
     for other in IMAGE_EXT {
         if other != ext {
-            let _ = std::fs::remove_file(dir.join(format!("{slug}.{other}")));
+            let _ = std::fs::remove_file(dir.join(format!("{cle}.{other}")));
         }
     }
-    let path = dir.join(format!("{slug}.{ext}"));
+    let path = dir.join(format!("{cle}.{ext}"));
     // Écriture ATOMIQUE (`.part` puis rename) : le dossier `assets/` peut être
     // synchronisé (Syncthing) entre plusieurs machines, et un fichier à moitié
     // écrit se propagerait tel quel.
@@ -1309,10 +1742,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) {
     }
 }
 
-fn mark_missing(dir: &Path, marks: &Path, slug: &str) {
+fn mark_missing(dir: &Path, marks: &Path, cle: &str, slug: &str) {
     let _ = std::fs::create_dir_all(dir);
     for ext in IMAGE_EXT {
-        let _ = std::fs::remove_file(dir.join(format!("{slug}.{ext}")));
+        let _ = std::fs::remove_file(dir.join(format!("{cle}.{ext}")));
     }
     let _ = std::fs::create_dir_all(marks);
     write_atomic(&marks.join(format!("{slug}.miss")), b"");
@@ -1361,10 +1794,56 @@ impl Client {
         }
     }
 
-    /// Premier visuel du « top » pour ce type, téléchargé. `id` (jeu
-    /// identifié) court-circuite la recherche par nom.
-    fn top(&mut self, name: &str, id: Option<u64>, kind: ArtKind) -> Result<Option<Best>, String> {
-        let Some(best) = self.choices(name, id, kind)?.into_iter().next() else {
+    /// Jeu SteamGridDB visé par un paquet : sa **fiche** quand l'id est connu
+    /// (nom exact + année), sinon le premier résultat de l'autocomplete sur le
+    /// nom. Une seule requête, c'est elle qui donne la clé des visuels.
+    fn find(&mut self, name: &str, id: Option<u64>) -> Result<Option<FoundGame>, String> {
+        match (self.key.clone(), id) {
+            (Some(key), Some(id)) => {
+                let auth = format!("Bearer {key}");
+                let url = format!("{BASE}/api/v2/games/id/{id}");
+                let body = http_get_text(&url, &[("Authorization", auth.as_str())])?;
+                let json = parse_json(&body)?;
+                Ok(Some(game_from(&json["data"], id, name)))
+            }
+            (Some(key), None) => {
+                let auth = format!("Bearer {key}");
+                let url = format!("{BASE}/api/v2/search/autocomplete/{}", urlencode(name));
+                let body = http_get_text(&url, &[("Authorization", auth.as_str())])?;
+                let json = parse_json(&body)?;
+                Ok(games_from(&json["data"]).into_iter().next())
+            }
+            (None, Some(id)) => {
+                let cookie = self.visitor_cookie()?.to_string();
+                let headers = [
+                    ("Cookie", cookie.as_str()),
+                    ("X-Requested-With", "XMLHttpRequest"),
+                    ("Referer", BASE),
+                ];
+                let url = format!("{BASE}/api/public/game/{id}");
+                let body = http_get_text(&url, &headers)?;
+                let json = parse_json(&body)?;
+                Ok(Some(game_from(&json["data"]["game"], id, name)))
+            }
+            (None, None) => {
+                let cookie = self.visitor_cookie()?.to_string();
+                let headers = [
+                    ("Cookie", cookie.as_str()),
+                    ("X-Requested-With", "XMLHttpRequest"),
+                    ("Referer", BASE),
+                ];
+                let url = format!("{BASE}/api/public/search/autocomplete?term={}", urlencode(name));
+                let body = http_get_text(&url, &headers)?;
+                let json = parse_json(&body)?;
+                Ok(games_from(&json["data"]).into_iter().next())
+            }
+        }
+    }
+
+    /// Premier visuel du « top » pour ce type, téléchargé. `id` = jeu
+    /// SteamGridDB : aucune recherche par nom n'est refaite.
+    fn top(&mut self, id: u64, kind: ArtKind) -> Result<Option<Best>, String> {
+        let Some(best) = self.assets(id, kind)?.into_iter().next() else {
             return Ok(None);
         };
         let bytes = http_get(&best.url, &[])?;
@@ -1375,15 +1854,10 @@ impl Client {
     }
 
     /// Toutes les images d'un type, dans l'ordre « top » de SteamGridDB.
-    fn choices(
-        &mut self,
-        name: &str,
-        id: Option<u64>,
-        kind: ArtKind,
-    ) -> Result<Vec<Candidate>, String> {
+    fn assets(&mut self, id: u64, kind: ArtKind) -> Result<Vec<Candidate>, String> {
         match self.key.clone() {
-            Some(key) => self.candidates_official(&key, name, id, kind),
-            None => self.candidates_public(name, id, kind),
+            Some(key) => self.candidates_official(&key, id, kind),
+            None => self.candidates_public(id, kind),
         }
     }
 
@@ -1393,27 +1867,21 @@ impl Client {
     /// visiteur est périmée (Cloudflare répond une page vide → « réponse
     /// vide »), on en reprend une et on réessaie une fois. Sans ça, un jeu
     /// restait sans résultat — y compris dans le menu « changer d'image ».
-    fn candidates_public(
-        &mut self,
-        name: &str,
-        id: Option<u64>,
-        kind: ArtKind,
-    ) -> Result<Vec<Candidate>, String> {
-        match self.candidates_public_once(name, id, kind) {
+    fn candidates_public(&mut self, id: u64, kind: ArtKind) -> Result<Vec<Candidate>, String> {
+        match self.candidates_public_once(id, kind) {
             Ok(list) => Ok(list),
             Err(first) => {
-                eprintln!("glauncher : SGDB « {name} » : {first} — nouvelle session, nouvel essai");
+                eprintln!("glauncher : SGDB jeu {id} : {first} — nouvelle session, nouvel essai");
                 self.cookie = None;
                 std::thread::sleep(Duration::from_millis(600));
-                self.candidates_public_once(name, id, kind)
+                self.candidates_public_once(id, kind)
             }
         }
     }
 
     fn candidates_public_once(
         &mut self,
-        name: &str,
-        id: Option<u64>,
+        game_id: u64,
         kind: ArtKind,
     ) -> Result<Vec<Candidate>, String> {
         let cookie = self.visitor_cookie()?.to_string();
@@ -1422,22 +1890,6 @@ impl Client {
             ("X-Requested-With", "XMLHttpRequest"),
             ("Referer", BASE),
         ];
-
-        // jeu identifié : son id, sans recherche par nom (le nom du paquet
-        // peut ne rien trouver ou trouver un autre épisode)
-        let game_id = match id {
-            Some(id) => id,
-            None => {
-                let term = urlencode(name);
-                let url = format!("{BASE}/api/public/search/autocomplete?term={term}");
-                let body = http_get_text(&url, &headers)?;
-                let json = parse_json(&body)?;
-                let Some(game_id) = first_game(&json) else {
-                    return Ok(Vec::new());
-                };
-                game_id
-            }
-        };
 
         let payload = json!({
             "game_id": [game_id],
@@ -1491,52 +1943,6 @@ impl Client {
         Ok(self.cookie.as_deref().unwrap_or_default())
     }
 
-    /// Année de sortie du jeu, dans l'API en service (clé ou publique). Avec
-    /// un `id` (jeu identifié), la date vient de la fiche de CE jeu ; sans,
-    /// c'est celle du premier résultat de l'autocomplete. Une seule requête,
-    /// sans visuels.
-    fn release_year(&mut self, name: &str, id: Option<u64>) -> Result<Option<u32>, String> {
-        match self.key.clone() {
-            Some(key) => {
-                let auth = format!("Bearer {key}");
-                let headers = [("Authorization", auth.as_str())];
-                let url = match id {
-                    Some(id) => format!("{BASE}/api/v2/games/id/{id}"),
-                    None => format!("{BASE}/api/v2/search/autocomplete/{}", urlencode(name)),
-                };
-                let body = http_get_text(&url, &headers)?;
-                let json = parse_json(&body)?;
-                Ok(if id.is_some() {
-                    game_year(&json["data"])
-                } else {
-                    first_game_year(&json)
-                })
-            }
-            None => {
-                let cookie = self.visitor_cookie()?.to_string();
-                let headers = [
-                    ("Cookie", cookie.as_str()),
-                    ("X-Requested-With", "XMLHttpRequest"),
-                    ("Referer", BASE),
-                ];
-                let url = match id {
-                    Some(id) => format!("{BASE}/api/public/game/{id}"),
-                    None => format!(
-                        "{BASE}/api/public/search/autocomplete?term={}",
-                        urlencode(name)
-                    ),
-                };
-                let body = http_get_text(&url, &headers)?;
-                let json = parse_json(&body)?;
-                Ok(if id.is_some() {
-                    game_year(&json["data"]["game"])
-                } else {
-                    first_game_year(&json)
-                })
-            }
-        }
-    }
-
     /// Jeux proposés par l'autocomplete (identification). L'ordre est celui de
     /// SteamGridDB, on n'y touche pas : l'utilisateur choisit dans la liste.
     fn games(&mut self, name: &str) -> Result<Vec<FoundGame>, String> {
@@ -1566,33 +1972,12 @@ impl Client {
 
     // --- API v2 officielle (clé) ---
 
-    fn candidates_official(
-        &mut self,
-        key: &str,
-        name: &str,
-        id: Option<u64>,
-        kind: ArtKind,
-    ) -> Result<Vec<Candidate>, String> {
+    fn candidates_official(&mut self, key: &str, id: u64, kind: ArtKind) -> Result<Vec<Candidate>, String> {
         let auth = format!("Bearer {key}");
         let headers = [("Authorization", auth.as_str())];
 
-        // jeu identifié : son id directement
-        let game_id = match id {
-            Some(id) => id,
-            None => {
-                let term = urlencode(name);
-                let url = format!("{BASE}/api/v2/search/autocomplete/{term}");
-                let body = http_get_text(&url, &headers)?;
-                let json = parse_json(&body)?;
-                let Some(game_id) = first_game(&json) else {
-                    return Ok(Vec::new());
-                };
-                game_id
-            }
-        };
-
         let url = format!(
-            "{BASE}/api/v2/{}/{game_id}?types=static&nsfw=false&humor=false",
+            "{BASE}/api/v2/{}/{id}?types=static&nsfw=false&humor=false",
             match kind {
                 ArtKind::Grid => "grids/game",
                 ArtKind::Hero => "heroes/game",
@@ -1607,21 +1992,20 @@ impl Client {
     }
 }
 
-/// Identifiant du premier jeu de l'autocomplete (`data[0]`).
-fn first_game(json: &Value) -> Option<u64> {
-    json["data"].as_array()?.first()?.get("id")?.as_u64()
-}
-
-/// Année de sortie du premier jeu de l'autocomplete (`data[0].release_date`,
-/// en secondes Unix). SteamGridDB la donne dans les deux API (publique comme
-/// v2) ; absente ou nulle pour quelques entrées, d'où `None`.
-fn first_game_year(json: &Value) -> Option<u32> {
-    let date = json["data"]
-        .as_array()?
-        .first()?
-        .get("release_date")?
-        .as_u64()?;
-    year_from_unix(date)
+/// Fiche d'un jeu (API v2 ou `data.game` de l'API publique) : id, nom et année.
+/// Le nom retombe sur celui demandé si la réponse ne le porte pas — la clé des
+/// visuels ne doit jamais être vide.
+fn game_from(game: &Value, id: u64, name: &str) -> FoundGame {
+    let nom = game
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|nom| !nom.trim().is_empty())
+        .unwrap_or(name);
+    FoundGame {
+        id: game.get("id").and_then(Value::as_u64).unwrap_or(id),
+        name: nom.to_string(),
+        year: game_year(game),
+    }
 }
 
 /// Liste `data[]` de l'autocomplete → jeux proposés (identification).
@@ -2004,9 +2388,121 @@ mod tests {
         let exe = assets.join("grids");
         std::fs::create_dir_all(&exe).unwrap();
         std::fs::write(exe.join("jeu.jpg"), b"x").unwrap();
-        assert!(has_art(&assets, "jeu"));
-        assert!(!has_art(&assets, "autre"));
+        assert!(has_art(&assets, None, "jeu"));
+        assert!(!has_art(&assets, None, "autre"));
+
+        // identifié : la clé est celle du jeu SteamGridDB, pas le paquet
+        let identite = Identity {
+            id: 8103,
+            name: "Doom".to_string(),
+        };
+        std::fs::write(exe.join("8103-doom.jpg"), b"x").unwrap();
+        assert!(has_art(&assets, Some(&identite), "paquet-dont-le-nom-differe"));
         let _ = std::fs::remove_dir_all(&assets);
+    }
+
+    #[test]
+    fn la_cle_des_fichiers_est_le_jeu_pas_le_paquet() {
+        // pas d'identification : le paquet, et ses visuels ne sont pas partagés
+        assert_eq!(key(None, "marsupilami-2-fr"), "marsupilami-2-fr");
+        // identifié : id + nom SteamGridDB, identiques sur tous les postes même
+        // quand les `.wgp`/`.lgp` portent des noms différents
+        let identite = Identity {
+            id: 5334897,
+            name: "Marsupilami 2: Salsa Palombia".to_string(),
+        };
+        assert_eq!(
+            key(Some(&identite), "marsupilami-2-fr"),
+            "5334897-marsupilami-2-salsa-palombia"
+        );
+        assert_eq!(
+            key(Some(&identite), "marsupilami-2-salsa-palombia"),
+            "5334897-marsupilami-2-salsa-palombia"
+        );
+        // deux jeux du même nom (« Doom » 1993 et 2016) ne se marchent pas
+        // dessus : l'id est en tête
+        let autre = Identity {
+            id: 32969,
+            name: "Doom".to_string(),
+        };
+        assert_ne!(key(Some(&identite), "x"), key(Some(&autre), "x"));
+        // identification sans nom (ligne tapée à la main) : l'id seul, pour
+        // rester la même clé partout
+        let sans_nom = Identity {
+            id: 8103,
+            name: String::new(),
+        };
+        assert_eq!(key(Some(&sans_nom), "doom-2016"), "8103");
+    }
+
+    #[test]
+    fn un_visuel_trouve_sous_son_id_suffit() {
+        let dir = std::env::temp_dir().join(format!("glauncher-idseul-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let identite = Identity {
+            id: 8103,
+            name: "Doom".to_string(),
+        };
+        // écrit par un poste qui ne connaissait pas encore le nom exact
+        std::fs::write(dir.join("8103.jpg"), b"x").unwrap();
+        assert_eq!(
+            cached_for(&dir, Some(&identite), "doom-2016"),
+            Some(dir.join("8103.jpg"))
+        );
+        // la clé complète passe devant
+        std::fs::write(dir.join("8103-doom.jpg"), b"x").unwrap();
+        assert_eq!(
+            cached_for(&dir, Some(&identite), "doom-2016"),
+            Some(dir.join("8103-doom.jpg"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn les_anciens_noms_migrent_vers_la_cle_du_jeu() {
+        let dir = std::env::temp_dir().join(format!("glauncher-migre-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let assets = dir.join("assets");
+        let marks = dir.join("marks");
+        std::fs::create_dir_all(assets.join("grids")).unwrap();
+        std::fs::create_dir_all(assets.join("logos")).unwrap();
+        std::fs::create_dir_all(&marks).unwrap();
+
+        let mut identities = BTreeMap::new();
+        identities.insert(
+            "doom-2016".to_string(),
+            Identity {
+                id: 8103,
+                name: "Doom".to_string(),
+            },
+        );
+        save_identities(&identities_path(&assets), &identities);
+        std::fs::write(assets.join("grids/doom-2016.jpg"), b"grille").unwrap();
+        std::fs::write(assets.join("logos/doom-2016.png"), b"logo").unwrap();
+        // un jeu jamais identifié garde son nom de paquet
+        std::fs::write(assets.join("grids/mon-homebrew.jpg"), b"grille").unwrap();
+        // années : la table partagée suit les visuels
+        let mut years = BTreeMap::new();
+        years.insert("doom-2016".to_string(), Some(2016));
+        years.insert("mon-homebrew".to_string(), Some(2024));
+        save_years(&years_path(&assets), &years);
+
+        let renommes = migrate_names(&assets, &marks);
+        assert_eq!(renommes, 2, "grille et logo renommés");
+        assert!(assets.join("grids/8103-doom.jpg").is_file());
+        assert!(assets.join("logos/8103-doom.png").is_file());
+        assert!(!assets.join("grids/doom-2016.jpg").exists());
+        assert!(assets.join("grids/mon-homebrew.jpg").is_file());
+
+        let years = load_years(&years_path(&assets));
+        assert_eq!(years.get("8103-doom"), Some(&Some(2016)));
+        assert_eq!(years.get("mon-homebrew"), Some(&Some(2024)));
+        assert!(!years.contains_key("doom-2016"));
+
+        // idempotent : rien à refaire au démarrage suivant
+        assert_eq!(migrate_names(&assets, &marks), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2032,6 +2528,7 @@ mod tests {
             &dir,
             &marks,
             "jeu",
+            "jeu",
             "png",
             b"nouvelle",
             Some("https://cdn/x.png"),
@@ -2053,7 +2550,7 @@ mod tests {
             "https://cdn/x.png"
         );
         assert_eq!(cached(&dir, "jeu"), Some(path.clone()));
-        assert_eq!(chosen(&dir, &marks, "jeu"), Some(path));
+        assert_eq!(chosen(&dir, &marks, "jeu", "jeu"), Some(path));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2210,17 +2707,19 @@ mod tests {
         assert_eq!(year_from_unix(86_399), None);
     }
 
-    /// Sonde réseau (ignorée) : l'année vient bien de l'autocomplete.
+    /// Sonde réseau (ignorée) : la fiche d'un jeu donne son nom et son année.
     #[test]
     #[ignore]
     fn annee_reseau() {
         let mut client = Client::new(std::env::var("SGDB_API_KEY").ok());
         for (name, annee) in [("Wario Land 4", 2001), ("Wario Land II", 1998)] {
-            let year = client
-                .release_year(name, None)
-                .unwrap_or_else(|err| panic!("{name} : {err}"));
-            eprintln!("{name} : {year:?}");
-            assert_eq!(year, Some(annee), "{name}");
+            let game = client
+                .find(name, None)
+                .unwrap_or_else(|err| panic!("{name} : {err}"))
+                .unwrap_or_else(|| panic!("{name} : aucun jeu"));
+            eprintln!("{name} → {} ({:?})", game.name, game.year);
+            assert_eq!(game.year, Some(annee), "{name}");
+            assert!(!game.name.is_empty(), "le nom sert à la clé des fichiers");
         }
     }
 
@@ -2229,9 +2728,13 @@ mod tests {
     #[ignore]
     fn choix_multiples() {
         let mut client = Client::new(std::env::var("SGDB_API_KEY").ok());
+        let game = client
+            .find("Beyond Good & Evil", None)
+            .expect("autocomplete")
+            .expect("jeu connu");
         for kind in ArtKind::ALL {
             let choices = client
-                .choices("Beyond Good & Evil", None, kind)
+                .assets(game.id, kind)
                 .unwrap_or_else(|err| panic!("{:?} : {err}", kind));
             eprintln!(
                 "{} : {} propositions, 1re = {}",
