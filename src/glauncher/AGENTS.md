@@ -82,7 +82,12 @@ leurs icônes, pour l'interface.
   puis `sweep`), invalidation par `.settings` et mtime
 - `src/updates.rs` — mise à jour de l'image : commande en tâche de fond, lue
   sur le protocole `::gablue:` (le même que les dialogues de Gablue Manager)
-- `src/watch.rs` — surveillance inotify : rafale → chemins touchés
+- `src/watch.rs` — surveillance inotify : rafale → chemins touchés ; sa
+  `Veille` accepte une **nouvelle liste de dossiers à chaud**
+- `src/folders.rs` — choix des dossiers de jeux : listage trié (dossiers
+  seuls, cachés écartés, « .. » en tête), chemins en `~/…`, ajout sans doublon
+  (comparaison sur le chemin résolu) et retrait qui ne touche **jamais** au
+  disque
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
 - `src/playtime.rs` — temps de jeu cumulé, dans les dossiers de sauvegardes
@@ -114,6 +119,35 @@ leurs icônes, pour l'interface.
   quatre branches, blanc, uniquement de l'alpha (la teinte vient de l'opacité).
   Générée une fois (gaussiennes + branches, cf. l'historique du 20/11) ; la
   refaire n'a d'intérêt que pour changer la forme du scintillement.
+
+## Page Réglages (hors jeu)
+
+Le launcher porte ses propres réglages, **hors partie** (les réglages qu'on
+veut pendant une partie vivent dans `gpad`). Aujourd'hui : les **dossiers de
+jeux**. Ouverture : `F2` au clavier, ou le menu des vues (triangle) dont la
+dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
+
+- **Liste** : « Ajouter un dossier… » puis les dossiers de `config.game_dirs`.
+  `Croix`/Entrée choisit, `Carré` **arme** le retrait, `Rond`/Échap ferme.
+- **Retrait confirmé** : le premier appui sur Carré affiche « retirer ? » et la
+  ligne passe en rouge ; `Croix` retire, `Rond` désarme. Formulation à l'écran
+  explicite : le dossier **et son contenu ne sont pas touchés**, seule la liste
+  change. Changer de ligne désarme aussi (on ne confirme que ce qu'on voit).
+- **Navigateur** : ligne 0 « Choisir ce dossier », puis « .. » et les
+  sous-dossiers (cachés écartés, tri alphabétique). `Croix` entre (ou choisit
+  la ligne 0), `Rond` remonte d'un niveau et **referme à la racine** (jamais de
+  cul-de-sac). En remontant, le curseur se pose sur le dossier quitté.
+- **Écriture** : `config::save_game_dirs` ne réécrit **que la clé
+  `game_dirs`** — commentaires, ordre et clés inconnues du fichier sont
+  conservés, comme l'écrivain de Gablue Manager : deux écrivains sur le fichier
+  d'un compte doivent être interchangeables. Écriture atomique (temporaire +
+  renommage), le manager lit le même fichier.
+- **Effet immédiat** : `config.game_dirs` mis à jour, `Veille::definir` pour la
+  surveillance (ajout et retrait à chaud), puis rescan complet — un dossier
+  retiré doit faire disparaître ses jeux.
+- **Banc** : `GLAUNCHER_SETTINGS_DEMO=1` ouvre la page, `=browser` ouvre en
+  plus le navigateur sur `$HOME` ; la fenêtre glissante (`fenetre()`) remplace
+  une zone défilante à état, donc rien à reconstruire d'un rendu à l'autre.
 
 ## Contrats
 

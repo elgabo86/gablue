@@ -149,6 +149,21 @@ impl Config {
         user.is_file().then_some(user)
     }
 
+    /// Fichier à **écrire** quand les dossiers de jeux changent depuis le
+    /// launcher : celui qui est lu s'il existe, sinon l'emplacement XDG (créé
+    /// à la première écriture). Un `--config` ou `$GLAUNCHER_CONFIG` explicite
+    /// reste prioritaire : c'est le fichier que l'utilisateur a demandé.
+    pub fn write_path(explicit: Option<&Path>) -> PathBuf {
+        if let Some(path) = Self::locate(explicit) {
+            return path;
+        }
+        let xdg = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+            .unwrap_or_else(|| PathBuf::from(".config"));
+        xdg.join("glauncher").join("config.toml")
+    }
+
     /// Profondeur 0 = sans limite.
     pub fn depth_limit(&self) -> Option<usize> {
         (self.scan_depth > 0).then_some(self.scan_depth)
@@ -572,4 +587,180 @@ pub fn resolve(opts: &Options) -> (Config, Option<String>) {
         .simulate
         .map(|seconds| format!("mode test : faux jeu de {seconds} s"));
     (config, notice)
+}
+
+/// Écrit la liste des dossiers de jeux dans `config.toml`, **sans toucher au
+/// reste du fichier** : commentaires, ordre et clés inconnues sont conservés.
+///
+/// C'est le même contrat que l'écrivain de Gablue Manager
+/// (`write_glauncher_config` en Python) : deux écrivains sur un fichier de
+/// compte doivent être interchangeables. Réécrire tout le TOML depuis
+/// `Config` perdrait les commentaires de l'utilisateur et toutes les clés que
+/// cette version ne connaît pas.
+pub fn save_game_dirs(path: &Path, dirs: &[String]) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let updated = rewrite_game_dirs(&text, dirs);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| format!("{} : {err}", parent.display()))?;
+    }
+    // temporaire + rename : le manager lit ce fichier, il ne doit jamais voir
+    // un état à moitié écrit
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, updated).map_err(|err| format!("{} : {err}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|err| format!("{} : {err}", path.display()))
+}
+
+/// Valeur TOML d'un tableau de chaînes, sur une ligne.
+fn toml_list(dirs: &[String]) -> String {
+    let items: Vec<String> = dirs
+        .iter()
+        .map(|dir| {
+            let escaped = dir.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("\"{escaped}\"")
+        })
+        .collect();
+    format!("[{}]", items.join(", "))
+}
+
+/// Clé d'une ligne `clé = valeur` ; `None` pour un commentaire ou du bruit.
+fn assignment_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
+        return None;
+    }
+    let (key, _) = trimmed.split_once('=')?;
+    let key = key.trim();
+    (!key.is_empty()).then_some(key)
+}
+
+/// Vrai tant qu'un tableau TOML n'est pas refermé (valeur sur plusieurs lignes).
+fn brackets_open(text: &str) -> bool {
+    text.matches('[').count() > text.matches(']').count()
+}
+
+/// Contenu de `config.toml` avec `game_dirs` remplacé (ou ajouté).
+pub fn rewrite_game_dirs(text: &str, dirs: &[String]) -> String {
+    let replacement = format!("game_dirs = {}", toml_list(dirs));
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+    let mut done = false;
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        if assignment_key(line) != Some("game_dirs") || done {
+            out.push(line.to_string());
+            continue;
+        }
+        // une valeur peut tenir sur plusieurs lignes (tableau) : on avale
+        // jusqu'à ce que les crochets soient équilibrés
+        let mut block = line.to_string();
+        while brackets_open(&block) && index < lines.len() {
+            block.push('\n');
+            block.push_str(lines[index]);
+            index += 1;
+        }
+        out.push(replacement.clone());
+        done = true;
+    }
+    if !done {
+        // clé absente : en fin de clés de tête, avant la première section
+        let insert_at = out
+            .iter()
+            .position(|line| line.trim_start().starts_with('['))
+            .unwrap_or(out.len());
+        let mut block = vec![replacement, String::new()];
+        if insert_at > 0 && !out[insert_at - 1].trim().is_empty() {
+            block.insert(0, String::new());
+        }
+        out.splice(insert_at..insert_at, block);
+    }
+    let mut result = out.join("\n").trim_end_matches('\n').to_string();
+    result.push('\n');
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dirs(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn remplace_la_ligne_en_gardant_le_reste() {
+        let text = "\
+# mes dossiers
+game_dirs = [\"~/Games\"]
+fullscreen = true
+
+[section inconnue]
+x = 1
+";
+        let out = rewrite_game_dirs(text, &dirs(&["~/Jeux", "/run/media/gab/SSD/Roms"]));
+        assert!(out.starts_with("# mes dossiers\n"));
+        assert!(out.contains("game_dirs = [\"~/Jeux\", \"/run/media/gab/SSD/Roms\"]"));
+        assert!(out.contains("fullscreen = true"));
+        assert!(out.contains("[section inconnue]\nx = 1"));
+        assert!(!out.contains("~/Games"));
+    }
+
+    #[test]
+    fn tableau_multiligne_avale() {
+        let text = "game_dirs = [\n  \"~/A\",\n  \"~/B\",\n]\nfullscreen = false\n";
+        let out = rewrite_game_dirs(text, &dirs(&["~/C"]));
+        assert_eq!(out, "game_dirs = [\"~/C\"]\nfullscreen = false\n");
+    }
+
+    #[test]
+    fn cle_absente_ajoutee_avant_une_section() {
+        let text = "fullscreen = true\n\n[autre]\ny = 2\n";
+        let out = rewrite_game_dirs(text, &dirs(&["~/J"]));
+        assert!(out.contains("fullscreen = true\n\ngame_dirs = [\"~/J\"]\n\n[autre]"));
+    }
+
+    #[test]
+    fn cle_absente_sans_ligne_vide() {
+        let text = "fullscreen = true\n[autre]\ny = 2\n";
+        let out = rewrite_game_dirs(text, &dirs(&["~/J"]));
+        assert_eq!(
+            out,
+            "fullscreen = true\n\ngame_dirs = [\"~/J\"]\n\n[autre]\ny = 2\n"
+        );
+    }
+
+    #[test]
+    fn fichier_vide_et_guillemets() {
+        assert_eq!(rewrite_game_dirs("", &dirs(&[])), "game_dirs = []\n");
+        let out = rewrite_game_dirs("", &dirs(&["/tmp/a\"b"]));
+        assert_eq!(out, "game_dirs = [\"/tmp/a\\\"b\"]\n");
+    }
+
+    #[test]
+    fn cle_similaire_intacte() {
+        let text = "scan_skip = [\"a\"]\ngame_dirs = []\n";
+        let out = rewrite_game_dirs(text, &dirs(&["~/G"]));
+        assert_eq!(out, "scan_skip = [\"a\"]\ngame_dirs = [\"~/G\"]\n");
+    }
+
+    #[test]
+    fn ecriture_sur_disque() {
+        let base = std::env::temp_dir().join(format!("glauncher-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let path = base.join("glauncher").join("config.toml");
+        save_game_dirs(&path, &dirs(&["~/Games"])).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "game_dirs = [\"~/Games\"]\n"
+        );
+        // les commentaires d'un fichier existant survivent
+        std::fs::write(&path, "# garde-moi\ngame_dirs = [\"~/Games\"]\n").unwrap();
+        save_game_dirs(&path, &dirs(&["~/A", "~/B"])).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# garde-moi\ngame_dirs = [\"~/A\", \"~/B\"]\n"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

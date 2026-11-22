@@ -7,6 +7,7 @@ mod covers;
 mod cursor;
 mod dialog;
 mod favorites;
+mod folders;
 mod gamepad;
 mod index;
 mod kwin;
@@ -302,10 +303,14 @@ fn main() -> iced::Result {
         ..window::Settings::default()
     };
 
+    // le launcher réécrit `config.toml` quand on y change les dossiers de
+    // jeux : il doit viser le fichier qu'il a réellement lu
+    let config_path = config::Config::write_path(options.config.as_deref());
     iced::application(
         move || {
             app::App::boot(
                 config.clone(),
+                config_path.clone(),
                 notice.clone(),
                 options.play,
                 options.picker,

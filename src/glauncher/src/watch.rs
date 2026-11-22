@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -16,19 +17,46 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 /// réveillé avant que le launcher soit à l'écran.
 const START_DELAY: Duration = Duration::from_secs(5);
 
+/// Poignée de surveillance : la liste des dossiers peut changer **à chaud**
+/// (choix des dossiers depuis les réglages du launcher) sans relancer le fil,
+/// qui vérifie la liste toutes les 2 s de toute façon.
+#[derive(Clone)]
+pub struct Veille {
+    dirs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl Veille {
+    /// Remplace la liste surveillée. Retirer un dossier le dé-surveille sans
+    /// toucher au disque ; en ajouter un le surveille à la prochaine passe.
+    pub fn definir(&self, dirs: Vec<PathBuf>) {
+        if let Ok(mut courante) = self.dirs.lock() {
+            *courante = dirs;
+        }
+    }
+
+    fn copie(&self) -> Vec<PathBuf> {
+        self.dirs.lock().map(|dirs| dirs.clone()).unwrap_or_default()
+    }
+}
+
 /// Écoute les dossiers donnés et appelle `emit` avec les chemins touchés
 /// après chaque rafale. Les dossiers absents ne sont pas une erreur : ils sont
 /// re-testés toutes les 2 s (disque externe rebranché).
-pub fn spawn<F>(dirs: Vec<PathBuf>, emit: F)
+pub fn spawn<F>(dirs: Vec<PathBuf>, emit: F) -> Veille
 where
     F: Fn(Vec<PathBuf>) + Send + 'static,
 {
+    let veille = Veille {
+        dirs: Arc::new(Mutex::new(dirs)),
+    };
+    let pour_fil = veille.clone();
     let _ = std::thread::Builder::new()
         .name("glauncher-watch".into())
-        .spawn(move || run(dirs, emit));
+        .spawn(move || run(pour_fil, emit));
+    veille
 }
 
-fn run<F>(dirs: Vec<PathBuf>, emit: F)
+fn run<F>(veille: Veille, emit: F)
 where
     F: Fn(Vec<PathBuf>) + Send + 'static,
 {
@@ -49,7 +77,7 @@ where
     };
 
     let mut watched: HashMap<PathBuf, (u64, u64)> = HashMap::new();
-    reconcile(&mut watcher, &dirs, &mut watched);
+    reconcile(&mut watcher, &veille.copie(), &mut watched);
 
     loop {
         match receiver.recv_timeout(Duration::from_secs(2)) {
@@ -64,14 +92,14 @@ where
                 }
                 paths.sort();
                 paths.dedup();
-                reconcile(&mut watcher, &dirs, &mut watched);
+                reconcile(&mut watcher, &veille.copie(), &mut watched);
                 emit(paths);
             }
             Ok(Err(_)) => continue,
             // toutes les 2 s : un dossier disparu est signalé, un dossier
             // recréé est de nouveau surveillé
             Err(RecvTimeoutError::Timeout) => {
-                let touched = reconcile(&mut watcher, &dirs, &mut watched);
+                let touched = reconcile(&mut watcher, &veille.copie(), &mut watched);
                 if !touched.is_empty() {
                     emit(touched);
                 }
@@ -99,6 +127,12 @@ fn reconcile(
     let mut touched = Vec::new();
 
     watched.retain(|dir, identity| {
+        // retiré de la liste (choix des dossiers) : on lâche la watch sans
+        // réindexer — l'appelant a déjà déclenché le rescan
+        if !dirs.iter().any(|connu| connu == dir) {
+            let _ = watcher.unwatch(dir);
+            return false;
+        }
         let Some(current) = identity_of(dir) else {
             let _ = watcher.unwatch(dir);
             eprintln!(

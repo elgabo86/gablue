@@ -1,7 +1,7 @@
 //! État, messages et interface du launcher.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -26,6 +26,7 @@ use crate::covers;
 use crate::cursor;
 use crate::dialog;
 use crate::favorites;
+use crate::folders;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
 use crate::launch;
@@ -495,6 +496,21 @@ pub enum Message {
     Update(updates::Event),
     /// Lance la mise à jour de l'image (clavier `M` pour l'instant).
     UpdateApply,
+    /// Page Réglages : ouverture, fermeture, navigation.
+    SettingsOpen,
+    SettingsClose,
+    SettingsNav(i32),
+    /// Croix : ajouter un dossier (ou entrer dans un dossier existant).
+    SettingsAct,
+    /// Carré : armer le retrait du dossier sélectionné.
+    SettingsArm,
+    /// Navigateur de dossiers : navigation, choix, remontée.
+    BrowserNav(i32),
+    BrowserAct,
+    BrowserUp,
+    /// La liste des dossiers a changé : écriture de `config.toml`, rescan, et
+    /// ce libellé dans le pied de page.
+    SettingsChanged(String),
     /// Un téléchargement commence (le worker de visuels réveille l'interface,
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
@@ -684,6 +700,18 @@ const ART_MENU: [ArtMenuEntry; 6] = [
 /// une vue mais un tri (`state::SortBy::Favorites`).
 const VIEWS: [ViewMode; 3] = [ViewMode::Grid, ViewMode::List, ViewMode::Mosaic];
 
+/// Fenêtre glissante d'une liste : `(première ligne dessinée, fin exclue)`.
+/// Le curseur reste au centre quand il le peut, sinon on colle au bord — sans
+/// zone défilante, l'état de défilement ne peut pas être perdu.
+fn fenetre(selected: usize, total: usize, visibles: usize) -> (usize, usize) {
+    let visibles = visibles.max(1);
+    if total <= visibles {
+        return (0, total);
+    }
+    let top = selected.saturating_sub(visibles / 2).min(total - visibles);
+    (top, top + visibles)
+}
+
 /// Nom affiché d'une vue (menu « type de liste »).
 fn view_label(view: ViewMode) -> &'static str {
     match view {
@@ -706,8 +734,57 @@ fn year_index(filter: Option<u32>, years: Vec<u32>) -> usize {
         .map_or(0, |position| position + 1)
 }
 
+/// Page « Réglages » du launcher (hors jeu) : la liste des dossiers de jeux.
+///
+/// Le retrait est **armé** avant d'agir : retirer `~/Games` de la liste n'est
+/// pas réversible (même si le disque n'est jamais touché). Confirmation à la
+/// **Croix** (bouton bas), annulation au **Rond** (bouton droite) — la
+/// convention de tout le launcher.
+struct Settings {
+    /// Copie éditable de `config.game_dirs` ; écrite sur disque à chaque
+    /// changement, en ne touchant qu'à la clé `game_dirs`.
+    dossiers: Vec<String>,
+    /// Ligne sélectionnée : 0 = « Ajouter un dossier », puis les dossiers.
+    selected: usize,
+    /// Index (dans `dossiers`) dont le retrait attend confirmation.
+    confirm: Option<usize>,
+    /// Navigateur de dossiers ouvert par-dessus la liste.
+    browser: Option<Browser>,
+}
+
+/// Navigateur de dossiers à la manette : ligne 0 = « choisir ce dossier »,
+/// puis « .. » et les sous-dossiers. Aucune boîte de dialogue système, donc
+/// utilisable au pad comme au clavier.
+struct Browser {
+    chemin: PathBuf,
+    entrees: Vec<folders::Dossier>,
+    selected: usize,
+}
+
+impl Settings {
+    fn nouveau(config: &Config) -> Self {
+        Self {
+            dossiers: config.game_dirs.clone(),
+            selected: 0,
+            confirm: None,
+            browser: None,
+        }
+    }
+
+    /// Nombre de lignes de la liste (le bouton « ajouter » compris).
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 1
+    }
+}
+
 pub struct App {
     config: Config,
+    /// Emplacement de `config.toml`, réécrit quand les dossiers changent.
+    config_path: PathBuf,
+    /// Page Réglages ouverte (aucune en jeu : le launcher est alors caché).
+    settings: Option<Settings>,
+    /// Poignée de la surveillance des dossiers (liste modifiable à chaud).
+    watch: Option<crate::watch::Veille>,
     games: Vec<Game>,
     selected: usize,
     /// Nom du jeu en cours d'exécution (fenêtre noire) ; `None` = launcher.
@@ -883,8 +960,10 @@ pub struct App {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn boot(
         config: Config,
+        config_path: PathBuf,
         notice: Option<String>,
         autoplay: Option<usize>,
         open_picker: bool,
@@ -913,7 +992,8 @@ impl App {
         crate::gamepad::spawn(|event| post(Message::Pad(event)));
 
         // surveillance des seuls dossiers de jeux (jamais le cache : boucle)
-        crate::watch::spawn(config.game_dirs(), |paths| post(Message::Changed(paths)));
+        let veille =
+            crate::watch::spawn(config.game_dirs(), |paths| post(Message::Changed(paths)));
 
         let emit_cover = |event| post(cover_message(event));
         let covers = config.covers.then(|| {
@@ -973,6 +1053,9 @@ impl App {
         }
         let mut app = Self {
             config,
+            config_path,
+            settings: None,
+            watch: Some(veille),
             games: Vec::new(),
             selected: 0,
             running: None,
@@ -1091,6 +1174,17 @@ impl App {
         if open_picker {
             // crochet de test : --picker ouvre le menu de choix d'image
             tasks.push(Task::done(Message::OpenPicker(covers::ArtKind::Grid)));
+        }
+        // crochet de banc : ouvre la page Réglages (puis le navigateur) au
+        // démarrage, pour la photographier sans clavier ni manette
+        match std::env::var("GLAUNCHER_SETTINGS_DEMO").as_deref() {
+            Ok("1") => tasks.push(Task::done(Message::SettingsOpen)),
+            Ok("browser") => {
+                tasks.push(Task::done(Message::SettingsOpen));
+                // ligne 0 = « ajouter » : ouvre le navigateur sur $HOME
+                tasks.push(Task::done(Message::SettingsAct));
+            }
+            _ => {}
         }
         if std::env::var_os("GLAUNCHER_UPDATE_DEMO").is_some() {
             // crochet de banc : lance la mise à jour au démarrage (avec un
@@ -2338,13 +2432,18 @@ impl App {
             }
             Message::ViewMenuNav(delta) => {
                 if let Some(choice) = self.view_menu.as_mut() {
-                    let last = VIEWS.len() - 1;
+                    // les vues, puis la ligne « Réglages… »
+                    let last = VIEWS.len();
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::ViewMenuChoose(index) => {
                 self.view_menu = None;
+                // dernière ligne : les réglages (dossiers de jeux, à la manette)
+                if index == VIEWS.len() {
+                    return Task::done(Message::SettingsOpen);
+                }
                 let Some(&view) = VIEWS.get(index) else {
                     return Task::none();
                 };
@@ -2476,6 +2575,124 @@ impl App {
                     post(Message::Update(event));
                 });
                 Task::none()
+            }
+            Message::SettingsOpen => {
+                // jamais pendant une partie : le launcher est caché, et la
+                // manette pilote le jeu
+                if self.running.is_some() {
+                    return Task::none();
+                }
+                self.settings = Some(Settings::nouveau(&self.config));
+                Task::none()
+            }
+            Message::SettingsClose => {
+                self.settings = None;
+                Task::none()
+            }
+            Message::SettingsNav(delta) => {
+                if let Some(settings) = self.settings.as_mut()
+                    && settings.browser.is_none()
+                {
+                    let last = settings.lignes().saturating_sub(1) as i32;
+                    settings.selected =
+                        (settings.selected as i32 + delta).clamp(0, last) as usize;
+                    // changer de ligne désarme : on ne confirme que ce qu'on voit
+                    settings.confirm = None;
+                }
+                Task::none()
+            }
+            Message::SettingsArm => {
+                if let Some(settings) = self.settings.as_mut()
+                    && settings.browser.is_none()
+                    && settings.selected > 0
+                {
+                    settings.confirm = Some(settings.selected - 1);
+                }
+                Task::none()
+            }
+            Message::SettingsAct => {
+                let Some(settings) = self.settings.as_mut() else {
+                    return Task::none();
+                };
+                // confirmation armée : Croix retire vraiment (le disque n'est
+                // jamais touché, seule la liste change)
+                if let Some(index) = settings.confirm.take() {
+                    let Some(retire) = folders::retirer(&mut settings.dossiers, index) else {
+                        return Task::none();
+                    };
+                    settings.selected = settings.selected.min(settings.lignes() - 1);
+                    return Task::done(Message::SettingsChanged(format!(
+                        "{} retiré de la liste",
+                        retire
+                    )));
+                }
+                let cible = if settings.selected == 0 {
+                    std::env::var_os("HOME")
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| PathBuf::from("/"))
+                } else {
+                    let Some(dossier) = settings.dossiers.get(settings.selected - 1) else {
+                        return Task::none();
+                    };
+                    folders::resolu(Path::new(dossier))
+                };
+                self.ouvrir_navigateur(cible);
+                Task::none()
+            }
+            Message::SettingsChanged(message) => self.persist_dirs(message),
+            Message::BrowserNav(delta) => {
+                if let Some(browser) = self.settings.as_mut().and_then(|s| s.browser.as_mut()) {
+                    let last = browser.entrees.len() as i32; // ligne 0 = choisir
+                    browser.selected = (browser.selected as i32 + delta).clamp(0, last) as usize;
+                }
+                Task::none()
+            }
+            Message::BrowserAct => {
+                let Some((choisir, chemin)) = self.browser_cible() else {
+                    return Task::none();
+                };
+                if !choisir {
+                    self.naviguer_vers(chemin, None);
+                    return Task::none();
+                }
+                let Some(settings) = self.settings.as_mut() else {
+                    return Task::none();
+                };
+                match folders::ajouter(&mut settings.dossiers, &chemin) {
+                    Ok(()) => {
+                        settings.browser = None;
+                        settings.selected = settings.lignes() - 1;
+                        let libelle = folders::affiche(&chemin);
+                        Task::done(Message::SettingsChanged(format!("{libelle} ajouté")))
+                    }
+                    Err(err) => {
+                        self.status = Some((err, true));
+                        Task::none()
+                    }
+                }
+            }
+            Message::BrowserUp => {
+                let Some(chemin) = self
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.browser.as_ref())
+                    .map(|b| b.chemin.clone())
+                else {
+                    return Task::none();
+                };
+                match chemin.parent() {
+                    Some(parent) => {
+                        self.naviguer_vers(parent.to_path_buf(), Some(&chemin));
+                        Task::none()
+                    }
+                    // racine : Rond referme le navigateur, on ne reste pas coincé
+                    None => {
+                        if let Some(settings) = self.settings.as_mut() {
+                            settings.browser = None;
+                        }
+                        Task::none()
+                    }
+                }
             }
             Message::Update(event) => {
                 let Some(update) = self.update.as_mut() else {
@@ -3033,6 +3250,69 @@ impl App {
         self.request_visible_covers();
         self.sweep_thumbs();
         self.sweep_icons();
+    }
+
+    /// (Re)monte le navigateur sur `chemin`, ligne 0 sélectionnée.
+    fn ouvrir_navigateur(&mut self, chemin: PathBuf) {
+        let entrees = folders::lister(&chemin);
+        if let Some(settings) = self.settings.as_mut() {
+            settings.browser = Some(Browser {
+                chemin,
+                entrees,
+                selected: 0,
+            });
+            settings.confirm = None;
+        }
+    }
+
+    /// Entre dans un dossier (le navigateur reste ouvert). `depuis` : dossier
+    /// quitté — au retour on se pose dessus, comme un gestionnaire de fichiers.
+    fn naviguer_vers(&mut self, chemin: PathBuf, depuis: Option<&Path>) {
+        let entrees = folders::lister(&chemin);
+        let selection = depuis
+            .and_then(|ancien| folders::index_retour(&entrees, ancien))
+            .map_or(0, |index| index + 1); // ligne 0 = « choisir ce dossier »
+        if let Some(browser) = self.settings.as_mut().and_then(|s| s.browser.as_mut()) {
+            browser.chemin = chemin;
+            browser.entrees = entrees;
+            browser.selected = selection;
+        }
+    }
+
+    /// Ce que ferait la Croix dans le navigateur : `(choisir le dossier
+    /// courant, chemin visé)` ; `None` = ligne vide, rien à faire.
+    fn browser_cible(&self) -> Option<(bool, PathBuf)> {
+        let browser = self.settings.as_ref()?.browser.as_ref()?;
+        if browser.selected == 0 {
+            return Some((true, browser.chemin.clone()));
+        }
+        browser
+            .entrees
+            .get(browser.selected - 1)
+            .map(|entree| (false, entree.chemin.clone()))
+    }
+
+    /// Écrit `game_dirs` dans `config.toml` (seule cette clé change), met la
+    /// surveillance à jour et relance un scan complet : un dossier retiré doit
+    /// faire disparaître ses jeux de la liste.
+    fn persist_dirs(&mut self, message: String) -> Task<Message> {
+        let dossiers = self
+            .settings
+            .as_ref()
+            .map(|settings| settings.dossiers.clone())
+            .unwrap_or_default();
+        match crate::config::save_game_dirs(&self.config_path, &dossiers) {
+            Ok(()) => {
+                self.config.game_dirs = dossiers;
+                if let Some(veille) = self.watch.as_ref() {
+                    veille.definir(self.config.game_dirs());
+                }
+                self.status = Some((message, false));
+                self.refresh(self.config.game_dirs());
+            }
+            Err(err) => self.status = Some((format!("écriture impossible : {err}"), true)),
+        }
+        Task::none()
     }
 
     /// Envoie une action de l'utilisateur (menu image) : elle passe devant.
@@ -3614,6 +3894,40 @@ impl App {
             return Task::none();
         };
 
+        // page RÉGLAGES : elle capte tout tant qu'elle est ouverte
+        if let Some(settings) = self.settings.as_ref() {
+            if settings.browser.is_some() {
+                return match &key {
+                    // Rond/Échap remonte d'un niveau (le navigateur se referme
+                    // à la racine, sinon on resterait coincé)
+                    keyboard::Key::Named(Named::Escape) => Task::done(Message::BrowserUp),
+                    keyboard::Key::Named(Named::Backspace)
+                    | keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::BrowserUp),
+                    keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                        Task::done(Message::BrowserAct)
+                    }
+                    keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::BrowserNav(1)),
+                    keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::BrowserNav(-1)),
+                    _ => Task::none(),
+                };
+            }
+            return match &key {
+                // une confirmation armée se désarme avant de fermer
+                keyboard::Key::Named(Named::Escape) => Task::done(if settings.confirm.is_some() {
+                    Message::SettingsNav(0)
+                } else {
+                    Message::SettingsClose
+                }),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::SettingsAct)
+                }
+                keyboard::Key::Named(Named::Delete) => Task::done(Message::SettingsArm),
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::SettingsNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::SettingsNav(-1)),
+                _ => Task::none(),
+            };
+        }
+
         // menu « type de liste » (triangle) : haut/bas puis Entrée
         if let Some(choice) = self.view_menu {
             return match &key {
@@ -3714,6 +4028,7 @@ impl App {
                     };
                 }
                 Named::F11 => return Task::done(Message::ToggleFullscreen),
+                Named::F2 => return Task::done(Message::SettingsOpen),
                 Named::Tab => return Task::done(Message::ToggleView),
                 _ => {}
             },
@@ -3806,6 +4121,38 @@ impl App {
                         PadButton::Down => Task::done(Message::PickerNav(Nav::Down)),
                         PadButton::PageUp => Task::done(Message::PickerNav(Nav::PageUp)),
                         PadButton::PageDown => Task::done(Message::PickerNav(Nav::PageDown)),
+                        _ => Task::none(),
+                    };
+                }
+                // page RÉGLAGES : Croix valide, Rond annule ou remonte
+                if let Some(settings) = self.settings.as_ref() {
+                    let navigateur = settings.browser.is_some();
+                    let arme = settings.confirm.is_some();
+                    return match button {
+                        PadButton::Confirm => Task::done(if navigateur {
+                            Message::BrowserAct
+                        } else {
+                            Message::SettingsAct
+                        }),
+                        PadButton::Back => Task::done(if navigateur {
+                            Message::BrowserUp
+                        } else if arme {
+                            Message::SettingsNav(0)
+                        } else {
+                            Message::SettingsClose
+                        }),
+                        PadButton::Up => Task::done(if navigateur {
+                            Message::BrowserNav(-1)
+                        } else {
+                            Message::SettingsNav(-1)
+                        }),
+                        PadButton::Down => Task::done(if navigateur {
+                            Message::BrowserNav(1)
+                        } else {
+                            Message::SettingsNav(1)
+                        }),
+                        // carré : armé le retrait (jamais direct)
+                        PadButton::Menu => Task::done(Message::SettingsArm),
                         _ => Task::none(),
                     };
                 }
@@ -4012,6 +4359,9 @@ impl App {
         // sur son premier enfant, une couche vide réduisait les menus à zéro
         // (constaté 18/11 : menus invisibles).
         let mut menus: Element<'_, Message> = container(Row::new()).width(Fill).height(Fill).into();
+        if self.settings.is_some() {
+            menus = stack![menus, self.settings_view()].into();
+        }
         if self.view_menu.is_some() {
             menus = stack![menus, self.view_menu_view()].into();
         }
@@ -4653,6 +5003,210 @@ impl App {
 
     /// Menu « Options » de la page (visuels, identification, date).
     /// Menu « type de liste » (triangle / Y) : les quatre vues, la courante ✓.
+    /// Lignes visibles dans les listes des réglages : la fenêtre glisse avec
+    /// le curseur (aucune zone défilante à état, donc rien à reconstruire).
+    fn lignes_visibles(&self) -> usize {
+        (((self.viewport.1 - 300.0) / 52.0).floor() as usize).max(4)
+    }
+
+    /// Page Réglages : la liste des dossiers de jeux, ou le navigateur.
+    fn settings_view(&self) -> Element<'_, Message> {
+        let Some(settings) = self.settings.as_ref() else {
+            return Row::new().into();
+        };
+        if let Some(browser) = settings.browser.as_ref() {
+            return self.browser_view(settings, browser);
+        }
+
+        let visibles = self.lignes_visibles();
+        let (top, fin) = fenetre(settings.selected, settings.lignes(), visibles);
+        let mut rows = Column::new().spacing(4);
+        for index in top..fin {
+            let selected = index == settings.selected;
+            let (label, detail, danger) = if index == 0 {
+                ("Ajouter un dossier…".to_string(), String::new(), false)
+            } else {
+                let dossier = &settings.dossiers[index - 1];
+                let arme = settings.confirm == Some(index - 1);
+                (
+                    folders::affiche(Path::new(dossier)),
+                    if arme { "retirer ?".to_string() } else { String::new() },
+                    arme,
+                )
+            };
+            let couleur = if danger {
+                DANGER
+            } else if selected {
+                Color::BLACK
+            } else {
+                TEXT
+            };
+            let ligne = container(
+                row![
+                    text(label).size(18).width(Fill).color(couleur),
+                    text(detail)
+                        .size(14)
+                        .color(if selected { Color::BLACK } else { DANGER }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([11.0, 14.0])
+            .style(move |_| action_style(selected));
+            let cible = if index == 0 {
+                Message::SettingsAct
+            } else {
+                Message::SettingsArm
+            };
+            // clic : même chose que la Croix sur cette ligne
+            rows = rows.push(mouse_area(ligne).on_press(if index == settings.selected {
+                cible
+            } else {
+                Message::Nothing
+            }));
+        }
+
+        let aide = if let Some(index) = settings.confirm {
+            format!(
+                "Retirer {} de la liste ? Le dossier et son contenu ne sont pas touchés. Croix = retirer · Rond = annuler",
+                settings
+                    .dossiers
+                    .get(index)
+                    .map(|dossier| folders::affiche(Path::new(dossier)))
+                    .unwrap_or_default()
+            )
+        } else if settings.dossiers.is_empty() {
+            "Aucun dossier de jeux : la bibliothèque est vide. Croix = ajouter un dossier.".to_string()
+        } else {
+            "Croix = choisir · Carré = retirer de la liste · Rond = fermer".to_string()
+        };
+
+        let panel = container(
+            column![
+                text("Réglages").size(28).color(TEXT),
+                text("Dossiers de jeux").size(14).color(MUTED),
+                rows,
+                text(format!(
+                    "{}/{}",
+                    settings.selected + 1,
+                    settings.lignes()
+                ))
+                .size(12)
+                .color(MUTED),
+                text(aide)
+                    .size(13)
+                    .color(if settings.confirm.is_some() { DANGER } else { MUTED }),
+            ]
+            .spacing(10),
+        )
+        .padding(24)
+        .width(Length::Fixed(760.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.72,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Navigateur de dossiers : chemin courant, « choisir ce dossier », puis
+    /// « .. » et les sous-dossiers.
+    fn browser_view(
+        &self,
+        _settings: &Settings,
+        browser: &Browser,
+    ) -> Element<'_, Message> {
+        let visibles = self.lignes_visibles();
+        let total = browser.entrees.len() + 1;
+        let (top, fin) = fenetre(browser.selected, total, visibles);
+        let mut rows = Column::new().spacing(4);
+        for index in top..fin {
+            let selected = index == browser.selected;
+            let (label, detail) = if index == 0 {
+                ("Choisir ce dossier".to_string(), String::new())
+            } else {
+                let entree = &browser.entrees[index - 1];
+                (
+                    if entree.remonter {
+                        ".. (remonter)".to_string()
+                    } else {
+                        entree.nom.clone()
+                    },
+                    String::new(),
+                )
+            };
+            let ligne = container(
+                row![
+                    text(label)
+                        .size(18)
+                        .width(Fill)
+                        .color(if selected { Color::BLACK } else { TEXT }),
+                    text(detail)
+                        .size(14)
+                        .color(if selected { Color::BLACK } else { MUTED }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([11.0, 14.0])
+            .style(move |_| {
+                if selected {
+                    action_style(true)
+                } else {
+                    action_style(false)
+                }
+            });
+            rows = rows.push(mouse_area(ligne).on_press(if selected {
+                Message::BrowserAct
+            } else {
+                Message::Nothing
+            }));
+        }
+
+        let panel = container(
+            column![
+                text("Choisir un dossier").size(26).color(TEXT),
+                text("Dossiers de jeux").size(13).color(MUTED),
+                text(folders::affiche(&browser.chemin))
+                    .size(15)
+                    .color(ACCENT),
+                rows,
+                text("Croix = entrer / choisir · Rond = remonter d'un niveau")
+                    .size(13)
+                    .color(MUTED),
+            ]
+            .spacing(10),
+        )
+        .padding(24)
+        .width(Length::Fixed(860.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.82,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     fn view_menu_view(&self) -> Element<'_, Message> {
         let Some(choice) = self.view_menu else {
             return Row::new().into();
@@ -4680,6 +5234,29 @@ impl App {
 
             rows = rows.push(mouse_area(line).on_press(Message::ViewMenuChoose(index)));
         }
+
+        // dernière ligne : la page RÉGLAGES (dossiers de jeux). Le launcher
+        // n'a pas de bouton libre sur la manette : elle vit donc dans ce menu,
+        // ouvert au triangle — et `F2` au clavier.
+        let reglages_selected = choice == VIEWS.len();
+        let ligne = container(
+            row![
+                text("Réglages…")
+                    .size(18)
+                    .width(Fill)
+                    .color(if reglages_selected { Color::BLACK } else { TEXT }),
+                text("▸")
+                    .size(14)
+                    .color(if reglages_selected { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(reglages_selected));
+        rows = rows.push(
+            mouse_area(ligne).on_press(Message::ViewMenuChoose(VIEWS.len())),
+        );
 
         let panel =
             container(column![text("Type de liste").size(18).color(TEXT), rows].spacing(12))
@@ -6339,5 +6916,18 @@ mod tests {
         assert_eq!(plural(0), "0 jeu");
         assert_eq!(plural(1), "1 jeu");
         assert_eq!(plural(3), "3 jeux");
+    }
+
+    /// Fenêtre glissante des listes de réglages : tout tient → tout est
+    /// dessiné ; sinon le curseur reste visible, au centre quand il peut.
+    #[test]
+    fn fenetre_glissante() {
+        assert_eq!(fenetre(0, 3, 10), (0, 3));
+        assert_eq!(fenetre(2, 10, 5), (0, 5), "début de liste");
+        assert_eq!(fenetre(5, 10, 5), (3, 8), "curseur au centre");
+        assert_eq!(fenetre(9, 10, 5), (5, 10), "fin de liste");
+        // garde-fous : jamais de fenêtre vide ni hors bornes
+        assert_eq!(fenetre(0, 0, 5), (0, 0));
+        assert_eq!(fenetre(4, 10, 0), (4, 5));
     }
 }
