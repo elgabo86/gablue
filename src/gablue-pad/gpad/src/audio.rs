@@ -51,17 +51,29 @@ fn pourcent(ligne: &str) -> Option<u8> {
         .map(|valeur| valeur.round().clamp(0.0, 100.0) as u8)
 }
 
+/// Bloc brut de `pactl list sink-inputs` : PID du flux s'il est publié par
+/// l'application, sinon celui du client (voir `parser_clients`).
+struct Brut {
+    index: u32,
+    client: u32,
+    pid: i32,
+    nom: String,
+    pourcent: u8,
+    mute: bool,
+}
+
 /// Analyse de `pactl list sink-inputs`. Pure : le banc l'essaie sur une sortie
 /// réelle figée, sans toucher au son du poste.
-pub fn parser(texte: &str) -> Vec<Flux> {
-    let mut flux: Vec<Flux> = Vec::new();
-    let mut courant: Option<Flux> = None;
+fn parser_brut(texte: &str) -> Vec<Brut> {
+    let mut flux: Vec<Brut> = Vec::new();
+    let mut courant: Option<Brut> = None;
     for ligne in texte.lines() {
         let texte = ligne.trim();
         if let Some(reste) = texte.strip_prefix("Sink Input #") {
             flux.extend(courant.take());
-            courant = reste.trim().parse().ok().map(|index| Flux {
+            courant = reste.trim().parse().ok().map(|index| Brut {
                 index,
+                client: 0,
                 pid: 0,
                 nom: String::new(),
                 // 100 % tant qu'aucune ligne `Volume:` n'est lue : un flux
@@ -74,7 +86,9 @@ pub fn parser(texte: &str) -> Vec<Flux> {
         let Some(flux) = courant.as_mut() else {
             continue;
         };
-        if let Some(valeur) = valeur(texte, "application.process.id") {
+        if let Some(reste) = texte.strip_prefix("Client:") {
+            flux.client = reste.trim().parse().unwrap_or(0);
+        } else if let Some(valeur) = valeur(texte, "application.process.id") {
             flux.pid = valeur.parse().unwrap_or(0);
         } else if let Some(valeur) = valeur(texte, "application.name") {
             flux.nom = valeur;
@@ -90,13 +104,84 @@ pub fn parser(texte: &str) -> Vec<Flux> {
     flux
 }
 
+/// `pactl list clients` → client → PID applicatif.
+///
+/// **Indispensable** : sous PipeWire, un flux `mpv` ne publie PAS
+/// `application.process.id` dans ses propriétés (constaté le 22/11 sur cette
+/// machine : ni mpv, ni une session PipeWire standard ne l'exposent). Le PID
+/// est en revanche sur le **client** (`application.process.id`, à défaut
+/// `pipewire.sec.pid`), que le flux désigne par `Client: N`.
+pub fn parser_clients(texte: &str) -> std::collections::HashMap<u32, i32> {
+    let mut carte = std::collections::HashMap::new();
+    let mut client: Option<u32> = None;
+    let mut pid = 0;
+    for ligne in texte.lines() {
+        let texte = ligne.trim();
+        if let Some(reste) = texte.strip_prefix("Client #") {
+            if let Some(client) = client {
+                carte.insert(client, pid);
+            }
+            client = reste.trim().parse().ok();
+            pid = 0;
+            continue;
+        }
+        if client.is_none() {
+            continue;
+        }
+        if let Some(valeur) = valeur(texte, "application.process.id") {
+            pid = valeur.parse().unwrap_or(0);
+        } else if pid == 0
+            && let Some(valeur) = valeur(texte, "pipewire.sec.pid")
+        {
+            pid = valeur.parse().unwrap_or(0);
+        }
+    }
+    if let Some(client) = client {
+        carte.insert(client, pid);
+    }
+    carte
+}
+
+/// Fusionne les deux sorties : le PID d'un flux vient de ses propres
+/// propriétés, sinon de son client.
+pub fn parser(
+    texte: &str,
+    clients: &std::collections::HashMap<u32, i32>,
+) -> Vec<Flux> {
+    parser_brut(texte)
+        .into_iter()
+        .map(|brut| Flux {
+            index: brut.index,
+            pid: if brut.pid > 0 {
+                brut.pid
+            } else {
+                clients.get(&brut.client).copied().unwrap_or(0)
+            },
+            nom: brut.nom,
+            pourcent: brut.pourcent,
+            mute: brut.mute,
+        })
+        .collect()
+}
+
 /// Flux en cours de lecture sur le poste.
+///
+/// `LC_ALL=C` est **obligatoire** : pactl est traduit (« Entrée de la
+/// destination #88 », « Bouchonné : non », « Sourdine : non »), et un poste en
+/// français ne produisait alors AUCUN flux — les lignes VOLUME JEU et VOLUME
+/// APP n'apparaissaient jamais (constaté 22/11 sur la session française, le
+/// banc à fixtures anglaises ne le voyait pas).
 pub fn flux() -> Vec<Flux> {
-    std::process::Command::new(PACTL)
-        .args(["list", "sink-inputs"])
-        .output()
-        .map(|sortie| parser(&String::from_utf8_lossy(&sortie.stdout)))
-        .unwrap_or_default()
+    let lire = |quoi: &str| {
+        std::process::Command::new(PACTL)
+            .args(["list", quoi])
+            .env("LC_ALL", "C")
+            .output()
+            .map(|sortie| String::from_utf8_lossy(&sortie.stdout).to_string())
+            .unwrap_or_default()
+    };
+    let clients = parser_clients(&lire("clients"));
+    parser(&lire("sink-inputs"), &clients)
 }
 
 /// Règle le volume d'un flux (0..100 %).
@@ -107,6 +192,7 @@ pub fn regler(index: u32, pourcent: u8) -> bool {
             &index.to_string(),
             &format!("{}%", pourcent.min(100)),
         ])
+        .env("LC_ALL", "C")
         .status()
         .is_ok_and(|statut| statut.success())
 }
@@ -115,6 +201,7 @@ pub fn regler(index: u32, pourcent: u8) -> bool {
 pub fn basculer_mute(index: u32) -> bool {
     std::process::Command::new(PACTL)
         .args(["set-sink-input-mute", &index.to_string(), "toggle"])
+        .env("LC_ALL", "C")
         .status()
         .is_ok_and(|statut| statut.success())
 }
@@ -146,9 +233,14 @@ Sink Input #71
 		application.process.id = \"4242\"
 ";
 
+    /// Aucune table de clients : les PID viennent des propriétés du flux.
+    fn seuls() -> std::collections::HashMap<u32, i32> {
+        std::collections::HashMap::new()
+    }
+
     #[test]
     fn deux_flux_lus() {
-        let flux = parser(SORTIE);
+        let flux = parser(SORTIE, &seuls());
         assert_eq!(flux.len(), 2);
         assert_eq!(
             flux[0],
@@ -167,10 +259,24 @@ Sink Input #71
     }
 
     #[test]
+    fn sortie_traduite_non_interpretable() {
+        // un poste en français : c'est pourquoi `flux()` force LC_ALL=C
+        let francais = "\
+Entrée de la destination #88\n\tBouchonné : non\n\tSourdine : non\n\tVolume : mono: 65536 / 100% / 0.00 dB\n";
+        assert!(parser(francais, &seuls()).is_empty());
+    }
+
+    #[test]
     fn sortie_vide_ou_bruitee() {
-        assert!(parser("").is_empty());
-        assert!(parser("Sink Input #x\n\tMute: no\n").is_empty(), "index illisible");
-        assert!(parser("Volume: front-left: 1 / 3% / x\n").is_empty(), "hors bloc");
+        assert!(parser("", &seuls()).is_empty());
+        assert!(
+            parser("Sink Input #x\n\tMute: no\n", &seuls()).is_empty(),
+            "index illisible"
+        );
+        assert!(
+            parser("Volume: front-left: 1 / 3% / x\n", &seuls()).is_empty(),
+            "hors bloc"
+        );
     }
 
     #[test]
@@ -178,6 +284,58 @@ Sink Input #71
         assert_eq!(pourcent("Volume: front-left: 1 / 44% / x"), Some(44));
         assert_eq!(pourcent("Volume: front-left: 1 / 140% / x"), Some(100));
         assert_eq!(pourcent("Volume: sans valeur"), None);
+    }
+
+    #[test]
+    fn pid_du_client_quand_le_flux_ne_le_publie_pas() {
+        // constaté le 22/11 sur cette machine : sous PipeWire, `mpv` ne met
+        // PAS `application.process.id` dans les propriétés de son flux. Sans
+        // le client, le flux du jeu n'était rattaché à aucun PID — les lignes
+        // VOLUME JEU / VOLUME APP restaient absentes.
+        let fluxs = "\
+Sink Input #117
+\tClient: 125
+\tMute: no
+\tVolume: front-center: 65536 / 100% / 0.00 dB
+\tProperties:
+\t\tapplication.name = \"mpv\"
+
+Sink Input #118
+\tClient: 126
+\tProperties:
+\t\tapplication.name = \"gwine\"
+\t\tapplication.process.id = \"4242\"
+";
+        let clients = "\
+Client #125
+\tProperties:
+\t\tpipewire.sec.pid = \"4241\"
+\t\tapplication.process.id = \"4241\"
+\t\tapplication.name = \"mpv\"
+
+Client #126
+\tProperties:
+\t\tpipewire.sec.pid = \"4242\"
+\t\tapplication.process.id = \"4242\"
+";
+        let carte = parser_clients(clients);
+        assert_eq!(carte.get(&125), Some(&4241));
+        assert_eq!(carte.get(&126), Some(&4242));
+        let flux = parser(fluxs, &carte);
+        assert_eq!(flux.len(), 2);
+        assert_eq!(flux[0].pid, 4241, "PID pris sur le client");
+        assert_eq!(flux[1].pid, 4242, "propriété du flux prioritaire");
+    }
+
+    #[test]
+    fn client_sans_pid_retombe_sur_le_sec_pid() {
+        let clients = "\
+Client #9
+\tProperties:
+\t\tpipewire.sec.pid = \"3141\"
+";
+        assert_eq!(parser_clients(clients).get(&9), Some(&3141));
+        assert!(parser_clients("").is_empty());
     }
 
     #[test]

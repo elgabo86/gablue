@@ -794,6 +794,9 @@ enum Entree {
     VolumeJeu,
     /// volume du flux d'une application compagne (vidéo lancée à côté)
     VolumeApp,
+    /// sélecteur jeu ⇄ application compagne (n'existe que si une app est
+    /// ouverte à côté d'un jeu)
+    Basculer,
     Mango,
     Fps,
     /// durée du buffer de replay (secondes)
@@ -865,6 +868,8 @@ struct Dispo {
     manette: bool,
     jeu: bool,
     app: bool,
+    /// une application compagne est ouverte à côté du jeu : le sélecteur
+    bascule: bool,
 }
 
 impl Cat {
@@ -896,10 +901,16 @@ impl Cat {
                 Entree::Action("PLEIN ECRAN"),
                 Entree::Action("TOUT FERMER"),
             ],
-            // le sélecteur du mode jeu (jeu ⇄ application compagne) prendra la
-            // première place ici ; aujourd'hui la liste de fenêtres de KWin
-            // fait déjà le travail
-            Cat::Fenetres => vec![Entree::Fenetre, Entree::Action("CHOISIR FENETRE")],
+            // le sélecteur jeu ⇄ application compagne passe avant la liste :
+            // c'est le geste du quotidien (regarder une vidéo à côté du jeu)
+            Cat::Fenetres => {
+                let mut v = vec![Entree::Fenetre];
+                if dispo.bascule {
+                    v.push(Entree::Basculer);
+                }
+                v.push(Entree::Action("CHOISIR FENETRE"));
+                v
+            }
             Cat::Affichage => vec![
                 Entree::Fenetre,
                 Entree::Action("VRR"),
@@ -1000,6 +1011,8 @@ impl Entree {
             Entree::Volume => "VOLUME GENERAL",
             Entree::VolumeJeu => "VOLUME JEU",
             Entree::VolumeApp => "VOLUME APP",
+            // le libellé dit toujours où l'on va, jamais d'où l'on vient
+            Entree::Basculer => "BASCULER JEU / APP",
             Entree::Mango => "MANGOHUD",
             Entree::Fps => "FPS MAX",
             Entree::Duree => "DUREE REPLAY",
@@ -1408,6 +1421,12 @@ struct App {
     /// existent : chacun a son propre volume, indépendant du général
     son_jeu: Option<audio::Flux>,
     son_app: Option<audio::Flux>,
+    /// fenêtre de l'application compagne et du jeu, pour le sélecteur
+    /// (rafraîchies à l'entrée de la catégorie FENETRES)
+    bascule_app: Option<Fenetre>,
+    bascule_jeu: Option<Fenetre>,
+    /// l'application compagne a le focus (donc le sélecteur propose le jeu)
+    bascule_sur_app: bool,
     // diagnostic du canal : qui lit encore la manette pendant l'overlay
     evdev_node: Option<String>,
     hidraw_node: Option<String>,
@@ -1783,6 +1802,9 @@ impl App {
             vol_mute: false,
             son_jeu: None,
             son_app: None,
+            bascule_app: None,
+            bascule_jeu: None,
+            bascule_sur_app: false,
             evdev_node: None,
             hidraw_node: None,
             last_scan: Instant::now(),
@@ -2770,6 +2792,8 @@ impl App {
             Entree::Volume => self.set_vol(self.vol + 5 * sens),
             Entree::VolumeJeu => self.regler_flux(Cible::Jeu, 5 * sens),
             Entree::VolumeApp => self.regler_flux(Cible::App, 5 * sens),
+            // action ponctuelle : rien à régler au curseur
+            Entree::Basculer => {}
             Entree::Fps => {
                 let max = FPS_OPTS.len() as i32 - 1;
                 // Valeur hors crans : on part de la vraie valeur et on va au
@@ -3235,6 +3259,7 @@ impl App {
         self.vol_mute = Self::lire_mute();
         if let Ok(o) = std::process::Command::new("/usr/bin/pactl")
             .args(["get-sink-volume", "@DEFAULT_SINK@"])
+            .env("LC_ALL", "C")
             .output()
         {
             let t = String::from_utf8_lossy(&o.stdout);
@@ -3552,6 +3577,9 @@ impl App {
     fn entrer_categorie(&mut self, cat: Cat) {
         // les flux audio changent à chaque lancement de jeu ou de vidéo :
         // on relit à l'entrée de la catégorie qui les propose
+        if cat == Cat::Fenetres {
+            self.refresh_bascule();
+        }
         if cat == Cat::Son {
             if std::env::var_os("GPAD_SON_DEMO").is_some() {
                 // crochet de banc : deux flux factices, pour photographier les
@@ -3596,6 +3624,7 @@ impl App {
             manette: self.pad_bt.is_some(),
             jeu: self.son_jeu.is_some(),
             app: self.son_app.is_some(),
+            bascule: self.bascule_app.is_some(),
         }
     }
 
@@ -3603,6 +3632,87 @@ impl App {
     /// et celui d'une application compagne (vidéo lancée à côté). Un flux
     /// n'existe que pendant la lecture : une app ouverte mais muette n'en a
     /// pas, et sa ligne n'est alors pas proposée.
+    /// Relit les fenêtres pour le sélecteur jeu ⇄ application compagne : celle
+    /// du jeu (PID du paquet et descendants) et celle de l'app (nom reconnu
+    /// par `audio::est_compagne`). Un flux audio n'est pas nécessaire — une
+    /// app ouverte mais muette a aussi une fenêtre, et on peut vouloir y
+    /// retourner.
+    fn refresh_bascule(&mut self) {
+        self.bascule_app = None;
+        self.bascule_jeu = None;
+        self.bascule_sur_app = false;
+        // crochet de banc : deux fenêtres factices, pour photographier la
+        // ligne sans jeu ni application ouverte
+        if std::env::var_os("GPAD_BASCULE_DEMO").is_some() {
+            let fenetre = |nom: &str, classe: &str, pid: i32, uuid: &str, active: bool| Fenetre {
+                caption: nom.to_string(),
+                class: classe.to_string(),
+                desktop: classe.to_string(),
+                pid,
+                uuid: uuid.to_string(),
+                active,
+            };
+            self.bascule_app = Some(fenetre(
+                "VacuumTube",
+                "rocks.shy.VacuumTube",
+                4242,
+                "{app}",
+                false,
+            ));
+            self.bascule_jeu = Some(fenetre("Super Game", "gwine", 4243, "{jeu}", true));
+            return;
+        }
+        let Some(liste) = self.lire_fenetres() else {
+            return;
+        };
+        let compagne = |f: &Fenetre| {
+            audio::est_compagne(&f.class)
+                || audio::est_compagne(&f.desktop)
+                || audio::est_compagne(&f.caption)
+        };
+        self.bascule_app = liste.iter().find(|f| compagne(f)).cloned();
+        let mut pids: Vec<i32> = Vec::new();
+        if let Some(jeu) = self.jeu_actif() {
+            for racine in jeu.pids.clone() {
+                pids.push(racine);
+                pids.extend(descendants(racine));
+            }
+        }
+        self.bascule_jeu = liste
+            .iter()
+            .find(|f| f.pid > 0 && pids.contains(&f.pid))
+            .cloned();
+        self.bascule_sur_app = liste
+            .iter()
+            .find(|f| f.active)
+            .is_some_and(|f| compagne(f));
+        println!(
+            "BASCULE app={:?} jeu={:?} sur_app={}",
+            self.bascule_app.as_ref().map(|f| f.titre().to_string()),
+            self.bascule_jeu.as_ref().map(|f| f.titre().to_string()),
+            self.bascule_sur_app
+        );
+    }
+
+    /// Active la fenêtre du jeu ou celle de l'app, puis referme le panneau.
+    fn basculer(&mut self) {
+        let cible = if self.bascule_sur_app {
+            self.bascule_jeu.clone()
+        } else {
+            self.bascule_app.clone()
+        };
+        let Some(f) = cible else {
+            self.status = "BASCULER: AUCUNE FENETRE".to_string();
+            return;
+        };
+        if self.activer_par_uuid(&f.uuid) {
+            self.status = format!("ACTIVE: {}", f.titre());
+            self.request_close();
+        } else {
+            self.status = "BASCULER: ECHEC KWIN".to_string();
+        }
+    }
+
     fn refresh_sons(&mut self) {
         let mut pids: Vec<i32> = Vec::new();
         if let Some(jeu) = self.jeu_actif() {
@@ -3650,6 +3760,7 @@ impl App {
             Entree::Volume => self.toggle_mute(),
             Entree::VolumeJeu => self.muter_flux(Cible::Jeu),
             Entree::VolumeApp => self.muter_flux(Cible::App),
+            Entree::Basculer => self.basculer(),
             Entree::Fps => self.status = "FPS: GAUCHE/DROITE".to_string(),
             Entree::Duree => self.status = "DUREE REPLAY: GAUCHE/DROITE".to_string(),
             Entree::Codec
@@ -4777,6 +4888,11 @@ impl App {
                         self.replay_active,
                         false,
                     );
+                }
+                // sélecteur jeu ⇄ app : action simple, libellé seul (le sens
+                // est dans le libellé, voir `nom()`)
+                Entree::Basculer => {
+                    cv.text_fit(px0 + pad + 36, y, "BASCULER JEU / APP", 3, color, inner - 36);
                 }
                 Entree::Action("SAUVER REPLAY") => {
                     let c_txt = if self.replay_active { color } else { cc_dim };
@@ -7348,6 +7464,8 @@ fn main() {
             "volume" => Some((Cat::Son, Entree::Volume)),
             // section CAPTURE (enregistreur / replay) : banc visuel
             "capture" => Some((Cat::Capture, Entree::Qualite)),
+            // sélecteur jeu ⇄ app compagne (banc : GPAD_BASCULE_DEMO=1)
+            "bascule" => Some((Cat::Fenetres, Entree::Basculer)),
             // dernière ligne de la catégorie la plus longue : vérifie le bas
             // de liste (défilement)
             "fin" => Some((Cat::Capture, Entree::Curseur)),

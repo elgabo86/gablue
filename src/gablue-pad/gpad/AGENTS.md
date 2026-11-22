@@ -140,10 +140,10 @@ sous-menu par domaine, avec un chevron au bord droit :
 
 ```
 JEU        FERMER · PLEIN ECRAN · TOUT FERMER
-FENETRES   CHOISIR FENETRE          (le sélecteur jeu ⇄ app compagne viendra ici)
+FENETRES   CHOISIR FENETRE · BASCULER JEU / APP  (BASCULER : seulement si une app compagne est ouverte)
 PERF       MANGOHUD · FPS MAX · PRIORITE ACTIVE
 CAPTURE    ENREGISTRER · CAPTURE ECRAN · REPLAY · SAUVER REPLAY · DUREE · REPLAY AUTO · QUALITE · CODEC · RESOLUTION · FPS · CURSEUR
-SON        VOLUME
+SON        VOLUME GENERAL · VOLUME JEU · VOLUME APP  (les deux derniers : seulement si le flux existe)
 AFFICHAGE  VRR · STYLE
 MANETTE    MODE SOURIS · CLAVIER VIRTUEL · DECONNECTER LA MANETTE
 SYSTEME    FERMER LA SESSION · REDEMARRER · ETEINDRE
@@ -730,12 +730,23 @@ conclure.
 
 ## Trois volumes (`src/audio.rs`)
 
-`pactl list sink-inputs` donne, pour chaque flux, son `application.process.id`
-et son volume : c'est la seule source qui permet de régler le **jeu** ou
-l'**application compagne** sans toucher à la musique de fond (le volume général
-n'est qu'un flux parmi d'autres). `audio::parser` est pur (testé sur une sortie
-réelle figée), `regler`/`basculer_mute` passent par `pactl
-set-sink-input-volume|mute`. Un flux n'existe que **pendant la lecture** : une
+`pactl list sink-inputs` donne, pour chaque flux, son volume et son
+`application.process.id` : c'est la seule source qui permet de régler le **jeu**
+ou l'**application compagne** sans toucher à la musique de fond (le volume
+général n'est qu'un flux parmi d'autres). `audio::parser` est pur (testé sur une
+sortie réelle figée), `regler`/`basculer_mute` passent par `pactl
+set-sink-input-volume|mute`.
+
+Deux pièges constatés le 22/11 sur cette machine, qui se lisaient comme « les
+lignes VOLUME JEU / VOLUME APP n'apparaissent jamais » :
+- **`LC_ALL=C` obligatoire** : `pactl` est traduit (« Entrée de la destination
+  #88 », « Bouchonné : non », « Sourdine : non ») ; un poste en français ne
+  produisait aucun flux. Un banc à fixtures anglaises ne le voyait pas.
+- **le PID d'un flux n'est pas toujours dans le flux** : sous PipeWire, `mpv`
+  ne publie pas `application.process.id`. Il faut lire `pactl list clients`
+  (`Client: N` du flux → `application.process.id`, à défaut
+  `pipewire.sec.pid`) : sans ça, aucun flux n'était rattaché à un PID, donc
+  jamais au paquet du jeu ni à une app compagne. Un flux n'existe que **pendant la lecture** : une
 app ouverte mais muette n'a pas de ligne, et c'est voulu (pas de ligne morte).
 Après chaque réglage, les flux sont relus : `pactl` peut borner ou refuser, et
 l'écran ne doit jamais afficher un chiffre inventé. Le libellé « VOLUME
