@@ -13,10 +13,12 @@ lecteur de Discord prévisualise mal le HEVC. Le HEVC reste proposé pour qui
 archive chez lui (~28 % plus léger) — jamais par défaut.
 """
 
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
+    QLineEdit, QPushButton, QVBoxLayout,
 )
 
 from ..constants import _which
@@ -115,22 +117,17 @@ class CaptureDialog(QDialog):
 
         # -- sortie ---------------------------------------------------------
         sortie = self._card(root, "Sortie")
-        ligne = QHBoxLayout()
-        ligne.setSpacing(8)
-        ligne.addWidget(QLabel("Dossier", self))
-        self.dossier = QLineEdit(self)
-        self.dossier.setPlaceholderText("~/Vidéos/Captures")
-        ligne.addWidget(self.dossier, 1)
-        parcourir = QPushButton("Parcourir…", self)
-        parcourir.setObjectName("ghost")
-        parcourir.setCursor(Qt.PointingHandCursor)
-        parcourir.clicked.connect(self._choose_dir)
-        ligne.addWidget(parcourir)
-        sortie.addLayout(ligne)
+        self.dossier, _ = self._folder_row(sortie, "Enregistrements", "~/Vidéos/Captures")
+        self.shots, _ = self._folder_row(
+            sortie, "Captures d'écran", "~/Images/Screenshots"
+        )
         sortie_detail = QLabel(
             "Enregistrements (Video_<date>.mp4) et replays sauvegardés "
             "(Replay_<date>.mp4). Le buffer de replay vit en RAM, rien n'est "
-            "écrit tant qu'on ne sauvegarde pas.",
+            "écrit tant qu'on ne sauvegarde pas. Les captures d'écran "
+            "(screenshot_<date>.png) suivent le même fichier : c'est aussi ce "
+            "que règlent les Réglages du launcher, hors jeu. Un champ vide "
+            "revient au défaut affiché.",
             self,
         )
         sortie_detail.setObjectName("hostDetail")
@@ -175,6 +172,22 @@ class CaptureDialog(QDialog):
         root.addWidget(frame)
         return layout
 
+    def _folder_row(self, layout: QVBoxLayout, label: str, defaut: str):
+        """Une ligne « libellé + chemin + Parcourir… » (dossier de sortie)."""
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        row.addWidget(QLabel(label, self))
+        champ = QLineEdit(self)
+        champ.setPlaceholderText(defaut)
+        row.addWidget(champ, 1)
+        parcourir = QPushButton("Parcourir…", self)
+        parcourir.setObjectName("ghost")
+        parcourir.setCursor(Qt.PointingHandCursor)
+        parcourir.clicked.connect(lambda: self._choose_dir(champ, defaut))
+        row.addWidget(parcourir)
+        layout.addLayout(row)
+        return champ, row
+
     @staticmethod
     def _combo(layout: QVBoxLayout, label: str, options) -> QComboBox:
         combo = QComboBox()
@@ -206,8 +219,10 @@ class CaptureDialog(QDialog):
         self.duree.setCurrentIndex(index if index >= 0 else 1)
         self.auto_replay.setChecked(values.get("auto_replay") == "1")
         self.dossier.setText(values.get("dossier", ""))
+        self.shots.setText(values.get("dossier_screenshot", ""))
         self.auto_replay.toggled.connect(lambda _v: self._update_apply())
         self.dossier.textChanged.connect(lambda _t: self._update_apply())
+        self.shots.textChanged.connect(lambda _t: self._update_apply())
         self._update_estimate()
         self._update_apply()
 
@@ -221,6 +236,7 @@ class CaptureDialog(QDialog):
             "replay_sec": self.duree.currentData(),
             "auto_replay": "1" if self.auto_replay.isChecked() else "0",
             "dossier": self.dossier.text().strip(),
+            "dossier_screenshot": self.shots.text().strip(),
         }
 
     def changed(self) -> bool:
@@ -241,28 +257,27 @@ class CaptureDialog(QDialog):
         self.appliquer.setEnabled(dirty)
         self.hint.setText("Réglages à appliquer" if dirty else "Aucun changement.")
 
-    def _choose_dir(self) -> None:
-        start = self.dossier.text().strip() or str(recorder_conf_path().parent)
-        chosen = QFileDialog.getExistingDirectory(self, "Dossier des captures", start)
+    def _choose_dir(self, champ: QLineEdit, defaut: str) -> None:
+        start = champ.text().strip() or os.path.expanduser(defaut)
+        chosen = QFileDialog.getExistingDirectory(self, "Dossier de sortie", start)
         if chosen:
-            self.dossier.setText(chosen)
+            champ.setText(chosen)
 
     # -- application --------------------------------------------------------
     def _apply(self) -> None:
         if not self.changed():
             return
         wanted = self.desired()
-        if not wanted["dossier"]:
-            QMessageBox.warning(
-                self, "Dossier vide",
-                "Choisis un dossier : les clips y seront écrits.",
-            )
-            return
         texte = write_recorder_conf(self.texte, wanted)
         chemin = str(recorder_conf_path())
+        dossiers = " ".join(
+            f'"{valeur}"'
+            for valeur in (wanted["dossier"], wanted["dossier_screenshot"])
+            if valeur
+        )
         script = (
             "exec < /dev/null\n"
-            f'mkdir -p "$(dirname "{chemin}")" "{wanted["dossier"]}"\n'
+            f'mkdir -p "$(dirname "{chemin}")" {dossiers}\n'
             f"cat > \"{chemin}.gablue.tmp\" <<'GABLUE_EOF'\n{texte}GABLUE_EOF\n"
             f'mv "{chemin}.gablue.tmp" "{chemin}"\n'
         )

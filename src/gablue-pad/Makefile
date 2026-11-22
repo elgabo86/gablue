@@ -46,6 +46,9 @@ install: all
 	install -m 755 $(BINS) $(BINDIR)/
 	cp -a $(DATA) $(LIBEXEC)/
 	install -m 755 login/login-bridge.sh $(LIBEXEC)/login-bridge.sh
+	# clavier virtuel à la demande (launcher : identification, date) : Python
+	# du poste, aucun binaire à lier
+	install -m 755 clavier/gpad-clavier $(BINDIR)/
 	install -m 755 gate/padnodes.sh $(LIBEXEC)/gate/
 	chmod 755 $(LIBEXEC)/*.sh $(LIBEXEC)/gate/padnodes.sh
 	chmod 755 $(LIBEXEC)/scripts/*

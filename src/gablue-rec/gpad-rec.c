@@ -125,7 +125,11 @@ static void config_lit_fichier(struct config *c)
         }
         else if (!strcmp(k, "audio")) c->audio = strcmp(v, "none") != 0;
         else if (!strcmp(k, "auto_replay")) c->auto_replay = atoi(v);
-        else if (!strcmp(k, "dossier")) snprintf(c->dossier, sizeof c->dossier, "%s", v);
+        /* `dossier=` vide = dossier par défaut : un outil qui « remet par
+         * défaut » n'a pas à connaître notre chemin, et une valeur vide ne doit
+         * jamais faire écrire à la racine (mkdir("") échoue, puis "/Video_…") */
+        else if (!strcmp(k, "dossier") && *v)
+            snprintf(c->dossier, sizeof c->dossier, "%s", v);
     }
     fclose(f);
 }

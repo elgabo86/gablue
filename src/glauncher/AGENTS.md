@@ -145,6 +145,16 @@ dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
 - **Effet immédiat** : `config.game_dirs` mis à jour, `Veille::definir` pour la
   surveillance (ajout et retrait à chaud), puis rescan complet — un dossier
   retiré doit faire disparaître ses jeux.
+- **Dossiers de sortie** : deux lignes après les dossiers de jeux — *Dossier
+  des enregistrements* (`dossier` de `~/.config/gablue/recorder.conf`, partagé
+  avec `gpad-rec`, `grec` et Gablue Manager) et *Dossier des captures d'écran*
+  (`dossier_screenshot`). `Croix` ouvre le **même navigateur** à partir du
+  dossier courant (ou du défaut) ; `Carré` **retire la clé** : le dossier
+  redevient le défaut du démon et de `screenshot.sh`, sans écrire un chemin en
+  dur (le défaut peut changer avec l'image). L'écriture ne touche qu'à sa clé,
+  commentaires et clés inconnues préservés (`src/recorder.rs`, même contrat que
+  `save_game_dirs`). Un `~` littéral n'est jamais écrit : les chemins viennent
+  du navigateur, donc absolus.
 - **Écran du jeu** : dernière ligne de la page, réglée au **gauche/droite** —
   `Comme Plasma` (défaut : KWin applique la disposition enregistrée, étendue ou
   clonée), `Cloner` (réplique de l'écran principal), `Principal seul` (les
@@ -154,9 +164,20 @@ dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
   invocation atomique). Le launcher ne parle jamais à KWin directement pour ça :
   il appelle `gablue-display` (`status`/`set`), seule vérité du format et de la
   validation (`GLAUNCHER_DISPLAY_HELPER` pour le banc).
+- **Session console : pas d'image perso.** Le menu d'images n'affiche pas
+  « Choisir un fichier… » (ni la touche `F`) : le sélecteur du bureau
+  (`kdialog`/`zenity`) n'existe pas dans une session KWin nue, et une image
+  perso se choisit sous Plasma. `Message::PickerFile` est inerte par sécurité
+  (le clavier virtuel pourrait taper `f`).
+- **Session console : clavier virtuel automatique.** Les prompts de saisie
+  (identification SteamGridDB, date de sortie) n'ont pas de clavier physique :
+  `IdentifyOpen`/`DateOpen` lancent `gpad-clavier`, qui ouvre le clavier de
+  l'overlay **résident** (frappe uinput dans le champ qui a le focus).
+  Surcharge : `GLAUNCHER_KBD_CMD` (banc). Au bureau, rien n'est lancé.
 - **Banc** : `GLAUNCHER_SETTINGS_DEMO=1` ouvre la page, `=browser` ouvre en
   plus le navigateur sur `$HOME` ; la fenêtre glissante (`fenetre()`) remplace
   une zone défilante à état, donc rien à reconstruire d'un rendu à l'autre.
+  `GLAUNCHER_RECORDER_CONF` redirige `recorder.conf` vers un bac à sable.
 
 ## Contrats
 

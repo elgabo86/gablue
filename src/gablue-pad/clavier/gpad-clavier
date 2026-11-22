@@ -1,0 +1,112 @@
+#!/usr/bin/python3
+
+"""gpad-clavier — ouvrir le clavier virtuel de l'overlay manette.
+
+La session console Gablue n'a pas de clavier physique : quand le launcher
+demande un nom de jeu (identification SteamGridDB) ou une date, la manette ne
+suffit pas. L'overlay `gpad` porte déjà un clavier virtuel (Home + carré) qui
+tape par un clavier `uinput` dans la fenêtre active — donc exactement dans le
+champ de saisie qui a le focus.
+
+Ce programme ne réimplémente rien : il envoie `kbd <node>` au **résident déjà
+lancé** par `gpad-trigger` (le même overlay, qui garde son grab et n'anime
+aucune fenêtre). Le socket est `$XDG_RUNTIME_DIR/gablue/gpad-<pid>.sock` ; on
+prend le plus récent, le banc pouvant tourner à côté du service.
+
+Défaut : le node evdev d'une manette, reconnu comme `padnodes.sh` le fait (un
+périphérique physique qui expose un handler joydev `jsN`). Pas de socket (service
+arrêté — bureau, `gablue-pad off`) : repli sur `gpad --clavier <node>`, la voie
+documentée du déclencheur.
+
+Aucun privilège : lecture de `/proc/bus/input/devices` et socket du compte.
+"""
+
+import glob
+import os
+import socket
+import sys
+
+# 500 ms comme le déclencheur : un résident bloqué par un client muet ne doit
+# pas figer le launcher (une commande perdue vaut mieux qu'une session gelée).
+CONNECT_TIMEOUT = 0.5
+
+
+def runtime_dir() -> str:
+    return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+
+
+def sockets() -> list[str]:
+    """Sockets du résident, le plus récent d'abord."""
+    chemins = glob.glob(os.path.join(runtime_dir(), "gablue", "gpad-*.sock"))
+    return sorted(chemins, key=lambda p: os.path.getmtime(p), reverse=True)
+
+
+def node_manette() -> str | None:
+    """Node evdev d'une manette, ou None.
+
+    Reconnaissance identique à `padnodes.sh` : un bloc de
+    `/proc/bus/input/devices` qui expose un handler `jsN` est une manette (les
+    claviers et souris n'en ont jamais), et le node evdev utile est l'`eventN`
+    du même bloc. Un périphérique peut exposer plusieurs `eventN` (le pad et ses
+    capteurs) : le premier est celui du pad DS4/Xbox.
+    """
+    force = os.environ.get("PAD_NODE")
+    if force:
+        return force
+    try:
+        with open("/proc/bus/input/devices", encoding="utf-8") as flux:
+            blocs = flux.read().split("\n\n")
+    except OSError:
+        return None
+    for bloc in blocs:
+        handlers = ""
+        for ligne in bloc.splitlines():
+            if ligne.startswith("H: Handlers="):
+                handlers = ligne[len("H: Handlers="):]
+                break
+        champs = handlers.split()
+        if not any(champ.startswith("js") for champ in champs):
+            continue
+        for champ in champs:
+            if champ.startswith("event"):
+                node = f"/dev/input/{champ}"
+                if os.path.exists(node):
+                    return node
+    return None
+
+
+def envoyer(sock: str, node: str) -> bool:
+    """Envoie `kbd <node>` ; True si le résident l'a accepté."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as flux:
+            flux.settimeout(CONNECT_TIMEOUT)
+            flux.connect(sock)
+            flux.sendall(f"kbd {node}\n".encode())
+        return True
+    except OSError as err:
+        print(f"gpad-clavier : {sock} : {err}", file=sys.stderr)
+        return False
+
+
+def main() -> int:
+    node = node_manette()
+    if not node:
+        print("gpad-clavier : aucune manette trouvée", file=sys.stderr)
+        return 1
+    for sock in sockets():
+        if envoyer(sock, node):
+            print(f"gpad-clavier : clavier ouvert sur {node} (via {sock})")
+            return 0
+    # aucun résident : repli documenté du déclencheur (un overlay neuf, qui
+    # quitte à la fermeture du clavier)
+    gpad = os.environ.get("GPAD_BIN") or "gpad"
+    print(f"gpad-clavier : aucun résident, repli sur {gpad} --clavier", file=sys.stderr)
+    try:
+        os.execvp(gpad, [gpad, "--clavier", node])
+    except OSError as err:
+        print(f"gpad-clavier : {gpad} introuvable ({err})", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

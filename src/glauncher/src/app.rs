@@ -36,6 +36,7 @@ use crate::mode::Mode;
 use crate::music;
 use crate::playtime;
 use crate::pose::Pose;
+use crate::recorder;
 use crate::sparkles;
 use crate::spinner;
 use crate::state::{self, SortBy};
@@ -506,6 +507,9 @@ pub enum Message {
     SettingsChoix(i32),
     /// Carré : armer le retrait du dossier sélectionné.
     SettingsArm,
+    /// Carré sur un dossier de sortie : retire la clé de `recorder.conf`
+    /// (retour au défaut du démon et de `screenshot.sh`).
+    SettingsDefault(&'static str),
     /// Navigateur de dossiers : navigation, choix, remontée.
     BrowserNav(i32),
     BrowserAct,
@@ -778,6 +782,12 @@ fn ecran_ecrit(index: usize) -> Result<(), String> {
     }
 }
 
+/// Programme qui ouvre le clavier virtuel de l'overlay manette. Surchargeable
+/// pour le banc (`GLAUNCHER_KBD_CMD`).
+fn clavier_helper() -> String {
+    std::env::var("GLAUNCHER_KBD_CMD").unwrap_or_else(|_| "gpad-clavier".to_string())
+}
+
 /// Page « Réglages » du launcher (hors jeu) : la liste des dossiers de jeux.
 ///
 /// Le retrait est **armé** avant d'agir : retirer `~/Games` de la liste n'est
@@ -794,8 +804,22 @@ struct Settings {
     confirm: Option<usize>,
     /// Navigateur de dossiers ouvert par-dessus la liste.
     browser: Option<Browser>,
+    /// Dossier des enregistrements et des replays (`None` = défaut du démon).
+    captures: Option<String>,
+    /// Dossier des captures d'écran (`None` = défaut de `screenshot.sh`).
+    shots: Option<String>,
     /// Écran du jeu (index dans `ECRANS`), dernière ligne de la liste.
     ecran: usize,
+}
+
+/// Ce que le navigateur de dossiers choisit : un dossier de jeux (ajout à la
+/// liste) ou un dossier de sortie (une seule valeur, écrite dans
+/// `recorder.conf`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Choix {
+    Jeux,
+    Captures,
+    Shots,
 }
 
 /// Navigateur de dossiers à la manette : ligne 0 = « choisir ce dossier »,
@@ -805,6 +829,8 @@ struct Browser {
     chemin: PathBuf,
     entrees: Vec<folders::Dossier>,
     selected: usize,
+    /// Ce que la Croix fait en validant ce dossier.
+    choix: Choix,
 }
 
 impl Settings {
@@ -814,18 +840,42 @@ impl Settings {
             selected: 0,
             confirm: None,
             browser: None,
+            captures: recorder::dossier(recorder::CLE_CAPTURES),
+            shots: recorder::dossier(recorder::CLE_SHOTS),
             ecran: ecran_lu(),
         }
     }
 
-    /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
-    fn ligne_ecran(&self) -> usize {
+    /// Ligne du dossier des enregistrements (après « ajouter » et les jeux).
+    fn ligne_captures(&self) -> usize {
         self.dossiers.len() + 1
     }
 
-    /// Nombre de lignes de la liste (« ajouter », les dossiers, l'écran).
-    fn lignes(&self) -> usize {
+    /// Ligne du dossier des captures d'écran.
+    fn ligne_shots(&self) -> usize {
         self.dossiers.len() + 2
+    }
+
+    /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
+    fn ligne_ecran(&self) -> usize {
+        self.dossiers.len() + 3
+    }
+
+    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
+    /// dossiers de sortie, l'écran).
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 4
+    }
+
+    /// Clé de `recorder.conf` d'une ligne de sortie, si c'en est une.
+    fn cle_sortie(&self, ligne: usize) -> Option<&'static str> {
+        if ligne == self.ligne_captures() {
+            Some(recorder::CLE_CAPTURES)
+        } else if ligne == self.ligne_shots() {
+            Some(recorder::CLE_SHOTS)
+        } else {
+            None
+        }
     }
 }
 
@@ -1376,6 +1426,27 @@ impl App {
             .or_else(|| self.games.get(self.selected).map(|game| game.slug.clone()))
     }
 
+    /// Session console : ouvre le clavier virtuel de l'overlay, qui frappe par
+    /// uinput dans la fenêtre active (le prompt garde le focus clavier). Au
+    /// bureau, il y a un vrai clavier : rien à faire.
+    fn clavier_console(&mut self) {
+        if !self.mode.is_console() {
+            return;
+        }
+        let helper = clavier_helper();
+        match std::process::Command::new(&helper)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => println!("glauncher : clavier virtuel ouvert ({helper})"),
+            Err(err) => {
+                self.status = Some((format!("clavier virtuel indisponible ({err})"), true))
+            }
+        }
+    }
+
     /// Nom et id SteamGridDB d'un jeu : l'identification partagée fait foi,
     /// sinon le nom du paquet (comportement historique).
     fn who(&self, slug: &str, name: &str) -> (String, Option<u64>) {
@@ -1811,6 +1882,9 @@ impl App {
                 self.identify = Some(name);
                 // le menu des visuels laisse la place au prompt
                 self.art_menu = None;
+                // session console : aucun clavier physique, le prompt ouvre
+                // celui de l'overlay (frappe uinput dans la fenêtre active)
+                self.clavier_console();
                 // présélection : taper remplace directement le nom proposé
                 Task::batch([
                     operation::focus(self.input_id.clone()),
@@ -1937,6 +2011,7 @@ impl App {
                         .unwrap_or_default(),
                 );
                 self.art_menu = None;
+                self.clavier_console();
                 Task::batch([
                     operation::focus(self.input_id.clone()),
                     operation::select_all(self.input_id.clone()),
@@ -2083,6 +2158,13 @@ impl App {
                 Task::none()
             }
             Message::PickerFile => {
+                // session console : le sélecteur de fichiers du bureau
+                // (kdialog/zenity) n'existe pas, et une image perso se choisit
+                // hors jeu (Plasma). Aucune entrée ne mène ici, c'est une
+                // ceinture en plus — le clavier virtuel pourrait taper « f ».
+                if self.mode.is_console() {
+                    return Task::none();
+                }
                 let Some(picker) = self.picker.as_ref() else {
                     return Task::none();
                 };
@@ -2654,14 +2736,50 @@ impl App {
                 Task::none()
             }
             Message::SettingsArm => {
+                // dossier de sortie : Carré remet le défaut (la clé disparaît,
+                // le démon et le script reprennent leur chemin habituel)
+                let sortie = self.settings.as_ref().and_then(|settings| {
+                    settings
+                        .browser
+                        .is_none()
+                        .then(|| settings.cle_sortie(settings.selected))
+                        .flatten()
+                });
+                if let Some(cle) = sortie {
+                    return Task::done(Message::SettingsDefault(cle));
+                }
                 if let Some(settings) = self.settings.as_mut()
                     && settings.browser.is_none()
                     // seules les lignes de dossier se retirent : ni « ajouter »,
-                    // ni la préférence d'écran
+                    // ni les dossiers de sortie, ni la préférence d'écran
                     && settings.selected > 0
                     && settings.selected <= settings.dossiers.len()
                 {
                     settings.confirm = Some(settings.selected - 1);
+                }
+                Task::none()
+            }
+            Message::SettingsDefault(cle) => {
+                let Some(settings) = self.settings.as_mut() else {
+                    return Task::none();
+                };
+                match recorder::definir(cle, None) {
+                    Ok(()) => {
+                        if cle == recorder::CLE_CAPTURES {
+                            settings.captures = None;
+                        } else {
+                            settings.shots = None;
+                        }
+                        let quoi = if cle == recorder::CLE_CAPTURES {
+                            "enregistrements"
+                        } else {
+                            "captures d'écran"
+                        };
+                        self.status = Some((format!("{quoi} : dossier par défaut"), false));
+                    }
+                    Err(err) => {
+                        self.status = Some((format!("écriture impossible ({err})"), true));
+                    }
                 }
                 Task::none()
             }
@@ -2685,6 +2803,38 @@ impl App {
                 if settings.selected == settings.ligne_ecran() {
                     return Task::none();
                 }
+                // dossier de sortie : naviguer à partir du dossier courant
+                if let Some(cle) = settings.cle_sortie(settings.selected) {
+                    let courant = if cle == recorder::CLE_CAPTURES {
+                        settings.captures.clone()
+                    } else {
+                        settings.shots.clone()
+                    };
+                    let defaut = if cle == recorder::CLE_CAPTURES {
+                        recorder::defaut_captures()
+                    } else {
+                        recorder::defaut_shots()
+                    };
+                    let depart = courant
+                        .map(PathBuf::from)
+                        .filter(|chemin| chemin.is_dir())
+                        .or_else(|| {
+                            let defaut = PathBuf::from(&defaut);
+                            defaut.is_dir().then_some(defaut)
+                        })
+                        .unwrap_or_else(|| {
+                            std::env::var_os("HOME")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| PathBuf::from("/"))
+                        });
+                    let choix = if cle == recorder::CLE_CAPTURES {
+                        Choix::Captures
+                    } else {
+                        Choix::Shots
+                    };
+                    self.ouvrir_navigateur(depart, choix);
+                    return Task::none();
+                }
                 let cible = if settings.selected == 0 {
                     std::env::var_os("HOME")
                         .map(PathBuf::from)
@@ -2695,7 +2845,7 @@ impl App {
                     };
                     folders::resolu(Path::new(dossier))
                 };
-                self.ouvrir_navigateur(cible);
+                self.ouvrir_navigateur(cible, Choix::Jeux);
                 Task::none()
             }
             Message::SettingsChanged(message) => self.persist_dirs(message),
@@ -2737,6 +2887,41 @@ impl App {
                 let Some(settings) = self.settings.as_mut() else {
                     return Task::none();
                 };
+                let choix = settings
+                    .browser
+                    .as_ref()
+                    .map(|browser| browser.choix)
+                    .unwrap_or(Choix::Jeux);
+                if choix != Choix::Jeux {
+                    let (cle, quoi, ligne) = if choix == Choix::Captures {
+                        (
+                            recorder::CLE_CAPTURES,
+                            "enregistrements",
+                            settings.ligne_captures(),
+                        )
+                    } else {
+                        (recorder::CLE_SHOTS, "captures d'écran", settings.ligne_shots())
+                    };
+                    let valeur = chemin.display().to_string();
+                    return match recorder::definir(cle, Some(&valeur)) {
+                        Ok(()) => {
+                            if choix == Choix::Captures {
+                                settings.captures = Some(valeur.clone());
+                            } else {
+                                settings.shots = Some(valeur.clone());
+                            }
+                            settings.browser = None;
+                            settings.selected = ligne;
+                            self.status =
+                                Some((format!("{quoi} : {}", folders::affiche(&chemin)), false));
+                            Task::none()
+                        }
+                        Err(err) => {
+                            self.status = Some((format!("écriture impossible ({err})"), true));
+                            Task::none()
+                        }
+                    };
+                }
                 match folders::ajouter(&mut settings.dossiers, &chemin) {
                     Ok(()) => {
                         settings.browser = None;
@@ -3332,13 +3517,14 @@ impl App {
     }
 
     /// (Re)monte le navigateur sur `chemin`, ligne 0 sélectionnée.
-    fn ouvrir_navigateur(&mut self, chemin: PathBuf) {
+    fn ouvrir_navigateur(&mut self, chemin: PathBuf, choix: Choix) {
         let entrees = folders::lister(&chemin);
         if let Some(settings) = self.settings.as_mut() {
             settings.browser = Some(Browser {
                 chemin,
                 entrees,
                 selected: 0,
+                choix,
             });
             settings.confirm = None;
         }
@@ -5114,6 +5300,54 @@ impl App {
         let mut rows = Column::new().spacing(4);
         for index in top..fin {
             let selected = index == settings.selected;
+            // dossiers de sortie : chemin courant (ou « défaut ») à droite
+            if let Some(cle) = settings.cle_sortie(index) {
+                let (label, courant, defaut) = if cle == recorder::CLE_CAPTURES {
+                    (
+                        "Dossier des enregistrements",
+                        settings.captures.clone(),
+                        recorder::defaut_captures(),
+                    )
+                } else {
+                    (
+                        "Dossier des captures d'écran",
+                        settings.shots.clone(),
+                        recorder::defaut_shots(),
+                    )
+                };
+                let (chemin, est_defaut) = recorder::affichage(courant, defaut);
+                let affiche = folders::affiche(std::path::Path::new(&chemin));
+                let valeur = if est_defaut {
+                    format!("défaut · {affiche}")
+                } else {
+                    affiche
+                };
+                let ligne = container(
+                    row![
+                        text(label)
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(valeur).size(14).color(if selected {
+                            Color::BLACK
+                        } else if est_defaut {
+                            MUTED
+                        } else {
+                            ACCENT
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(mouse_area(ligne).on_press(if selected {
+                    Message::SettingsAct
+                } else {
+                    Message::Nothing
+                }));
+                continue;
+            }
             // dernière ligne : l'écran du jeu (gauche/droite), pas un dossier
             if index == settings.ligne_ecran() {
                 let (_, libelle) = ECRANS[settings.ecran];
@@ -5189,6 +5423,15 @@ impl App {
                     .get(index)
                     .map(|dossier| folders::affiche(Path::new(dossier)))
                     .unwrap_or_default()
+            )
+        } else if let Some(cle) = settings.cle_sortie(settings.selected) {
+            let (quoi, defaut) = if cle == recorder::CLE_CAPTURES {
+                ("enregistrements et replays", recorder::defaut_captures())
+            } else {
+                ("captures d'écran", recorder::defaut_shots())
+            };
+            format!(
+                "Croix = choisir le dossier des {quoi} · Carré = revenir au défaut ({defaut})"
             )
         } else if settings.selected == settings.ligne_ecran() {
             "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
@@ -5290,10 +5533,15 @@ impl App {
             }));
         }
 
+        let quoi = match browser.choix {
+            Choix::Jeux => "Dossiers de jeux",
+            Choix::Captures => "Dossier des enregistrements et replays",
+            Choix::Shots => "Dossier des captures d'écran",
+        };
         let panel = container(
             column![
                 text("Choisir un dossier").size(26).color(TEXT),
-                text("Dossiers de jeux").size(13).color(MUTED),
+                text(quoi).size(13).color(MUTED),
                 text(folders::affiche(&browser.chemin))
                     .size(15)
                     .color(ACCENT),
@@ -5742,6 +5990,13 @@ impl App {
             .spacing(18)
             .align_y(Alignment::Center)
             .into()
+        } else if self.mode.is_console() {
+            // session console : aucun sélecteur de fichiers (pas de kdialog
+            // ni de zenity), donc aucune touche à proposer pour ça
+            text("Entrée : utiliser cette image   ·   Échap : annuler")
+                .size(14)
+                .color(MUTED)
+                .into()
         } else {
             text("Entrée : utiliser cette image   ·   F : choisir un fichier   ·   Échap : annuler")
                 .size(14)
@@ -5753,26 +6008,35 @@ impl App {
         // recherché, puis choix dans la liste), ce qui vaut pour tous les types.
         // « Choisir un fichier… » prend une image perso à la place (adaptée au
         // ratio du type par le worker) : rien n'oblige à passer par SGDB.
-        let barre = row![
-            text(format!("Recherche : « {} »", picker.query))
-                .size(14)
-                .color(MUTED)
-                .width(Fill),
-            mouse_area(
-                container(text("Identifier le jeu").size(14).color(TEXT))
-                    .padding([5.0, 12.0])
-                    .style(|_| action_style(false)),
+        let mut barre = Row::new()
+            .push(
+                text(format!("Recherche : « {} »", picker.query))
+                    .size(14)
+                    .color(MUTED)
+                    .width(Fill),
             )
-            .on_press(Message::IdentifyOpen),
-            mouse_area(
-                container(text("Choisir un fichier…").size(14).color(TEXT))
-                    .padding([5.0, 12.0])
-                    .style(|_| action_style(false)),
+            .push(
+                mouse_area(
+                    container(text("Identifier le jeu").size(14).color(TEXT))
+                        .padding([5.0, 12.0])
+                        .style(|_| action_style(false)),
+                )
+                .on_press(Message::IdentifyOpen),
             )
-            .on_press(Message::PickerFile),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center);
+            .spacing(10)
+            .align_y(Alignment::Center);
+        // session console : pas de sélecteur de fichiers, donc pas de bouton
+        // « Choisir un fichier… » (une image perso se choisit sous Plasma)
+        if !self.mode.is_console() {
+            barre = barre.push(
+                mouse_area(
+                    container(text("Choisir un fichier…").size(14).color(TEXT))
+                        .padding([5.0, 12.0])
+                        .style(|_| action_style(false)),
+                )
+                .on_press(Message::PickerFile),
+            );
+        }
 
         let panel = container(
             column![

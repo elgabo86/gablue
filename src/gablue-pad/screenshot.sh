@@ -16,7 +16,16 @@
 set -uo pipefail
 
 HERE="$(dirname "$(readlink -f "$0")")"
-DIR=${SCREENSHOT_DIR:-$HOME/Images/Screenshots}
+
+# Dossier des captures : même fichier que l'enregistreur et Gablue Manager
+# (`dossier_screenshot`, réglé depuis les Réglages du launcher). Clé absente =
+# défaut ci-dessous ; `SCREENSHOT_DIR` reste prioritaire (bancs et grec).
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/gablue/recorder.conf"
+dir_conf=""
+[[ -f "$conf" ]] && dir_conf=$(sed -n 's/^dossier_screenshot=//p' "$conf" | tail -1)
+# le fichier est écrit par plusieurs outils : un `~` littéral est développé ici
+[[ "$dir_conf" == "~"* ]] && dir_conf="$HOME${dir_conf#\~}"
+DIR=${SCREENSHOT_DIR:-${dir_conf:-$HOME/Images/Screenshots}}
 f="$DIR/screenshot_$(date +%Y%m%d_%H%M%S).png"
 
 mkdir -p "$DIR"

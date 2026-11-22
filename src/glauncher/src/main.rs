@@ -18,6 +18,7 @@ mod mode;
 mod music;
 mod playtime;
 mod pose;
+mod recorder;
 mod sparkles;
 mod spinner;
 mod state;

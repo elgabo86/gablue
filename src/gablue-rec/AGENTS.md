@@ -287,7 +287,7 @@ Les variables d'environnement (`RECORD_DIR`, `RECORD_RES`, `RECORD_FPS`,
 | `resolution` | `source` | `source` (natif, barème sur la taille réelle), ou une taille en `LxH` : `1280x720`, `1920x1080`, `2560x1440` |
 | `audio` | `default_output` | `default_output` ou `none` |
 | `auto_replay` | `0` | `1` = replay automatique dès qu'un `.lgp`/`.wgp` tourne |
-| `dossier` | `~/Vidéos/Captures` | sortie des fichiers |
+| `dossier` | `~/Vidéos/Captures` | sortie des fichiers ; **vide = défaut** (un outil qui « remet par défaut » retire juste la valeur) |
 
 Niveaux de qualité — base **1080p60 en H.264** (le cas par défaut), puis
 `× pixels/1080p × fps/60`, le HEVC retirant 28 % :

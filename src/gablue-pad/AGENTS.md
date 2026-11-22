@@ -29,6 +29,7 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
 | `shot/` | capture d'écran par appel direct à KWin (`ScreenShot2`, sans pointeur, ~40 ms) | `/usr/bin/gpad-shot` |
+| `clavier/` | `gpad-clavier` : ouvre le clavier virtuel du **résident** à la demande (le prompt d'identification du launcher n'a pas de clavier en session console) | `/usr/bin/gpad-clavier` |
 | `kwin/` | scripts KWin poussés à chaud (`wininfo.js`, `lister.js`, `fullscreen.js` ; le cyclage L2/R2 est **généré**) | `/usr/libexec/gablue-pad/kwin` |
 | `scripts/` | lancements du menu Applications (`toggle-glauncher`, `toggle-es`, `toggle-yt`, `toggle-tv`, `toggle-jellyfin`) + `fermer-applis`, `openes` | `/usr/libexec/gablue-pad/scripts` |
 | `sounds/` | `beep.wav` (départ enregistrement/replay, **sauté** avec `GPAD_SANS_BIP=1` : `grec`, `.desktop`, replay automatique), `shot.wav` (capture), `clic.wav`/`noclic.wav` (mode souris) | idem |
@@ -179,6 +180,19 @@ dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
   position quand ça dépasse (~sous 1200 px de haut, vu avec
   `GPAD_TEST_BUDGET`). La sélection reste visible en défilant.
 
+## Clavier virtuel à la demande (`gpad-clavier`)
+
+Le lanceur de jeux demande parfois une saisie (nom du jeu chez SteamGridDB,
+date de sortie) ; en session console il n'y a pas de clavier physique. Le
+launcher lance `gpad-clavier`, qui **n'ouvre pas un second overlay** : il envoie
+`kbd <node>` au résident déjà lancé par `gpad-trigger` (socket
+`$XDG_RUNTIME_DIR/gablue/gpad-<pid>.sock`, le plus récent). Le clavier tape par
+uinput dans la fenêtre qui a le focus — donc dans le champ de saisie. Node
+trouvé comme `padnodes.sh` (bloc de `/proc/bus/input/devices` avec un handler
+`jsN`), `PAD_NODE` prioritaire. Aucun socket (service arrêté) : repli
+`gpad --clavier <node>` du déclencheur. `connect` borné à 500 ms, comme le
+déclencheur : un résident bloqué ne fige pas le launcher.
+
 ## Capture d'écran (`gpad-shot`)
 
 Home + droite → `screenshot.sh` → `gpad-shot` : appel direct à
@@ -207,6 +221,10 @@ unité systemd + deflate plus coûteux). Aucun paquet nouveau au runtime :
   disparue) → `spectacle -f -b -n -o`, vérifié au banc avec
   `GPAD_SHOT=/bin/false`. `GPAD_SHOT` est exporté par l'unité, prioritaire ;
   au banc le binaire est trouvé à côté du script.
+- **Dossier de sortie** : `dossier_screenshot` de
+  `~/.config/gablue/recorder.conf` (même fichier que l'enregistreur),
+  réglable depuis les Réglages du launcher et Gablue Manager ; clé absente ou
+  vide = `~/Images/Screenshots`. `SCREENSHOT_DIR` reste prioritaire (bancs).
 
 Trois pièges payés, à ne pas réintroduire :
 
