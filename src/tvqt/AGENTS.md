@@ -24,7 +24,7 @@ Sources = ce dossier (`src/tvqt/`), installées par
 | `gablue_tv/guide.py` | `GuideMixin` + `_GuideContent` : lignes virtualisées, blocs programme, navigation |
 | `gablue_tv/epgview.py` | `EpgViewMixin` : téléchargement/cache/thread de parsing, titres « en cours », tick 30 s |
 | `gablue_tv/logos.py` | `LogosMixin` : cache disque + mémoire, téléchargement dédupliqué |
-| `gablue_tv/video.py` | `VideoMixin` : lecture, overlay de chargement, inhibition de veille, curseur |
+| `gablue_tv/video.py` | `VideoMixin` : lecture, overlay de chargement, inhibition veille/verrouillage, curseur |
 | `gablue_tv/input.py` | `InputMixin` : evdev multi-manettes, accélération D-pad, actions |
 | `gablue_tv/window.py` | `TVWindow` = mixins + `QMainWindow` : `__init__`, interface, vues, focus, clavier, fermeture |
 
@@ -73,6 +73,20 @@ signal `_epg_ready` (reçu en `QueuedConnection` depuis le thread de parsing).
   `llvmpipe`) : virgl fuit les descripteurs de fences en rendu GL soutenu et
   casse le contexte au bout de ~15 s ; les variables sont posées à l'import de
   `mpv.py`, avant tout contexte GL.
+- **Veille et verrouillage** (`video.py`, 11/2026) : inhibitions tenues
+  pendant TOUTE la vie de l'appli (pas seulement en lecture) — logind
+  `Inhibit("idle:sleep")` sur le bus système, fd gardé ouvert (PowerDevil lit
+  `ListInhibitors` et retire ses actions : ni veille ni extinction d'écran
+  automatiques) + kwin `org.freedesktop.ScreenSaver.Inhibit` (`KSldApp::inhibit`
+  → pas de verrouillage de session). Libération à la fermeture : fd relâché et
+  connexion D-Bus dédiée `gablue-tv-inhibit` coupée (kwin rend les cookies d'un
+  client déconnecté, comme à la mort du process). **PySide6 n'émet pas de `u`
+  D-Bus** : `UnInhibit`/`ReleaseInhibition` répondent « signature 'i' » → ne pas
+  revenir aux cookies pour libérer, ni à
+  `org.freedesktop.PowerManagement.Inhibit` (son `UnInhibit` est inutilisable
+  et kwin 6.8.3 n'ajoute pas d'inhibition PowerDevil via ScreenSaver.Inhibit,
+  contrairement au master — constaté PySide6 6.11.2 / Plasma 6.8.3,
+  22/11/2026, revérifier avant de simplifier).
 - **Guide TV — données** (`epg.py`/`epgview.py`, 10/2026) : source xmltvfr.fr
   (`xmltv.xml.gz` ~150 Mo décompressés) parse SAX streaming ~2 s, thread +
   signal `_epg_ready` (jamais de parse sur le thread GUI). Mapping **statique
@@ -140,3 +154,7 @@ EOF
 
 Aucun affichage, aucune manette requise (0 manette = OSD masqué). Vérifier
 aussi `src/tvqt/tvqt` depuis le dépôt (résolution du `sys.path`).
+
+Inhibitions : `w._inhibit_logind_fd is not None` et `w._inhibit_locker` vrai à
+l'ouverture ; `systemd-inhibit --list` montre « Gablue TV … sleep:idle » pendant
+et plus rien après `w.close()` (même chose si le process est tué).

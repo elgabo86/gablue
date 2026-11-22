@@ -97,8 +97,9 @@ class TVWindow(
         self._hold_start = 0.0         # timestamp ms début du maintien
         self._last_repeat = 0.0        # timestamp ms dernière répétition auto
 
-        # --- Inhibition veille écran (portail freedesktop, D-Bus) ---
-        self._inhibit_handle = None
+        # --- Inhibition veille / verrouillage (D-Bus), tenue appli ouverte ---
+        self._inhibit_logind_fd = None   # fd logind (idle:sleep)
+        self._inhibit_locker = False     # verrouillage inhibé (kwin ScreenSaver)
 
         # --- Guide TV (EPG) ---
         self._epg = {}              # app_id -> [(start, stop, titre, catégorie)] triée
@@ -137,6 +138,9 @@ class TVWindow(
 
         self._load_anim = QTimer(self)
         self._load_anim.timeout.connect(self._animate_loading)
+
+        # --- TV allumée : ni veille ni verrouillage tant que l'appli tourne ---
+        self._inhibit_screensaver()
 
     # =========================================================================
     # PERSISTANCE
@@ -539,6 +543,7 @@ class TVWindow(
     def closeEvent(self, event):
         """Nettoie les ressources."""
         self._stop_video()
+        self._uninhibit_screensaver()
         self._pad_timer.stop()
         self._load_anim.stop()
         self._epg_clock.stop()
