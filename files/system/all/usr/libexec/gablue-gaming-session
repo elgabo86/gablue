@@ -54,8 +54,38 @@ else
     log "qdbus absent : curseur non masqué au repos"
 fi
 
+# Overlay manette : `gablue-pad.service` est `WantedBy=graphical-session.target`,
+# cible que Plasma démarre et qu'une session KWin nue NE démarre pas. Sans ce
+# bloc il n'y a AUCUNE manette dans la session : pas de menu Home, donc aucune
+# sortie propre (le launcher n'en expose pas en console) — seul un autre VT
+# resterait. On démarre donc l'unité explicitement, avec DEUX précautions :
+#
+#  - un socket Wayland au nom fixe (`--socket`), pour que l'unité sache à quel
+#    compositeur se connecter — sinon KWin choisit wayland-0/1 et le service
+#    hérite d'un `WAYLAND_DISPLAY` absent (il ne tourne pas dans notre arbre) ;
+#  - l'environnement copié dans le gestionnaire utilisateur
+#    (`set-environment`), parce qu'une unité n'hérite pas du shell : c'est le
+#    seul moyen de lui donner le socket et l'identité de session.
+GABLUE_SOCKET=${GABLUE_SOCKET:-gablue-gaming}
+export WAYLAND_DISPLAY="$GABLUE_SOCKET"
+systemctl --user set-environment \
+    WAYLAND_DISPLAY="$GABLUE_SOCKET" \
+    XDG_CURRENT_DESKTOP="$XDG_CURRENT_DESKTOP" \
+    XDG_SESSION_DESKTOP="$XDG_SESSION_DESKTOP" \
+    XDG_SESSION_TYPE="$XDG_SESSION_TYPE" 2>/dev/null \
+    || log "environnement de session non transmis au gestionnaire utilisateur"
+(
+    # KWin crée le socket en ~1 s ; 30 s au plus avant d'abandonner
+    for _ in $(seq 1 150); do
+        [ -S "$XDG_RUNTIME_DIR/$GABLUE_SOCKET" ] && break
+        sleep 0.2
+    done
+    systemctl --user start gablue-pad.service 2>/dev/null \
+        || log "overlay manette indisponible (aucun menu manette dans la session)"
+) &
+
 # KWin seul, en DRM, avec XWayland (beaucoup de jeux .wgp/.lgp en dépendent).
 # --exit-with-session : la session meurt avec le launcher, aucun compositeur
 # orphelin laissé devant un écran noir.
-exec kwin_wayland --drm --xwayland \
+exec kwin_wayland --drm --xwayland --socket "$GABLUE_SOCKET" \
     --exit-with-session /usr/libexec/gablue-gaming-launcher

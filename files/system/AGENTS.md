@@ -52,9 +52,17 @@
   (`loadEffect` par D-Bus, jamais d'écriture dans `kwinrc`) pour que le
   pointeur disparaisse au repos, y compris par-dessus un jeu — c'est le
   compositeur qui tient le curseur, pas le launcher (qui masque le sien depuis
-  `src/cursor.rs`). Il `exec` ensuite KWin avec
-  `--exit-with-session /usr/libexec/gablue-gaming-launcher`. Jamais `set -e` :
-  un service absent n'est pas une panne de session.
+  `src/cursor.rs`). Il démarre aussi **`gablue-pad.service`** — l'overlay
+  manette est `WantedBy=graphical-session.target`, cible que Plasma démarre et
+  qu'une session KWin nue ne démarre PAS : sans ça, aucune manette, donc aucun
+  menu Home et **aucune sortie propre** de la session. Deux précautions : KWin
+  reçoit un **socket au nom fixe** (`--socket gablue-gaming`) et
+  l'environnement (`WAYLAND_DISPLAY`, `XDG_*`) est copié dans le gestionnaire
+  utilisateur par `systemctl --user set-environment`, sinon l'unité se
+  connecterait à un compositeur inexistant (elle n'hérite pas du shell). Le
+  démarrage de l'unité attend le socket (30 s au plus, en fond). Il `exec`
+  ensuite KWin avec `--exit-with-session /usr/libexec/gablue-gaming-launcher`.
+  Jamais `set -e` : un service absent n'est pas une panne de session.
 - **gablue-gaming-removable** : monte les **disques externes** de la session
   console. Sur le bureau c'est le service KDED `solid_device_automounter` de
   Plasma qui s'en charge ; sans plasmashell, rien ne les montait. Balayage
