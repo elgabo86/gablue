@@ -968,6 +968,9 @@ impl Cat {
             }
             Cat::Systeme => vec![
                 Entree::Fenetre,
+                // la veille est la seule action RÉVERSIBLE de la page : elle
+                // passe avant les sorties (demandé le 23/11)
+                Entree::Action("MISE EN VEILLE"),
                 Entree::Action("FERMER LA SESSION"),
                 Entree::Action("REDEMARRER"),
                 Entree::Action("ETEINDRE"),
@@ -1132,6 +1135,8 @@ enum Apres {
     /// menu console : redémarrer / éteindre (le panneau doit avoir disparu)
     Reboot,
     Eteindre,
+    /// menu console : mise en veille (systemctl suspend), après fermeture
+    Veille,
     /// menu console : déconnexion de la session (retour à l'écran de connexion)
     DeconnecterSession,
     /// menu console : killthemall, après fermeture du menu
@@ -1629,8 +1634,9 @@ fn descendants(racine: i32) -> Vec<i32> {
     out
 }
 
-/// `systemctl <action>` (redémarrer / éteindre). `REBOOT`/`POWEROFF` permettent
-/// de remplacer la commande : le banc ne doit JAMAIS éteindre la machine.
+/// `systemctl <action>` (redémarrer / éteindre / mettre en veille).
+/// `REBOOT`/`POWEROFF`/`SUSPEND` permettent de remplacer la commande : le banc
+/// ne doit JAMAIS éteindre ni endormir la machine.
 fn lancer_systeme(var: &str, action: &str) {
     let prog = std::env::var(var).unwrap_or_else(|_| "/usr/bin/systemctl".to_string());
     let mut c = std::process::Command::new(&prog);
@@ -2212,6 +2218,7 @@ impl App {
                         // jamais posés par un combo (menu console seulement)
                         Apres::Reboot => "COMBO: REBOOT",
                         Apres::Eteindre => "COMBO: EXTINCTION",
+                        Apres::Veille => "COMBO: VEILLE",
                         Apres::DeconnecterSession => "COMBO: DECONNEXION",
                         Apres::ToutFermer => "COMBO: TOUT FERMER",
                     }
@@ -3959,6 +3966,12 @@ impl App {
                     println!("CONSOLE reboot");
                     self.request_close();
                 }
+                "MISE EN VEILLE" => {
+                    self.status = "VEILLE".to_string();
+                    self.combo_apres = Some(Apres::Veille);
+                    println!("CONSOLE suspend");
+                    self.request_close();
+                }
                 "ETEINDRE" => {
                     self.status = "EXTINCTION".to_string();
                     self.combo_apres = Some(Apres::Eteindre);
@@ -4394,6 +4407,7 @@ impl App {
             }
             Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
             Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
+            Apres::Veille => lancer_systeme("SUSPEND", "suspend"),
             Apres::DeconnecterSession => lancer_deconnexion(),
             Apres::ToutFermer => {
                 // jeux Windows/émulateurs (killthemall) PUIS les applis du
@@ -7518,8 +7532,13 @@ fn main() {
     app.kwin_retry_at = Some(Instant::now() + Duration::from_secs(60));
 
     if app.console {
-        // menu système (`--console`) : que des actions irréversibles
-        let mut v = vec![Entree::Action("TOUT FERMER")];
+        // menu système (`--console`, touche Home) : la veille d'abord — c'est
+        // la seule action réversible — puis les sorties. Les jeux sont fermés
+        // avec « tout fermer » avant toute action système.
+        let mut v = vec![
+            Entree::Action("MISE EN VEILLE"),
+            Entree::Action("TOUT FERMER"),
+        ];
         if app.pad_bt.is_some() {
             v.push(Entree::Action("DECONNECTER LA MANETTE"));
         }
@@ -8378,6 +8397,13 @@ mod tests {
         };
         assert!(!sauvable(false), "pas de ligne morte au repos");
         assert!(sauvable(true));
+
+        // la veille est proposée en tête du menu système : seule action
+        // réversible de la page (demandé le 23/11)
+        // (la ligne 0 est l'en-tête de fenêtre, commune à toutes les pages)
+        let systeme = Cat::Systeme.entrees(Dispo::default());
+        assert_eq!(systeme.get(1), Some(&Entree::Action("MISE EN VEILLE")));
+        assert!(systeme.contains(&Entree::Action("ETEINDRE")));
 
         let deconnectable = |pad| {
             Cat::Manette

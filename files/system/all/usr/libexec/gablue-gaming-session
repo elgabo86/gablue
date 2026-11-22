@@ -54,6 +54,22 @@ else
     log "qdbus absent : curseur non masqué au repos"
 fi
 
+# Veille : en session console, elle est DÉSACTIVÉE dans tous les cas (demandé
+# le 23/11) — on n'est pas devant un bureau, une console ne s'endort pas au
+# milieu d'un film. Deux inhibiteurs complémentaires, tenus tant que la session
+# vit (ils meurent avec elle) :
+#  - logind `idle` + `handle-lid-switch` : aucune action d'inactivité, aucun
+#    endormissement à la fermeture du capot ;
+#  - `org.freedesktop.ScreenSaver` (le mécanisme que PowerDevil et KWin
+#    écoutent, déjà utilisé par `gpad-inhibit` pour les manettes) : ni
+#    extinction d'écran, ni verrouillage, ni veille automatique.
+# On n'inhibe PAS `sleep` : l'entrée « MISE EN VEILLE » du menu Home doit
+# rester possible (un blocage `sleep` ferait refuser `systemctl suspend`).
+systemd-inhibit --what=idle:handle-lid-switch --mode=block \
+    --who=gablue-gaming --why="Session console : pas de veille" \
+    sleep infinity >/dev/null 2>&1 &
+GPAD_INHIBIT_TOUJOURS=1 /usr/bin/gpad-inhibit >/dev/null 2>&1 &
+
 # Overlay manette : `gablue-pad.service` est `WantedBy=graphical-session.target`,
 # cible que Plasma démarre et qu'une session KWin nue NE démarre pas. Sans ce
 # bloc il n'y a AUCUNE manette dans la session : pas de menu Home, donc aucune

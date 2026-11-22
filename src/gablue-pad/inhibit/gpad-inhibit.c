@@ -106,9 +106,16 @@ int main(void)
     printf("INHIBIT %u\n", cookie);
     fflush(stdout);
 
-    // tant que le tube reste ouvert, on tient l'inhibition
-    char buf[64];
-    while (!stop && read(STDIN_FILENO, buf, sizeof buf) > 0) {
+    // tant que le tube reste ouvert, on tient l'inhibition. En session
+    // console (`GPAD_INHIBIT_TOUJOURS=1`), il n'y a pas de manette à suivre :
+    // on tient jusqu'au SIGTERM, donc tant que la session vit.
+    if (getenv("GPAD_INHIBIT_TOUJOURS")) {
+        while (!stop)
+            pause();
+    } else {
+        char buf[64];
+        while (!stop && read(STDIN_FILENO, buf, sizeof buf) > 0) {
+        }
     }
 
     uninhibit();

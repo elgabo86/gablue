@@ -52,7 +52,13 @@
   (`loadEffect` par D-Bus, jamais d'écriture dans `kwinrc`) pour que le
   pointeur disparaisse au repos, y compris par-dessus un jeu — c'est le
   compositeur qui tient le curseur, pas le launcher (qui masque le sien depuis
-  `src/cursor.rs`). Il démarre aussi **`gablue-pad.service`** — l'overlay
+  `src/cursor.rs`). **La veille est désactivée dans tous les cas** (23/11/2026)
+  par deux inhibiteurs tenus tant que la session vit : logind
+  `idle:handle-lid-switch` (aucune action d'inactivité, rien à la fermeture du
+  capot) et `org.freedesktop.ScreenSaver` via `gpad-inhibit` en mode
+  `GPAD_INHIBIT_TOUJOURS=1` (ni extinction d'écran, ni verrouillage, ni veille
+  automatique côté PowerDevil). On n'inhibe **pas** `sleep` : l'entrée « MISE
+  EN VEILLE » du menu Home (`systemctl suspend`) doit rester possible. Il démarre aussi **`gablue-pad.service`** — l'overlay
   manette est `WantedBy=graphical-session.target`, cible que Plasma démarre et
   qu'une session KWin nue ne démarre PAS : sans ça, aucune manette, donc aucun
   menu Home et **aucune sortie propre** de la session. Deux précautions : KWin

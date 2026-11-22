@@ -26,7 +26,7 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `gate/` | démon root + programme BPF LSM qui coupe les lectures `hidraw`/`js` pendant le menu, et `padnodes.sh` (inventaire js/hidraw par périphérique physique) | `/usr/libexec/gablue-pad/gpad-gate` (+ `.bpf.o`, `gate/padnodes.sh`) |
 | `mouse/` | mode souris/clavier (Home+R3) | `/usr/bin/gpad-mouse` |
 | `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel ouvert **au premier mouvement** d'une manette, jamais à son simple branchement) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
-| `inhibit/` | inhibition de l'écran tant qu'une manette est connectée | `/usr/bin/gpad-inhibit` |
+| `inhibit/` | inhibition de l'écran tant qu'une manette est connectée ; en session console, tenue en permanence (`GPAD_INHIBIT_TOUJOURS=1`, lancée par `gablue-gaming-session`) | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
 | `shot/` | capture d'écran par appel direct à KWin (`ScreenShot2`, sans pointeur, ~40 ms) | `/usr/bin/gpad-shot` |
 | `clavier/` | `gpad-clavier` : ouvre le clavier virtuel du **résident** à la demande (le prompt d'identification du launcher n'a pas de clavier en session console) | `/usr/bin/gpad-clavier` |
