@@ -27,6 +27,7 @@ use crate::cursor;
 use crate::dialog;
 use crate::favorites;
 use crate::folders;
+use crate::gallery;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
 use crate::launch;
@@ -34,6 +35,7 @@ use crate::library::{self, ArtworkCache, Game};
 use crate::marquee;
 use crate::mode::Mode;
 use crate::music;
+use crate::play;
 use crate::playtime;
 use crate::pose::Pose;
 use crate::recorder;
@@ -517,6 +519,28 @@ pub enum Message {
     /// La liste des dossiers a changé : écriture de `config.toml`, rescan, et
     /// ce libellé dans le pied de page.
     SettingsChanged(String),
+    /// Galerie : ouvrir, fermer, naviguer, ouvrir l'élément sélectionné.
+    GalleryOpen,
+    GalleryClose,
+    GalleryNav(i32),
+    GalleryAct,
+    /// Clic sur une vignette : sélectionne, ou ouvre si déjà sélectionnée.
+    GalleryChoose(usize),
+    /// Carré : armer l'effacement (Croix confirme, Rond annule).
+    GalleryArm,
+    GalleryUnarm,
+    /// Une vignette de galerie est prête (ou absente).
+    GalleryThumb {
+        path: PathBuf,
+        bytes: Option<Vec<u8>>,
+    },
+    /// Horloge de la galerie : fin de lecture vidéo, fondu de l'aperçu.
+    GalleryTick,
+    /// La vidéo est terminée (ou tuée après le délai de grâce) : retour.
+    GalleryVideoEnd,
+    /// Aperçu plein écran d'une capture : précédent / suivant / fermer.
+    ApercuNav(i32),
+    ApercuClose,
     /// Un téléchargement commence (le worker de visuels réveille l'interface,
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
@@ -788,6 +812,26 @@ fn clavier_helper() -> String {
     std::env::var("GLAUNCHER_KBD_CMD").unwrap_or_else(|_| "gpad-clavier".to_string())
 }
 
+/// Galerie : captures d'écran, enregistrements et replays des deux dossiers de
+/// `recorder.conf`, la plus récente en tête. Les vignettes arrivent du worker
+/// de fond (`gallery::spawn`) et restent en mémoire pour la session.
+struct Galerie {
+    items: Vec<gallery::Item>,
+    selected: usize,
+    /// Effacement armé (index) : Croix efface, Rond ou un déplacement désarme.
+    arme: Option<usize>,
+    thumbs: std::collections::HashMap<PathBuf, Option<image::Handle>>,
+    /// Vignettes encore attendues (aucune roue pour ça : le compteur suffit).
+    restant: usize,
+}
+
+/// Capture d'écran ouverte en plein écran (animation d'entrée).
+struct Apercu {
+    index: usize,
+    /// Opacité d'entrée (0 → 1) : l'image monte en fondu et grossit un peu.
+    fade: f32,
+}
+
 /// Page « Réglages » du launcher (hors jeu) : la liste des dossiers de jeux.
 ///
 /// Le retrait est **armé** avant d'agir : retirer `~/Games` de la liste n'est
@@ -999,6 +1043,14 @@ pub struct App {
     to_launch: Option<(String, launch::Launch, std::time::Instant)>,
     /// Musique de fond (`music = false` dans la config, ou `mpv` absent : aucune).
     music: Option<music::Music>,
+    /// Galerie des captures et vidéos (ouvre le menu des vues si `None`).
+    galerie: Option<Galerie>,
+    /// Capture ouverte en plein écran (par-dessus la galerie).
+    apercu: Option<Apercu>,
+    /// Lecture vidéo en cours : `mpv` plein écran, piloté au pad.
+    lecteur: Option<play::Lecteur>,
+    /// Vidéo à lancer dès que le voile est noir (même mécanisme que le jeu).
+    a_lancer_video: Option<(PathBuf, String, std::time::Instant)>,
     /// Défilement animé vers la sélection.
     scroll_id: Id,
     scroll: f32,
@@ -1201,6 +1253,10 @@ impl App {
             returning: false,
             to_launch: None,
             music: None,
+            galerie: None,
+            apercu: None,
+            lecteur: None,
+            a_lancer_video: None,
             pending_slug: None,
             pending_key: None,
             zoom: None,
@@ -1258,6 +1314,9 @@ impl App {
         // pointeur : la relève existe toujours (fil endormi), elle ne réveille
         // l'UI que quand `subscription` l'arme
         cursor::spawn_ticker();
+        // galerie : minuteur de lecture vidéo et de fondu d'aperçu (dort au
+        // repos, la galerie fermée)
+        gallery::spawn_ticker();
         app.request_visible_covers();
         app.sweep_thumbs();
         app.sweep_icons();
@@ -1287,6 +1346,18 @@ impl App {
                 tasks.push(Task::done(Message::SettingsAct));
             }
             _ => {}
+        }
+        // crochet de banc : ouvre la galerie au démarrage, pour la
+        // photographier sans manette (dossiers lus dans recorder.conf)
+        if std::env::var_os("GLAUNCHER_GALLERY_DEMO").is_some() {
+            tasks.push(Task::done(Message::GalleryOpen));
+            // valeurs `apercu` / `video` : ouvre aussi l'élément du genre
+            if matches!(
+                std::env::var("GLAUNCHER_GALLERY_DEMO").as_deref(),
+                Ok("apercu") | Ok("video")
+            ) {
+                tasks.push(Task::done(Message::GalleryAct));
+            }
         }
         if std::env::var_os("GLAUNCHER_UPDATE_DEMO").is_some() {
             // crochet de banc : lance la mise à jour au démarrage (avec un
@@ -1348,6 +1419,10 @@ impl App {
         if animating {
             subscriptions.push(window::frames().map(|_| Message::Tick));
         }
+        // Galerie : une lecture vidéo tourne (il faut voir quand mpv sort) ou
+        // l'aperçu d'une capture monte en fondu. Minuteur à 8 Hz, comme la
+        // poussière et le pointeur : au repos, le fil dort.
+        gallery::set_ticking(self.lecteur.is_some() || self.apercu.is_some());
         Subscription::batch(subscriptions)
     }
 
@@ -1366,6 +1441,9 @@ impl App {
             || self.breath_pulses()
             // changement de taille : chaque vignette glisse vers sa place
             || self.zoom.is_some()
+            // aperçu d'une capture : entrée en fondu (pilotée par `tick`)
+            || self.apercu.as_ref().is_some_and(|apercu| apercu.fade < 1.0)
+            || self.a_lancer_video.is_some()
     }
 
     /// Téléchargements en cours (ou tout juste finis) : la roue de chargement
@@ -1424,6 +1502,39 @@ impl App {
             .map(|game| game.slug.clone())
             .or_else(|| self.picker.as_ref().map(|picker| picker.slug.clone()))
             .or_else(|| self.games.get(self.selected).map(|game| game.slug.clone()))
+    }
+
+    /// Nombre de colonnes de la galerie, calculé sur la largeur de la fenêtre
+    /// (mêmes marges que la page, tuiles de 240 px).
+    fn gallery_columns(&self) -> usize {
+        let utilisable = (self.viewport.0 - 120.0).max(240.0);
+        ((utilisable / 252.0).floor() as usize).clamp(2, 6)
+    }
+
+    /// Efface l'élément `index` de la galerie. Le fichier disparaît du disque :
+    /// l'action n'est atteignable qu'après un appui sur Carré puis la Croix,
+    /// et un déplacement désarme (on ne confirme que ce qu'on voit).
+    fn gallery_delete(&mut self, index: usize) {
+        let Some(galerie) = self.galerie.as_mut() else {
+            return;
+        };
+        let Some(item) = galerie.items.get(index).cloned() else {
+            return;
+        };
+        match std::fs::remove_file(&item.path) {
+            Ok(()) => {
+                galerie.items.remove(index);
+                galerie.thumbs.remove(&item.path);
+                galerie.selected = galerie.selected.min(galerie.items.len().saturating_sub(1));
+                self.status = Some((format!("{} effacé", item.nom()), false));
+                // la vignette en cache devient orpheline : elle est petite et
+                // rangée sous une clé (chemin + mtime), donc jamais réutilisée
+                println!("GALERIE efface {}", item.path.display());
+            }
+            Err(err) => {
+                self.status = Some((format!("effacement impossible ({err})"), true));
+            }
+        }
     }
 
     /// Session console : ouvre le clavier virtuel de l'overlay, qui frappe par
@@ -2079,6 +2190,208 @@ impl App {
                 });
                 Task::none()
             }
+            Message::GalleryOpen => {
+                let items = gallery::scanne();
+                let restant = items.len();
+                let cache = self.config.cache_dir().join("gallery");
+                let mut galerie = Galerie {
+                    items,
+                    selected: 0,
+                    arme: None,
+                    thumbs: std::collections::HashMap::new(),
+                    restant,
+                };
+                // banc : `apercu`/`video` sélectionne le premier élément du
+                // genre, pour photographier le lecteur sans manette
+                if let Ok(quoi) = std::env::var("GLAUNCHER_GALLERY_DEMO") {
+                    let genre = match quoi.as_str() {
+                        "apercu" => Some(gallery::Genre::Image),
+                        "video" => Some(gallery::Genre::Video),
+                        _ => None,
+                    };
+                    if let Some(genre) = genre
+                        && let Some(index) = galerie
+                            .items
+                            .iter()
+                            .position(|item| item.genre == genre)
+                    {
+                        galerie.selected = index;
+                    }
+                }
+                // les vignettes déjà en cache arrivent tout de suite (lecture
+                // de fichiers) : la grille se remplit sans attendre ffmpeg
+                gallery::spawn(
+                    galerie.items.clone(),
+                    cache,
+                    |event| match event {
+                        gallery::Event::Thumb { path, bytes } => {
+                            post(Message::GalleryThumb { path, bytes });
+                        }
+                        gallery::Event::Done => {}
+                    },
+                );
+                // la couche menus est reconstruite à part : rien à préserver
+                self.view_menu = None;
+                self.status = Some((format!("galerie : {} élément(s)", galerie.items.len()), false));
+                if galerie.items.is_empty() {
+                    self.status = Some((
+                        "galerie vide : rien dans les dossiers de sortie".to_string(),
+                        false,
+                    ));
+                }
+                galerie.restant = restant;
+                self.galerie = Some(galerie);
+                Task::none()
+            }
+            Message::GalleryClose => {
+                self.galerie = None;
+                self.apercu = None;
+                Task::none()
+            }
+            Message::GalleryNav(delta) => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                let total = galerie.items.len();
+                if total == 0 {
+                    return Task::none();
+                }
+                let cible = galerie.selected as i64 + delta as i64;
+                galerie.selected = cible.clamp(0, total as i64 - 1) as usize;
+                galerie.arme = None;
+                Task::none()
+            }
+            Message::GalleryAct => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                // effacement armé : Croix le confirme
+                if let Some(index) = galerie.arme.take() {
+                    self.gallery_delete(index);
+                    return Task::none();
+                }
+                let Some(item) = galerie.items.get(galerie.selected).cloned() else {
+                    return Task::none();
+                };
+                let index = galerie.selected;
+                match item.genre {
+                    gallery::Genre::Image => {
+                        self.apercu = Some(Apercu { index, fade: 0.0 });
+                        Task::none()
+                    }
+                    gallery::Genre::Video => {
+                        // même fondu au noir que le lancement d'un jeu : le
+                        // film apparaît quand l'écran est noir
+                        self.a_lancer_video =
+                            Some((item.path.clone(), item.nom(), std::time::Instant::now()));
+                        self.fade_target = 1.0;
+                        Task::none()
+                    }
+                }
+            }
+            Message::GalleryChoose(index) => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                if index >= galerie.items.len() {
+                    return Task::none();
+                }
+                if index == galerie.selected {
+                    return Task::done(Message::GalleryAct);
+                }
+                galerie.selected = index;
+                galerie.arme = None;
+                Task::none()
+            }
+            Message::GalleryArm => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                if galerie.items.is_empty() {
+                    return Task::none();
+                }
+                galerie.arme = Some(galerie.selected);
+                let nom = galerie
+                    .items
+                    .get(galerie.selected)
+                    .map(|item| item.nom())
+                    .unwrap_or_default();
+                self.status = Some((
+                    format!("effacer {nom} ? Croix = effacer · Rond = annuler"),
+                    true,
+                ));
+                Task::none()
+            }
+            Message::GalleryUnarm => {
+                if let Some(galerie) = self.galerie.as_mut() {
+                    galerie.arme = None;
+                }
+                self.status = None;
+                Task::none()
+            }
+            Message::GalleryThumb { path, bytes } => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                galerie.restant = galerie.restant.saturating_sub(1);
+                galerie
+                    .thumbs
+                    .insert(path, bytes.map(image::Handle::from_bytes));
+                Task::none()
+            }
+            Message::GalleryTick => {
+                // fin de la vidéo : on rend la main au launcher, puis on
+                // efface le voile (la fenêtre de mpv a disparu)
+                if let Some(lecteur) = self.lecteur.as_mut()
+                    && (lecteur.fini() || lecteur.en_retard())
+                {
+                    return Task::done(Message::GalleryVideoEnd);
+                }
+                if let Some(apercu) = self.apercu.as_mut()
+                    && apercu.fade < 1.0
+                {
+                    apercu.fade = (apercu.fade + 0.12).min(1.0);
+                }
+                Task::none()
+            }
+            Message::GalleryVideoEnd => {
+                if let Some(mut lecteur) = self.lecteur.take() {
+                    lecteur.tuer();
+                }
+                self.fade_target = 0.0;
+                self.status = None;
+                match self.window {
+                    Some(id) => window::gain_focus(id).map(|()| Message::Nothing),
+                    None => Task::none(),
+                }
+            }
+            Message::ApercuNav(delta) => {
+                let Some(apercu) = self.apercu.as_mut() else {
+                    return Task::none();
+                };
+                let Some(galerie) = self.galerie.as_ref() else {
+                    return Task::none();
+                };
+                // seules les captures d'écran se suivent (une vidéo se lance)
+                let images: Vec<usize> = galerie
+                    .items
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, item)| item.genre == gallery::Genre::Image)
+                    .map(|(index, _)| index)
+                    .collect();
+                let Some(position) = images.iter().position(|index| *index == apercu.index) else {
+                    return Task::none();
+                };
+                let cible = (position as i64 + delta as i64).clamp(0, images.len() as i64 - 1);
+                apercu.index = images[cible as usize];
+                apercu.fade = 0.0;
+                Task::none()
+            }
+            Message::ApercuClose => {
+                self.apercu = None;
+                Task::none()
+            }
             Message::ClosePicker => {
                 let was_open = self.picker.take().is_some();
                 self.identify = None;
@@ -2566,17 +2879,21 @@ impl App {
             }
             Message::ViewMenuNav(delta) => {
                 if let Some(choice) = self.view_menu.as_mut() {
-                    // les vues, puis la ligne « Réglages… »
-                    let last = VIEWS.len();
+                    // les vues, puis « Réglages… » et « Galerie… »
+                    let last = VIEWS.len() + 1;
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::ViewMenuChoose(index) => {
                 self.view_menu = None;
-                // dernière ligne : les réglages (dossiers de jeux, à la manette)
+                // avant-dernière ligne : les réglages (dossiers de jeux, à la manette)
                 if index == VIEWS.len() {
                     return Task::done(Message::SettingsOpen);
+                }
+                // dernière ligne : la galerie des captures et vidéos
+                if index == VIEWS.len() + 1 {
+                    return Task::done(Message::GalleryOpen);
                 }
                 let Some(&view) = VIEWS.get(index) else {
                     return Task::none();
@@ -3205,6 +3522,29 @@ impl App {
                 ))
             };
             spawn_launch(name, command, self.config.cache_dir(), slug, key);
+        }
+
+        // écran noir atteint : on lance le film (même voile que pour un jeu)
+        if self.fade >= 0.999
+            && let Some((fichier, nom, started)) = self.a_lancer_video.take()
+        {
+            match play::Lecteur::lance(&fichier) {
+                Some(lecteur) => {
+                    eprintln!(
+                        "glauncher : écran noir en {} ms, lecture de {nom}",
+                        started.elapsed().as_millis()
+                    );
+                    self.lecteur = Some(lecteur);
+                    // le voile se lève DERRIÈRE la fenêtre de mpv : au retour
+                    // d'une lecture, le launcher est déjà visible
+                    self.fade_target = 0.0;
+                    self.status = Some((format!("lecture : {nom}"), false));
+                }
+                None => {
+                    self.fade_target = 0.0;
+                    self.status = Some(("lecture impossible (mpv absent ?)".to_string(), true));
+                }
+            }
         }
 
         // Bascule de liste : montée vers le fond, échange au sommet, descente.
@@ -4070,6 +4410,44 @@ impl App {
             self.input = Input::Keyboard;
         }
 
+        // aperçu d'une capture : plein écran, seules les images se suivent
+        if self.apercu.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::ApercuClose),
+                keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::ApercuNav(-1)),
+                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::ApercuNav(1)),
+                _ => Task::none(),
+            };
+        }
+        // galerie : navigation dans la grille, ouverture, effacement armé
+        if self.galerie.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            let colonnes = self.gallery_columns() as i32;
+            let arme = self.galerie.as_ref().is_some_and(|galerie| galerie.arme.is_some());
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(if arme {
+                    Message::GalleryUnarm
+                } else {
+                    Message::GalleryClose
+                }),
+                keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::GalleryNav(-1)),
+                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::GalleryNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::GalleryNav(-colonnes)),
+                keyboard::Key::Named(Named::ArrowDown) => {
+                    Task::done(Message::GalleryNav(colonnes))
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::GalleryAct)
+                }
+                keyboard::Key::Named(Named::Delete) => Task::done(Message::GalleryArm),
+                _ => Task::none(),
+            };
+        }
         // prompt « nom de recherche » (identification) : le champ de saisie
         // prend les touches, on n'intercepte que l'annulation (Entrée passe par
         // `on_submit`)
@@ -4345,6 +4723,22 @@ impl App {
                 Task::none()
             }
             PadEvent::Button(button) => {
+                // Lecture vidéo : mpv a le focus, donc la garde de focus
+                // ci-dessous ne doit pas s'appliquer — la manette est lue en
+                // direct sur evdev et c'est elle qui pilote le film.
+                if self.lecteur.is_some() {
+                    let Some(lecteur) = self.lecteur.as_mut() else {
+                        return Task::none();
+                    };
+                    match button {
+                        PadButton::Confirm => lecteur.pause(),
+                        PadButton::Back => lecteur.quitter(),
+                        PadButton::Left => lecteur.seek(-play::PAS),
+                        PadButton::Right => lecteur.seek(play::PAS),
+                        _ => {}
+                    }
+                    return Task::none();
+                }
                 // manette lue sur /dev/input : hors focus, elle ne doit rien
                 // faire (sinon un appui pendant qu'on joue pilote le launcher)
                 if !self.active || self.running.is_some() {
@@ -4356,6 +4750,35 @@ impl App {
                     // une autre action annule le « appuie encore »
                     self.back_press = None;
                     self.quit_hint = false;
+                }
+                if self.apercu.is_some() {
+                    return match button {
+                        PadButton::Back => Task::done(Message::ApercuClose),
+                        PadButton::Left => Task::done(Message::ApercuNav(-1)),
+                        PadButton::Right => Task::done(Message::ApercuNav(1)),
+                        _ => Task::none(),
+                    };
+                }
+                if self.galerie.is_some() {
+                    let colonnes = self.gallery_columns() as i32;
+                    let arme = self
+                        .galerie
+                        .as_ref()
+                        .is_some_and(|galerie| galerie.arme.is_some());
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::GalleryAct),
+                        PadButton::Back => Task::done(if arme {
+                            Message::GalleryUnarm
+                        } else {
+                            Message::GalleryClose
+                        }),
+                        PadButton::Menu => Task::done(Message::GalleryArm),
+                        PadButton::Left => Task::done(Message::GalleryNav(-1)),
+                        PadButton::Right => Task::done(Message::GalleryNav(1)),
+                        PadButton::Up => Task::done(Message::GalleryNav(-colonnes)),
+                        PadButton::Down => Task::done(Message::GalleryNav(colonnes)),
+                        _ => Task::none(),
+                    };
                 }
                 if self.identify.is_some() || self.date.is_some() {
                     // le prompt demande un clavier : la manette ne peut
@@ -4665,6 +5088,12 @@ impl App {
         }
         if self.date.is_some() {
             menus = stack![menus, self.date_view()].into();
+        }
+        if self.galerie.is_some() {
+            menus = stack![menus, self.gallery_view()].into();
+        }
+        if self.apercu.is_some() {
+            menus = stack![menus, self.apercu_view()].into();
         }
         view = stack![view, menus].into();
 
@@ -5286,7 +5715,9 @@ impl App {
         (((self.viewport.1 - 300.0) / 52.0).floor() as usize).max(4)
     }
 
-    /// Page Réglages : la liste des dossiers de jeux, ou le navigateur.
+    /// Page Réglages : trois sections (dossiers de jeux, sortie, affichage).
+    /// Les en-têtes ne sont pas sélectionnables : le curseur reste sur les
+    /// lignes qui font quelque chose.
     fn settings_view(&self) -> Element<'_, Message> {
         let Some(settings) = self.settings.as_ref() else {
             return Row::new().into();
@@ -5295,22 +5726,47 @@ impl App {
             return self.browser_view(settings, browser);
         }
 
-        let visibles = self.lignes_visibles();
+        // deux lignes de moins que la liste nue : les trois en-têtes occupent
+        // la place, et la fenêtre doit garder le curseur visible
+        let visibles = self.lignes_visibles().saturating_sub(2).max(3);
         let (top, fin) = fenetre(settings.selected, settings.lignes(), visibles);
-        let mut rows = Column::new().spacing(4);
+        let mut rows = Column::new().spacing(2);
+        let mut section = "";
         for index in top..fin {
             let selected = index == settings.selected;
+            // quelle section : jeux, sortie, affichage
+            let courante = if index <= settings.dossiers.len() {
+                "Dossiers de jeux"
+            } else if index <= settings.ligne_shots() {
+                "Sortie"
+            } else {
+                "Affichage"
+            };
+            if courante != section {
+                section = courante;
+                rows = rows.push(
+                    container(text(section).size(12).color(ACCENT))
+                        .width(Fill)
+                        .padding(Padding {
+                            top: if index == top { 0.0 } else { 14.0 },
+                            right: 14.0,
+                            bottom: 4.0,
+                            left: 14.0,
+                        }),
+                );
+            }
+
             // dossiers de sortie : chemin courant (ou « défaut ») à droite
             if let Some(cle) = settings.cle_sortie(index) {
                 let (label, courant, defaut) = if cle == recorder::CLE_CAPTURES {
                     (
-                        "Dossier des enregistrements",
+                        "Enregistrements et replays",
                         settings.captures.clone(),
                         recorder::defaut_captures(),
                     )
                 } else {
                     (
-                        "Dossier des captures d'écran",
+                        "Captures d'écran",
                         settings.shots.clone(),
                         recorder::defaut_shots(),
                     )
@@ -5335,6 +5791,9 @@ impl App {
                         } else {
                             ACCENT
                         }),
+                        text(" ▸")
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
                     ]
                     .align_y(Alignment::Center),
                 )
@@ -5348,6 +5807,7 @@ impl App {
                 }));
                 continue;
             }
+
             // dernière ligne : l'écran du jeu (gauche/droite), pas un dossier
             if index == settings.ligne_ecran() {
                 let (_, libelle) = ECRANS[settings.ecran];
@@ -5355,7 +5815,7 @@ impl App {
                 let ligne = container(
                     row![
                         text("Écran du jeu")
-                            .size(18)
+                            .size(17)
                             .width(Fill)
                             .color(if selected { Color::BLACK } else { TEXT }),
                         text(valeur).size(15).color(if selected {
@@ -5372,8 +5832,9 @@ impl App {
                 rows = rows.push(ligne);
                 continue;
             }
+
             let (label, detail, danger) = if index == 0 {
-                ("Ajouter un dossier…".to_string(), String::new(), false)
+                ("+ Ajouter un dossier…".to_string(), String::new(), false)
             } else {
                 let dossier = &settings.dossiers[index - 1];
                 let arme = settings.confirm == Some(index - 1);
@@ -5387,12 +5848,14 @@ impl App {
                 DANGER
             } else if selected {
                 Color::BLACK
+            } else if index == 0 {
+                ACCENT
             } else {
                 TEXT
             };
             let ligne = container(
                 row![
-                    text(label).size(18).width(Fill).color(couleur),
+                    text(label).size(17).width(Fill).color(couleur),
                     text(detail)
                         .size(14)
                         .color(if selected { Color::BLACK } else { DANGER }),
@@ -5437,22 +5900,25 @@ impl App {
             "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
         } else if settings.dossiers.is_empty() {
             "Aucun dossier de jeux : la bibliothèque est vide. Croix = ajouter un dossier.".to_string()
+        } else if settings.selected == 0 {
+            "Croix = parcourir et ajouter un dossier de jeux (.wgp / .lgp).".to_string()
         } else {
-            "Croix = choisir · Carré = retirer de la liste · Rond = fermer".to_string()
+            "Croix = ouvrir le dossier dans le navigateur · Carré = retirer de la liste · Rond = fermer".to_string()
         };
 
         let panel = container(
             column![
-                text("Réglages").size(28).color(TEXT),
-                text("Dossiers de jeux").size(14).color(MUTED),
+                row![
+                    text("Réglages").size(28).color(TEXT).width(Fill),
+                    text(format!("{} / {}", settings.selected + 1, settings.lignes()))
+                        .size(13)
+                        .color(MUTED),
+                ]
+                .align_y(Alignment::Center),
+                text("Réglages du lanceur — hors jeu. Pendant une partie, c'est le menu de la manette (Home).")
+                    .size(13)
+                    .color(MUTED),
                 rows,
-                text(format!(
-                    "{}/{}",
-                    settings.selected + 1,
-                    settings.lignes()
-                ))
-                .size(12)
-                .color(MUTED),
                 text(aide)
                     .size(13)
                     .color(if settings.confirm.is_some() { DANGER } else { MUTED }),
@@ -5460,7 +5926,7 @@ impl App {
             .spacing(10),
         )
         .padding(24)
-        .width(Length::Fixed(760.0))
+        .width(Length::Fixed(780.0))
         .style(|_| picker_panel_style());
 
         container(panel)
@@ -5471,7 +5937,7 @@ impl App {
             .center_y(Fill)
             .style(|_| container::Style {
                 background: Some(Background::Color(Color {
-                    a: 0.72,
+                    a: 0.9,
                     ..Color::BLACK
                 })),
                 ..container::Style::default()
@@ -5572,6 +6038,184 @@ impl App {
             .into()
     }
 
+    /// Galerie : grille de vignettes (captures puis vidéos, de la plus récente
+    /// à la plus ancienne). Aucune animation : la sélection est un cadre fixe,
+    /// les vignettes sont des images déjà réduites (320 px) et ne respirent pas
+    /// — une galerie se parcourt vite, avec beaucoup d'images.
+    fn gallery_view(&self) -> Element<'_, Message> {
+        let Some(galerie) = self.galerie.as_ref() else {
+            return Row::new().into();
+        };
+        let colonnes = self.gallery_columns().max(1);
+        let lignes_vues = (((self.viewport.1 - 290.0) / 202.0).floor() as usize).max(1);
+        let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
+        let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes_vues);
+        let mut grille = Column::new().spacing(14);
+        for ligne in haut..bas {
+            let mut rangee = Row::new().spacing(12);
+            for colonne in 0..colonnes {
+                let index = ligne * colonnes + colonne;
+                let Some(item) = galerie.items.get(index) else {
+                    break;
+                };
+                let selectionne = index == galerie.selected;
+                let arme = galerie.arme == Some(index);
+                let vignette: Element<'_, Message> =
+                    match galerie.thumbs.get(&item.path).and_then(|handle| handle.clone()) {
+                        Some(handle) => image(handle)
+                            .width(Length::Fixed(240.0))
+                            .height(Length::Fixed(135.0))
+                            .content_fit(ContentFit::Cover)
+                            .into(),
+                        // vignette en cours de fabrication : case vide, jamais
+                        // un trou qui fait sauter la grille
+                        None => container(
+                            text(if item.genre == gallery::Genre::Video {
+                                "…"
+                            } else {
+                                ""
+                            })
+                            .size(18)
+                            .color(MUTED),
+                        )
+                        .width(Length::Fixed(240.0))
+                        .height(Length::Fixed(135.0))
+                        .center_x(Length::Fixed(240.0))
+                        .center_y(Length::Fixed(135.0))
+                        .style(|_| container::Style {
+                            background: Some(Background::Color(Color {
+                                a: 0.35,
+                                ..Color::BLACK
+                            })),
+                            border: Border {
+                                color: Color { a: 0.25, ..TEXT },
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            ..container::Style::default()
+                        })
+                        .into(),
+                    };
+                let legende = column![
+                    text(format!("{} · {}", item.genre.badge(), item.poids()))
+                        .size(12)
+                        .color(if selectionne { ACCENT } else { MUTED }),
+                    text(short(&item.nom(), 30)).size(13).color(TEXT),
+                    text(if arme {
+                        "effacer ? Croix = oui".to_string()
+                    } else {
+                        item.date()
+                    })
+                    .size(12)
+                    .color(if arme { DANGER } else { MUTED }),
+                ]
+                .spacing(2);
+                let tuile = container(column![vignette, legende].spacing(6))
+                    .padding(6)
+                    .style(move |_| card_style(selectionne, false));
+                let cliquable: Element<'_, Message> =
+                    mouse_area(tuile).on_press(Message::GalleryChoose(index)).into();
+                rangee = rangee.push(cliquable);
+            }
+            grille = grille.push(rangee);
+        }
+
+        let aide = if let Some(index) = galerie.arme {
+            let nom = galerie
+                .items
+                .get(index)
+                .map(|item| item.nom())
+                .unwrap_or_default();
+            format!("Effacer {nom} ? Le fichier sera supprimé du disque. Croix = effacer · Rond = annuler")
+        } else if galerie.items.is_empty() {
+            "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer).".to_string()
+        } else {
+            "Croix = ouvrir · Carré = effacer · Rond = fermer".to_string()
+        };
+
+        let panel = container(
+            column![
+                text("Galerie").size(28).color(TEXT),
+                text(format!(
+                    "{} élément(s) · {} chargée(s)",
+                    galerie.items.len(),
+                    galerie.thumbs.len()
+                ))
+                .size(13)
+                .color(MUTED),
+                grille,
+                text(format!(
+                    "{}/{} · {}",
+                    galerie.selected.saturating_add(1),
+                    galerie.items.len(),
+                    if galerie.restant > 0 {
+                        format!("{} vignette(s) en préparation", galerie.restant)
+                    } else {
+                        "vignettes prêtes".to_string()
+                    }
+                ))
+                .size(12)
+                .color(MUTED),
+                text(aide)
+                    .size(13)
+                    .color(if galerie.arme.is_some() { DANGER } else { MUTED }),
+            ]
+            .spacing(12),
+        )
+        .padding(24)
+        .width(Fill)
+        .height(Fill)
+        .style(|_| container::Style {
+            // opaque : la galerie EST l'écran (session console plein écran),
+            // la liste des jeux ne doit pas se lire derrière les vignettes
+            background: Some(Background::Color(Color::BLACK)),
+            ..container::Style::default()
+        });
+
+        panel.into()
+    }
+
+    /// Capture d'écran en plein écran : fondu et léger agrandissement à
+    /// l'ouverture (aucune animation ensuite — une image ne bouge pas).
+    fn apercu_view(&self) -> Element<'_, Message> {
+        let Some(apercu) = self.apercu.as_ref() else {
+            return Row::new().into();
+        };
+        let Some(galerie) = self.galerie.as_ref() else {
+            return Row::new().into();
+        };
+        let Some(item) = galerie.items.get(apercu.index) else {
+            return Row::new().into();
+        };
+        // l'image PLEINE (pas la vignette) : c'est une capture, on la regarde
+        let image: Element<'_, Message> = image(image::Handle::from_path(&item.path))
+            .width(Fill)
+            .height(Fill)
+            .content_fit(ContentFit::Contain)
+            .opacity(apercu.fade)
+            .into();
+        let image: Element<'_, Message> = Pose::new(image)
+            .scale(1.0 + 0.04 * (1.0 - apercu.fade))
+            .into();
+        let pied = container(
+            text("Gauche/droite = précédente / suivante · Rond = retour")
+                .size(13)
+                .color(Color { a: 0.85, ..TEXT }),
+        )
+        .width(Fill)
+        .padding(12);
+
+        let fond = container(Row::new())
+            .width(Fill)
+            .height(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::BLACK)),
+                ..container::Style::default()
+            });
+
+        stack![fond, image, container(pied).width(Fill).height(Fill).align_y(Alignment::End)].into()
+    }
+
     fn view_menu_view(&self) -> Element<'_, Message> {
         let Some(choice) = self.view_menu else {
             return Row::new().into();
@@ -5621,6 +6265,27 @@ impl App {
         .style(move |_| action_style(reglages_selected));
         rows = rows.push(
             mouse_area(ligne).on_press(Message::ViewMenuChoose(VIEWS.len())),
+        );
+
+        // puis la galerie : captures d'écran, enregistrements, replays
+        let galerie_selected = choice == VIEWS.len() + 1;
+        let ligne = container(
+            row![
+                text("Galerie…")
+                    .size(18)
+                    .width(Fill)
+                    .color(if galerie_selected { Color::BLACK } else { TEXT }),
+                text("▸")
+                    .size(14)
+                    .color(if galerie_selected { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(galerie_selected));
+        rows = rows.push(
+            mouse_area(ligne).on_press(Message::ViewMenuChoose(VIEWS.len() + 1)),
         );
 
         let panel =

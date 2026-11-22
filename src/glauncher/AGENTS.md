@@ -88,6 +88,15 @@ leurs icônes, pour l'interface.
   seuls, cachés écartés, « .. » en tête), chemins en `~/…`, ajout sans doublon
   (comparaison sur le chemin résolu) et retrait qui ne touche **jamais** au
   disque
+- `src/recorder.rs` — dossiers de sortie dans `~/.config/gablue/recorder.conf`
+  (clés `dossier` et `dossier_screenshot`) : lecture, écriture conservatrice,
+  « remettre par défaut » = retirer la clé (aucun chemin en dur)
+- `src/gallery.rs` — galerie : scan des captures et vidéos, vignettes 320 px
+  (JPEG) sur un fil de fond, cache `<cache>/gallery/`, date locale
+  (`localtime_r`), minuteur de lecture
+- `src/play.rs` — lecture d'un enregistrement : `mpv` plein écran piloté par
+  socket IPC (pause, ±5 s, sortie), `PR_SET_PDEATHSIG` contre les films
+  orphelins
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
 - `src/playtime.rs` — temps de jeu cumulé, dans les dossiers de sauvegardes
@@ -124,8 +133,12 @@ leurs icônes, pour l'interface.
 
 Le launcher porte ses propres réglages, **hors partie** (les réglages qu'on
 veut pendant une partie vivent dans `gpad`). Aujourd'hui : les **dossiers de
-jeux**. Ouverture : `F2` au clavier, ou le menu des vues (triangle) dont la
-dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
+jeux**, les **dossiers de sortie** (enregistrements, captures d'écran) et
+l'**écran du jeu**. Trois sections titrées (Dossiers de jeux / Sortie /
+Affichage), les en-têtes n'étant pas sélectionnables ; le compteur
+« position / total » et l'aide contextuelle suivent la ligne. Ouverture : `F2`
+au clavier, ou le menu des vues (triangle) → « Réglages… » — aucun bouton
+manette n'était libre.
 
 - **Liste** : « Ajouter un dossier… » puis les dossiers de `config.game_dirs`.
   `Croix`/Entrée choisit, `Carré` **arme** le retrait, `Rond`/Échap ferme.
@@ -178,6 +191,41 @@ dernière ligne est « Réglages… » — aucun bouton manette n'était libre.
   plus le navigateur sur `$HOME` ; la fenêtre glissante (`fenetre()`) remplace
   une zone défilante à état, donc rien à reconstruire d'un rendu à l'autre.
   `GLAUNCHER_RECORDER_CONF` redirige `recorder.conf` vers un bac à sable.
+
+## Galerie (captures, enregistrements, replays)
+
+Section **séparée** (menus des vues → « Galerie… », triangle/T), plein écran
+en session console. Deux dossiers lus dans `recorder.conf` : `screenshot_*.png`
+(captures) et `Video_*.mp4` / `Replay_*.mp4` (enregistrements, replays), triés
+du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
+(`CAPTURE` / `VIDÉO`), son poids et sa date **locale**.
+
+- **Vignettes** (`src/gallery.rs`) : fabriquées sur un fil de fond, une par une
+  (`gallery::spawn`), pas sur le fil de l'interface — iced décode en plus sur un
+  seul thread, et une capture 4K pèse 5 à 15 Mo. Réduction à 320 px en JPEG
+  qualité 80 ; pour une vidéo, `ffmpeg` extrait une image à 0,5 s (déjà présent
+  pour le son de capture). Cache `<cache>/gallery/<hash>.jpg`, clé = chemin +
+  mtime (un fichier remplacé est refait). Rien n'anime la grille : pas de
+  respiration, cadre de sélection fixe.
+- **Ouverture** : `Croix` sur une capture → aperçu plein écran dans le launcher
+  (image **pleine**, pas la vignette), entrée en fondu avec un léger
+  agrandissement (`Apercu.fade` piloté par `GalleryTick`, 8 Hz) ; gauche/droite
+  passe à la capture précédente/suivante. Une vidéo → même fondu au noir qu'un
+  lancement de jeu, puis `mpv --fullscreen` (voir ci-dessous).
+- **Lecture vidéo** (`src/play.rs`) : `mpv --no-config --fullscreen --osc=no`
+  avec une socket IPC. Le launcher garde la main : **Croix = pause**, **gauche/
+  droite = ±5 s** (`seek … relative`), **Rond = sortie** (puis délai de grâce
+  de 3 s avant `SIGKILL`). La manette est lue en evdev direct, donc elle marche
+  même quand la fenêtre de `mpv` a le focus (la garde de focus est court-
+  circuitée quand un lecteur tourne). Fin de vidéo → `try_wait` relève la
+  sortie, le voile se lève et la fenêtre du launcher reprend le focus.
+- **Effacement confirmé** : `Carré` arme (« effacer ? Croix = oui »), `Croix`
+  efface pour de bon, `Rond` annule, **tout déplacement désarme**. Le fichier
+  est supprimé du disque (`remove_file`) : c'est la seule action destructive du
+  launcher, d'où le double geste.
+- **Banc** : `GLAUNCHER_GALLERY_DEMO=1` ouvre la grille au démarrage,
+  `=apercu` ouvre aussi la première capture, `=video` la première vidéo
+  (`GLAUNCHER_RECORDER_CONF` redirige le fichier des dossiers).
 
 ## Contrats
 
