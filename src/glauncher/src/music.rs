@@ -57,6 +57,9 @@ const FADE_OUT_MS: u64 = 900;
 /// Pas des fondus : 30 ms — inaudible, et assez fin pour qu'un arrêt ne
 /// s'entende pas comme une coupure.
 const STEP_MS: u64 = 30;
+/// Période de contrôle des autres flux audio (vidéo à côté, app compagne) :
+/// la musique ne doit pas se superposer à ce que l'utilisateur écoute.
+const AUDIO_CHECK: Duration = Duration::from_secs(2);
 
 /// Boucle de lecture : **première note** du morceau, et fin de sa 48ᵉ mesure.
 ///
@@ -149,7 +152,12 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
     let mut player: Option<Player> = None;
     let mut round = 0;
     let mut level = 0.0f32;
-    let mut target = 0.0f32;
+    // intention de jouer (« Play » reçu, pas encore « Stop ») : la musique
+    // revient quand le jeu se termine, mais seulement si rien d'autre ne joue
+    let mut veut = false;
+    // un autre flux audible (présentation, vidéo, musique du joueur) : silence
+    let mut bloque = false;
+    let mut prochain_controle = std::time::Instant::now();
     // Position de la piste au moment où on l'a coupée (partie lancée). `mpv`
     // est arrêté, pas mis en pause : c'est elle qui permet de reprendre au
     // même endroit au retour.
@@ -159,40 +167,57 @@ fn runner(track: PathBuf, commands: std::sync::mpsc::Receiver<Order>, volume: u8
         let order = commands.recv_timeout(Duration::from_millis(STEP_MS));
         if std::env::var_os("GLAUNCHER_MUSIC_DEBUG").is_some() {
             eprintln!(
-                "glauncher : musique — {order:?} niveau {level:.1} cible {target:.1} mpv {}",
+                "glauncher : musique — {order:?} niveau {level:.1} veut={veut} bloque={bloque} mpv {}",
                 player.is_some()
             );
         }
         match order {
-            Ok(Order::Play) => {
-                if player.is_none() {
-                    round += 1;
-                    // retour de partie : `mpv` démarre DIRECTEMENT à la position
-                    // relevée à l'arrêt (voir `Player::open`) — un `seek` envoyé
-                    // après coup est refusé, le fichier n'est pas encore chargé
-                    match Player::open(&track, round, resume_at) {
-                        Some(opened) => {
-                            player = Some(opened);
-                            level = 0.0;
-                        }
-                        // `mpv` absent ou sortie audio cassée : inutile de
-                        // réessayer à chaque partie, le fil se retire
-                        None => return,
-                    }
-                }
-                // une reprise ne remonte pas du silence : elle est déjà là
-                let fade_in = if resume_at.is_some() {
-                    FADE_IN_RESUME_MS
-                } else {
-                    FADE_IN_MS
-                };
-                in_step = volume / (fade_in as f32 / STEP_MS as f32);
-                target = volume;
-            }
-            Ok(Order::Stop) => target = 0.0,
+            Ok(Order::Play) => veut = true,
+            Ok(Order::Stop) => veut = false,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             // `Music` lâchée (fermeture du launcher) : on s'arrête net
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Un autre flux audible ? On exclut le nôtre par le PID de `mpv` (le
+        // nom ne suffirait pas). Une app compagne qui joue du son pendant ou
+        // après un jeu garde donc la parole : la musique attend son silence.
+        let now = std::time::Instant::now();
+        if now >= prochain_controle {
+            prochain_controle = now + AUDIO_CHECK;
+            // quand le lecteur est arrêté, notre flux n'existe pas : aucun PID
+            // à exclure
+            let exclure = player.as_ref().map(|player| player.child.id());
+            bloque = crate::sons::autre_flux(exclure);
+            if bloque
+                && std::env::var_os("GLAUNCHER_MUSIC_DEBUG").is_some()
+            {
+                eprintln!("glauncher : musique — un autre flux audio joue, silence");
+            }
+        }
+        let target = if veut && !bloque { volume } else { 0.0 };
+
+        // démarrage effectif : seulement si on veut jouer et que personne
+        // d'autre ne joue. Le retour de partie reprend à la position quittée
+        // (argument de ligne de commande, un `seek` serait refusé).
+        if target > 0.0 && player.is_none() {
+            round += 1;
+            match Player::open(&track, round, resume_at) {
+                Some(opened) => {
+                    player = Some(opened);
+                    level = 0.0;
+                }
+                // `mpv` absent ou sortie audio cassée : inutile de réessayer à
+                // chaque partie, le fil se retire
+                None => return,
+            }
+            // une reprise ne remonte pas du silence : elle est déjà là
+            let fade_in = if resume_at.is_some() {
+                FADE_IN_RESUME_MS
+            } else {
+                FADE_IN_MS
+            };
+            in_step = volume / (fade_in as f32 / STEP_MS as f32);
         }
 
         if player.is_none() {

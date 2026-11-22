@@ -103,6 +103,8 @@ leurs icônes, pour l'interface.
   (`lgp-saves/glauncher/`, `LocalSavesWGP/glauncher/`), migration de l'ancien
   fichier du cache
 - `src/music.rs` — musique de fond : `mpv` en tâche de fond, fondu par IPC
+- `src/sons.rs` — autres flux audio du poste (`pactl`), pour taire la musique
+  quand quelqu'un d'autre joue du son
 - `src/sparkles.rs` — poussière d'étoiles du fond (`canvas`, minuteur 20 Hz)
 - `src/pose.rs` — `Pose` : échelle + décalage d'un élément au rendu (plongée de
   la page, retour des vignettes, respiration de la sélection), sans surcouche
@@ -456,6 +458,15 @@ du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
   command` : le fichier n'est pas encore chargé, `file-loaded` arrive après),
   d'où la position passée en argument de `mpv` plutôt qu'en `seek`.
   Mesuré : ~2 à 3 % d'un cœur, ~85 Mo (`pw-play` ferait 1 % sans fondu).
+  **Un autre son coupe la musique** (`src/sons.rs`) : dès qu'un flux audible
+  n'est pas le nôtre (vidéo à côté, navigateur, app compagne qui continue
+  après le jeu), la musique descend à 0 et **reprend** quand le silence
+  revient — elle est un fond sonore, pas une deuxième bande-son. Notre propre
+  `mpv` est exclu par son **PID**, jamais par son nom ; sous PipeWire ce PID
+  se lit sur le **client** (`pactl list clients`, le flux `mpv` ne publie pas
+  `application.process.id` — constaté le 22/11, sans quoi la musique se taisait
+  toute seule). Contrôle toutes les 2 s (`AUDIO_CHECK`), `LC_ALL=C` pour
+  `pactl`, `GLAUNCHER_MUSIC_DEBUG=1` trace `veut`/`bloque`.
   **Boucle** : `--ab-loop-a=0.133 --ab-loop-b=115.289`, soit la première note →
   fin de la **48ᵉ mesure** (le morceau est calé sur 100 BPM, mesure de 2,4 s, et
   ses 48 mesures font 115,2 s) : intro jouée en entier au démarrage, puis chaque

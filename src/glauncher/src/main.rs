@@ -21,6 +21,7 @@ mod play;
 mod playtime;
 mod pose;
 mod recorder;
+mod sons;
 mod sparkles;
 mod spinner;
 mod state;

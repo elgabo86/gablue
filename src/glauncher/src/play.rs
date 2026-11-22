@@ -37,10 +37,13 @@ impl Lecteur {
     /// Lance `mpv` en plein écran sur ce fichier. `None` = binaire absent ou
     /// socket muette (le launcher le dit, il ne fait pas semblant).
     pub fn lance(fichier: &Path) -> Option<Self> {
+        // numéro monotone : deux lectures dans la même session (ou un banc)
+        // ne doivent jamais partager le même chemin de socket
+        static SOCKETS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let numero = SOCKETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let socket = std::env::temp_dir().join(format!(
-            "glauncher-film-{}-{}.sock",
-            std::process::id(),
-            Instant::now().elapsed().as_nanos()
+            "glauncher-film-{}-{numero}.sock",
+            std::process::id()
         ));
         let _ = std::fs::remove_file(&socket);
         let mut command = Command::new(mpv_binary());
