@@ -407,11 +407,12 @@ grille : un fond noir opaque l'aurait effacée.
   reçoit plus rien. Un inode différent = watch reposée et dossier réindexé
   (constaté 20/11 : « si je branche le disque, rien ne se recharge »).
 - **Assets** : `~/.local/share/glauncher/assets/` contient les visuels
-  SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) **et deux fichiers
-  texte volontairement partagés** : `years.txt` (années de sortie) et
-  `identities.txt` (jeu SteamGridDB de chaque paquet) : c'est le
+  SteamGridDB (`grids/`, `heroes/`, `logos/`, `icons/`) **et trois fichiers
+  texte volontairement partagés** : `years.txt` (années de sortie),
+  `identities.txt` (jeu SteamGridDB de chaque paquet) et `absents.txt`
+  (recherches négatives **datées**, voir *Identification d'un jeu*) : c'est le
   dossier **partageable** (Syncthing entre machines et entre amis), donc les
-  visuels, les dates ET l'identification suivent.
+  visuels, les dates, l'identification et les « introuvables » suivent.
 - **Nom des visuels = le JEU, pas le paquet** (`covers::key`) :
   `<id SteamGridDB>-<nom slugifié>` (`8103-doom.jpg`), ou `<id>` seul si le nom
   manque ; jeu jamais identifié → slug du paquet (visuels locaux). Pourquoi :
@@ -838,8 +839,10 @@ grille : un fond noir opaque l'aurait effacée.
   réservée** : le bloc du bas se centre sur la page (une bande grise vide
   faisait pauvre, retour 18/11). La page vient **par-dessus la liste** dans une
   couche de profondeur **constante** (voir « Couche d'affichage »).
-- **Options réunies** : `Options ▸` ouvre un menu de **six lignes de visuels**
-  — Grid, Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` et `Date de
+- **Options réunies** : `Options ▸` ouvre un menu de **sept lignes de
+  visuels** — Grid, Héros, Logo, Icône (`✓` = déjà là),
+  `Identifier le jeu…` (ou `Revérifier sur SteamGridDB` quand la marque
+  « introuvable » est fraîche), `Reprendre les visuels d'un jeu…` et `Date de
   sortie…` (année connue en bout de ligne) — **suivies des options de lancement
   du jeu** (voir ci-dessous). Une ligne mène au menu d'images du
   type choisi. **Aucun raccourci** n'ouvre ce menu depuis la liste, ni depuis la
@@ -915,6 +918,27 @@ grille : un fond noir opaque l'aurait effacée.
   l'identification est quand même retenue. Clavier seulement pour
   l'instant : à la manette, il faudra un clavier virtuel (la manette ne peut
   qu'annuler le prompt).
+  **Jeu absent de SteamGridDB** : une recherche qui ne rend aucun jeu écrit une
+  marque **datée** dans `assets/absents.txt`
+  (`slug<TAB>verifie=AAAA-MM-JJ<TAB>requete=nom`). Ce n'est pas une affirmation
+  sur le monde mais sur le dernier essai : la marque **expire au bout de 30
+  jours** (`absent_frais`, date **locale** du poste : comparer à UTC faisait
+  expirer une marque du jour entre 23 h et minuit, constaté au banc le 23/11),
+  se lève dès qu'une identification, une recherche fructueuse ou une image
+  choisie à la main la contredit, et s'affiche dans
+  `Options` (« Introuvable sur SteamGridDB · vérifié le … »). `Croix` sur la
+  ligne (alors libellée **Revérifier sur SteamGridDB**) lève la marque, oublie
+  les `.miss` du jeu et relance la recherche **immédiatement** ; une marque
+  fraîche évite simplement de redemander à chaque démarrage. Le filet de
+  sécurité pour ces jeux est l'**alias visuel** (« Reprendre les visuels d'un
+  jeu… ») : la liste des jeux qui ont déjà des images, `alias_visuels` copie
+  les quatre types sous la clé du jeu cible, marque `.choice` (une recherche
+  automatique ne les remplacera pas), lève la marque « introuvable » et pose
+  `<slug>.alias` dans `<cache>/marks` : **aucune résolution automatique du nom**
+  ensuite, sinon la recherche auto renommerait les fichiers copiés sous la clé
+  d'un jeu qui n'est peut-être pas le bon (constaté au banc le 23/11). Les
+  fichiers restent dans `assets/`, donc l'alias suit les autres postes ;
+  `covers::forget` (identification, remplacement) retire le marqueur.
 - **Favoris** : `F` sur la page (ou View/Share) bascule l'étoile. Les slugs sont
   écrits dans `<cache>/favorites.txt` (trié, un par ligne, écriture
   temporaire + rename) — c'est la seule mémoire, un jeu momentanément absent

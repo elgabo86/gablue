@@ -312,6 +312,7 @@ fn cover_message(event: covers::CoverEvent) -> Message {
         },
         covers::CoverEvent::Year { slug, key, year } => Message::Year { slug, key, year },
         covers::CoverEvent::Identified { slug, identity } => Message::Identified { slug, identity },
+        covers::CoverEvent::Absent { slug, requete } => Message::Absent { slug, requete },
     }
 }
 
@@ -554,6 +555,12 @@ pub enum Message {
     GalleryFilter,
     /// Carré dans l'aperçu : copie du screenshot avec le logo du jeu.
     ApercuCopy,
+    /// Alias visuel : choisir un autre jeu de la bibliothèque comme source.
+    AliasOpen,
+    AliasNav(i32),
+    AliasChoose(usize),
+    AliasPick,
+    AliasClose,
     /// Une vignette de galerie est prête (ou absente).
     GalleryThumb {
         path: PathBuf,
@@ -569,6 +576,9 @@ pub enum Message {
     /// Un téléchargement commence (le worker de visuels réveille l'interface,
     /// sinon la roue de chargement n'apparaîtrait qu'une fois la requête finie).
     Activity,
+    /// Aucune fiche SteamGridDB : la marque datée est retenue et écrite dans
+    /// `assets/absents.txt` (l'utilisateur peut la revérifier depuis Options).
+    Absent { slug: String, requete: String },
     /// Année de sortie apprise par le worker pour ce jeu (`None` : SGDB n'en
     /// donne pas, c'est noté pour ne plus redemander). `key` = sous quel nom
     /// elle est rangée dans `assets/years.txt` (le jeu SteamGridDB, partagé).
@@ -636,6 +646,17 @@ struct Picker {
 /// SteamGridDB pour un nom donné. Choisir une ligne écrit l'identification
 /// dans `assets/identities.txt` (partagée par Syncthing) et redemande les
 /// quatre visuels du jeu choisi, en fond.
+/// Menu « reprendre les visuels d'un autre jeu » : choix figé à l'ouverture,
+/// pour que la liste ne bouge pas pendant la navigation.
+#[derive(Debug, Clone)]
+struct AliasMenu {
+    /// Jeu cible (le paquet ouvert).
+    slug: String,
+    /// `(nom affiché, slug source, vignette)` des jeux qui ont déjà des visuels.
+    choix: Vec<(String, String, Option<image::Handle>)>,
+    index: usize,
+}
+
 struct IdentifyMenu {
     slug: String,
     /// Nom envoyé à SteamGridDB (modifiable, souvent l'édition en trop).
@@ -743,6 +764,9 @@ enum Swap {
 enum ArtMenuEntry {
     Kind(covers::ArtKind),
     Identify,
+    /// Reprendre les visuels d'un autre jeu (alias visuel) : la réponse pour
+    /// un jeu absent de SteamGridDB, un fangame qui reprend l'art de sa série.
+    Alias,
     Date,
     Gamescope,
     Resolution,
@@ -756,6 +780,7 @@ fn art_menu_entries(kind: Kind) -> Vec<ArtMenuEntry> {
         ArtMenuEntry::Kind(covers::ArtKind::Logo),
         ArtMenuEntry::Kind(covers::ArtKind::Icon),
         ArtMenuEntry::Identify,
+        ArtMenuEntry::Alias,
         ArtMenuEntry::Date,
         ArtMenuEntry::Gamescope,
         ArtMenuEntry::Resolution,
@@ -1176,6 +1201,8 @@ pub struct App {
     identify: Option<String>,
     /// Menu d'identification : jeux proposés par SteamGridDB.
     identify_menu: Option<IdentifyMenu>,
+    /// Menu « reprendre les visuels d'un autre jeu » (alias visuel).
+    alias_menu: Option<AliasMenu>,
     /// Jeu identifié qui a **déjà** des visuels : question « les remplacer ? »
     /// avant de les effacer (par défaut sur « Non »).
     replace: Option<Replace>,
@@ -1183,6 +1210,10 @@ pub struct App {
     /// par Syncthing) : id SteamGridDB exact, pour que ce jeu ne retombe pas
     /// sur le premier résultat de l'autocomplete.
     identities: BTreeMap<String, covers::Identity>,
+    /// Jeux marqués « introuvable sur SteamGridDB », datés (`assets/absents.txt`,
+    /// partagé). Une marque fraîche évite une recherche à chaque démarrage ;
+    /// elle expire (30 jours) et se lève dès qu'une identification réussit.
+    absents: BTreeMap<String, covers::Absent>,
     /// Prompt « date de sortie » (année tapée à la main).
     date: Option<String>,
     /// L'utilisateur a demandé la date à SteamGridDB pour ce slug : le
@@ -1245,6 +1276,7 @@ impl App {
         // identifications partagées (même dossier Syncthing que les visuels) :
         // elles nomment les fichiers, donc lues AVANT la bibliothèque
         let identities = covers::load_identities(&covers::identities_path(&config.assets_dir()));
+        let absents = covers::load_absents(&covers::absents_path(&config.assets_dir()));
         let (bus, receiver) = unbounded();
         let _ = BUS.set(bus);
         if let Ok(mut slot) = BUS_RX.lock() {
@@ -1394,8 +1426,10 @@ impl App {
             picked: None,
             identify: None,
             identify_menu: None,
+            alias_menu: None,
             replace: None,
             identities,
+            absents,
             date: None,
             asked_year: None,
             input_id: Id::unique(),
@@ -1791,6 +1825,9 @@ impl App {
     /// partagé (`assets/identities.txt`), puis met les visuels à jour — en
     /// demandant d'abord quand le paquet en a déjà (voir [`Replace`]).
     fn apply_identity(&mut self, slug: &str, game: covers::FoundGame) {
+        // le jeu existe (on vient de le choisir) : la marque « introuvable »
+        // est fausse
+        self.oublier_absent(slug);
         let same = self
             .identities
             .get(slug)
@@ -1883,6 +1920,73 @@ impl App {
         self.resume_covers();
     }
 
+    /// Lève la marque « introuvable » d'un jeu et la retire du fichier partagé.
+    /// Appelée dès qu'une identification, une recherche fructueuse ou une image
+    /// choisie à la main rend la marque fausse : une marque ne doit jamais
+    /// survivre à ce qui la contredit.
+    fn oublier_absent(&mut self, slug: &str) {
+        if self.absents.remove(slug).is_some() {
+            covers::clear_absent(&covers::absents_path(&self.config.assets_dir()), slug);
+        }
+    }
+
+    /// Ouvre « Quel jeu est … ? » et lance la recherche SteamGridDB : point
+    /// d'entrée commun du prompt (Croix sur « Identifier ») et de
+    /// « Revérifier » sur un jeu marqué introuvable.
+    fn recherche_identite(&mut self, slug: String, query: String) {
+        let current = self.identities.get(&slug).map(|identity| identity.id);
+        self.identify_menu = Some(IdentifyMenu {
+            slug: slug.clone(),
+            query: query.clone(),
+            index: 0,
+            loading: true,
+            error: None,
+            games: Vec::new(),
+            current,
+        });
+        // aucune cover de fond pendant qu'on regarde la liste
+        self.pause_covers();
+        eprintln!("glauncher : identification, recherche « {query} » pour {slug}");
+        self.send_cover_query(covers::Query::Search { slug, name: query });
+    }
+
+    /// Relit les visuels d'un jeu depuis `assets/` (après un alias visuel) :
+    /// l'interface n'a pas de téléchargement à attendre, les fichiers sont là.
+    fn recharger_visuels(&mut self, slug: &str) {
+        let assets = self.config.assets_dir();
+        let identity = self.identities.get(slug).cloned();
+        let lire = |kind: covers::ArtKind| {
+            covers::cached_for(&assets.join(kind.dir()), identity.as_ref(), slug)
+                .and_then(|path| std::fs::read(path).ok())
+                .map(image::Handle::from_bytes)
+        };
+        let cover = lire(covers::ArtKind::Grid);
+        let hero = lire(covers::ArtKind::Hero);
+        let logo = lire(covers::ArtKind::Logo);
+        let icon = lire(covers::ArtKind::Icon);
+        for game in self.games.iter_mut().chain(self.all_games.iter_mut()) {
+            if game.slug != slug {
+                continue;
+            }
+            game.cover = cover.clone();
+            game.hero = hero.clone();
+            game.logo = logo.clone();
+            game.thumb = None;
+            if icon.is_some() {
+                game.icon = icon.clone();
+            }
+        }
+        if let Some(art) = self.artwork.get_mut(slug) {
+            art.cover = cover;
+            art.hero = hero;
+            art.logo = logo;
+            art.thumb = None;
+            if icon.is_some() {
+                art.icon = icon;
+            }
+        }
+    }
+
     /// Efface les visuels en mémoire d'un jeu (l'icône extraite du paquet,
     /// elle, est correcte par définition : on la relit du cache).
     fn forget_local_art(&mut self, slug: &str) {
@@ -1953,6 +2057,7 @@ impl App {
         bit(self.picker.is_some());
         bit(self.identify.is_some());
         bit(self.identify_menu.is_some());
+        bit(self.alias_menu.is_some());
         bit(self.replace.is_some());
         bit(self.date.is_some());
         // la galerie entre en fondu ; l'aperçu d'une photo et le panneau
@@ -2085,7 +2190,21 @@ impl App {
                     "glauncher : {} identifié « {} » (id {})",
                     slug, identity.name, identity.id
                 );
-                self.identities.insert(slug, identity);
+                self.identities.insert(slug.clone(), identity);
+                self.oublier_absent(&slug);
+                Task::none()
+            }
+            Message::Absent { slug, requete } => {
+                let marque = covers::marquer_absent(
+                    &covers::absents_path(&self.config.assets_dir()),
+                    &slug,
+                    &requete,
+                );
+                eprintln!(
+                    "glauncher : {} introuvable sur SteamGridDB (vérifié le {})",
+                    slug, marque.verifie
+                );
+                self.absents.insert(slug, marque);
                 Task::none()
             }
             Message::Icon { slug, bytes } => {
@@ -2276,20 +2395,7 @@ impl App {
                 let Some(slug) = self.current_slug() else {
                     return Task::none();
                 };
-                let current = self.identities.get(&slug).map(|identity| identity.id);
-                self.identify_menu = Some(IdentifyMenu {
-                    slug: slug.clone(),
-                    query: query.clone(),
-                    index: 0,
-                    loading: true,
-                    error: None,
-                    games: Vec::new(),
-                    current,
-                });
-                // aucune cover de fond pendant qu'on regarde la liste
-                self.pause_covers();
-                eprintln!("glauncher : identification, recherche « {query} » pour {slug}");
-                self.send_cover_query(covers::Query::Search { slug, name: query });
+                self.recherche_identite(slug, query);
                 Task::none()
             }
             Message::IdentifyResults {
@@ -2297,6 +2403,8 @@ impl App {
                 query,
                 result,
             } => {
+                let vide = matches!(&result, Ok(games) if games.is_empty());
+                let trouve = matches!(&result, Ok(games) if !games.is_empty());
                 if let Some(menu) = self.identify_menu.as_mut()
                     && menu.slug == slug
                     && menu.query == query
@@ -2318,6 +2426,18 @@ impl App {
                         }
                         Err(error) => menu.error = Some(error),
                     }
+                }
+                // la marque suit le dernier essai : rien trouvé = datée,
+                // trouvé = levée
+                if vide {
+                    let marque = covers::marquer_absent(
+                        &covers::absents_path(&self.config.assets_dir()),
+                        &slug,
+                        &query,
+                    );
+                    self.absents.insert(slug, marque);
+                } else if trouve {
+                    self.oublier_absent(&slug);
                 }
                 Task::none()
             }
@@ -2360,6 +2480,114 @@ impl App {
             Message::IdentifyClose => {
                 self.identify = None;
                 self.identify_menu = None;
+                Task::none()
+            }
+            Message::AliasOpen => {
+                let Some(slug) = self.current_slug() else {
+                    return Task::none();
+                };
+                let assets = self.config.assets_dir();
+                let target_key = self.key_of(&slug);
+                // ne proposer que les jeux qui ont DÉJÀ un visuel sur le
+                // disque : reprendre le néant n'aide personne. Un autre paquet
+                // du MÊME jeu partage déjà les fichiers (même clé) : inutile.
+                let choix: Vec<(String, String, Option<image::Handle>)> = self
+                    .all_games
+                    .iter()
+                    .filter(|game| game.slug != slug && self.key_of(&game.slug) != target_key)
+                    .filter(|game| {
+                        covers::has_art(&assets, self.identities.get(&game.slug), &game.slug)
+                    })
+                    .map(|game| {
+                        (
+                            game.name.clone(),
+                            game.slug.clone(),
+                            game.cover.clone().or_else(|| game.thumb.clone()),
+                        )
+                    })
+                    .collect();
+                if choix.is_empty() {
+                    self.status = Some((
+                        "aucun autre jeu n'a de visuels — choisis une image pour un jeu (Carré sur sa page) avant de la reprendre"
+                            .to_string(),
+                        true,
+                    ));
+                    return Task::none();
+                }
+                self.pause_covers();
+                self.alias_menu = Some(AliasMenu {
+                    slug,
+                    choix,
+                    index: 0,
+                });
+                Task::none()
+            }
+            Message::AliasNav(delta) => {
+                if let Some(menu) = self.alias_menu.as_mut()
+                    && !menu.choix.is_empty()
+                {
+                    let last = menu.choix.len() - 1;
+                    menu.index = (menu.index as i32 + delta).clamp(0, last as i32) as usize;
+                }
+                Task::none()
+            }
+            Message::AliasChoose(index) => {
+                if let Some(menu) = self.alias_menu.as_mut() {
+                    menu.index = index.min(menu.choix.len().saturating_sub(1));
+                }
+                Task::done(Message::AliasPick)
+            }
+            Message::AliasPick => {
+                let Some(menu) = self.alias_menu.clone() else {
+                    return Task::none();
+                };
+                let Some((nom, source, _)) = menu.choix.get(menu.index).cloned() else {
+                    return Task::none();
+                };
+                let assets = self.config.assets_dir();
+                let marks = self.config.cache_dir().join("marks");
+                let source_key = self.key_of(&source);
+                let target_key = self.key_of(&menu.slug);
+                if source_key == target_key {
+                    self.alias_menu = None;
+                    self.resume_covers();
+                    self.status = Some((
+                        "même jeu SteamGridDB : les visuels sont déjà partagés".to_string(),
+                        false,
+                    ));
+                    return Task::none();
+                }
+                let copies =
+                    covers::alias_visuels(&assets, &marks, &source_key, &target_key, &menu.slug);
+                self.alias_menu = None;
+                if copies == 0 {
+                    self.status = Some((
+                        format!("aucun visuel à reprendre de « {nom} »"),
+                        true,
+                    ));
+                    self.resume_covers();
+                    return Task::none();
+                }
+                // l'alias vaut identification visuelle : plus de marque
+                // « introuvable », et les fichiers choisis ne seront pas
+                // remplacés par une recherche
+                self.oublier_absent(&menu.slug);
+                self.forget_local_art(&menu.slug);
+                self.recharger_visuels(&menu.slug);
+                if let Some(index) = self.games.iter().position(|game| game.slug == menu.slug) {
+                    self.reset_page_assets(index);
+                }
+                self.request_thumb(&menu.slug);
+                self.status = Some((
+                    format!("{copies} visuel(s) repris de « {nom} »"),
+                    false,
+                ));
+                self.resume_covers();
+                Task::none()
+            }
+            Message::AliasClose => {
+                self.alias_menu = None;
+                self.resume_covers();
                 Task::none()
             }
             Message::DateOpen => {
@@ -2763,6 +2991,7 @@ impl App {
                 // n'était pas prise en compte (constaté 18/11). `picked` garde
                 // la trace du choix pour la suite (remplacement de l'icône).
                 self.picker = None;
+                self.oublier_absent(&slug);
                 self.picked = Some((slug, kind));
                 self.status = Some(("application de l'image…".to_string(), false));
                 self.resume_covers();
@@ -2816,6 +3045,7 @@ impl App {
                 // même sortie qu'un choix SteamGridDB : le menu se referme, le
                 // fichier est adapté puis écrit par le worker
                 self.picker = None;
+                self.oublier_absent(&slug);
                 self.picked = Some((slug.clone(), kind));
                 self.status = Some(("application de l'image…".to_string(), false));
                 self.resume_covers();
@@ -3069,7 +3299,26 @@ impl App {
                     }
                     ArtMenuEntry::Identify => {
                         self.art_menu = None;
+                        let Some(slug) = self.current_slug() else {
+                            return Task::none();
+                        };
+                        // jeu marqué introuvable : Croix = revérifier tout de
+                        // suite, sans attendre l'expiration (30 jours)
+                        if let Some(absent) = self.absents.get(&slug).cloned() {
+                            self.oublier_absent(&slug);
+                            covers::oublier_introuvables(
+                                &self.config.cache_dir().join("marks"),
+                                &slug,
+                            );
+                            self.forget_local_art(&slug);
+                            self.recherche_identite(slug, absent.requete);
+                            return Task::none();
+                        }
                         Task::done(Message::IdentifyOpen)
+                    }
+                    ArtMenuEntry::Alias => {
+                        self.art_menu = None;
+                        Task::done(Message::AliasOpen)
                     }
                     ArtMenuEntry::Date => {
                         self.art_menu = None;
@@ -4498,7 +4747,20 @@ impl App {
         // c'est elle qui donne le nom partagé des fichiers (`key`)
         let (name, id) = self.who(&game.slug, &game.name);
         let key = self.key_of(&game.slug);
+        // marque fraîche et aucune identification : inutile de redemander à
+        // SteamGridDB à chaque démarrage. « Revérifier » (Options) la lève.
+        let absent = id.is_none()
+            && self
+                .absents
+                .get(&game.slug)
+                .is_some_and(covers::absent_frais);
+        // visuels repris d'un autre jeu : ne pas résoudre le nom chez SGDB,
+        // la recherche automatique renommerait les fichiers copiés
+        let alias = covers::est_alias(&self.config.cache_dir().join("marks"), &game.slug);
         for &kind in demande {
+            if absent || alias {
+                continue;
+            }
             let present = match kind {
                 covers::ArtKind::Grid => game.cover.is_some(),
                 covers::ArtKind::Hero => game.hero.is_some(),
@@ -4882,6 +5144,21 @@ impl App {
                 _ => Task::none(),
             };
         }
+        // liste des jeux sources pour un alias visuel
+        if self.alias_menu.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::AliasClose),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::AliasPick)
+                }
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::AliasNav(-1)),
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::AliasNav(1)),
+                _ => Task::none(),
+            };
+        }
         // liste des jeux proposés (identification)
         if self.identify_menu.is_some() {
             let keyboard::Event::KeyPressed { key, .. } = event else {
@@ -5215,6 +5492,15 @@ impl App {
                         _ => Task::none(),
                     };
                 }
+                if self.alias_menu.is_some() {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::AliasPick),
+                        PadButton::Back => Task::done(Message::AliasClose),
+                        PadButton::Up => Task::done(Message::AliasNav(-1)),
+                        PadButton::Down => Task::done(Message::AliasNav(1)),
+                        _ => Task::none(),
+                    };
+                }
                 if self.identify_menu.is_some() {
                     return match button {
                         PadButton::Confirm => Task::done(Message::IdentifyPick),
@@ -5511,6 +5797,9 @@ impl App {
         }
         if self.identify_menu.is_some() {
             menus = stack![menus, self.identify_menu_view()].into();
+        }
+        if self.alias_menu.is_some() {
+            menus = stack![menus, self.alias_menu_view()].into();
         }
         if self.identify.is_some() {
             menus = stack![menus, self.identify_view()].into();
@@ -7272,6 +7561,7 @@ impl App {
             game.icon.is_some(),
         ];
         let identity = self.identities.get(&game.slug);
+        let absent = self.absents.get(&game.slug).filter(|absent| covers::absent_frais(absent));
         let year = self.year_of(&game.slug);
         let options = self.art_options();
         let entries = art_menu_entries(game.kind);
@@ -7342,8 +7632,39 @@ impl App {
                 }
                 ArtMenuEntry::Identify => container(
                     row![
-                        text("Identifier le jeu…").size(18).width(Fill).color(couleur),
-                        text(if identity.is_some() { "✓" } else { "" })
+                        // la marque est datée : le libellé dit l'état réel, et
+                        // Croix refait l'essai immédiatement
+                        text(if identity.is_none() && absent.is_some() {
+                            "Revérifier sur SteamGridDB"
+                        } else {
+                            "Identifier le jeu…"
+                        })
+                        .size(18)
+                        .width(Fill)
+                        .color(couleur),
+                        text(match (identity.is_some(), absent.is_some()) {
+                            (true, _) => "✓",
+                            (false, true) => "introuvable",
+                            _ => "",
+                        })
+                        .size(14)
+                        .color(if selected {
+                            Color::BLACK
+                        } else if absent.is_some() {
+                            DANGER
+                        } else {
+                            MUTED
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                ),
+                ArtMenuEntry::Alias => container(
+                    row![
+                        text("Reprendre les visuels d'un jeu…")
+                            .size(18)
+                            .width(Fill)
+                            .color(couleur),
+                        text(if game.cover.is_some() { "✓" } else { "" })
                             .size(14)
                             .color(if selected { Color::BLACK } else { MUTED }),
                     ]
@@ -7374,14 +7695,24 @@ impl App {
             Some(identity) if !identity.name.is_empty() => {
                 format!("Identifié : {}", short(&identity.name, 40))
             }
-            _ => "Identification : automatique (premier résultat)".to_string(),
+            _ => match absent {
+                Some(absent) => format!(
+                    "Introuvable sur SteamGridDB · vérifié le {}",
+                    covers::date_verifie(absent)
+                ),
+                None => "Identification : automatique (premier résultat)".to_string(),
+            },
         };
 
         let glyphes: Vec<(&image::Handle, &'static str)> = vec![
             (&self.glyphs.confirm, "Valider"),
             (&self.glyphs.back, "Fermer"),
         ];
-        let aide = "Croix = choisir ou basculer · Rond = fermer · les réglages de lancement sont propres à ce poste";
+        let aide = if identity.is_none() && absent.is_some() {
+            "Croix = revérifier maintenant · Rond = fermer · les réglages de lancement sont propres à ce poste"
+        } else {
+            "Croix = choisir ou basculer · Rond = fermer · les réglages de lancement sont propres à ce poste"
+        };
 
         let panel = container(
             column![
@@ -7407,6 +7738,98 @@ impl App {
             .style(|_| container::Style {
                 background: Some(Background::Color(Color {
                     a: 0.6,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Menu « reprendre les visuels d'un autre jeu » : liste des jeux qui ont
+    /// déjà des images, avec leur cover pour les reconnaître d'un coup d'œil.
+    fn alias_menu_view(&self) -> Element<'_, Message> {
+        let Some(menu) = self.alias_menu.as_ref() else {
+            return Row::new().into();
+        };
+        let cible = self
+            .all_games
+            .iter()
+            .find(|game| game.slug == menu.slug)
+            .map(|game| game.name.clone())
+            .unwrap_or_else(|| menu.slug.clone());
+
+        let mut rows = Column::new().spacing(6);
+        for (index, (nom, _slug, vignette)) in menu.choix.iter().enumerate() {
+            let selected = index == menu.index;
+            let apercu: Element<'_, Message> = match vignette {
+                Some(handle) => image(handle.clone())
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(56.0))
+                    .content_fit(ContentFit::Cover)
+                    .into(),
+                None => container(Row::new())
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(56.0))
+                    .into(),
+            };
+            let line = container(
+                row![
+                    apercu,
+                    text(short(nom, 58))
+                        .size(17)
+                        .width(Fill)
+                        .color(if selected { Color::BLACK } else { TEXT }),
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([7.0, 12.0])
+            .style(move |_| action_style(selected));
+            rows = rows.push(mouse_area(line).on_press(Message::AliasChoose(index)));
+        }
+
+        let help: Element<'_, Message> = if self.pad_hints() {
+            row![
+                hint(self.glyphs.confirm.clone(), "Reprendre ces visuels"),
+                hint(self.glyphs.back.clone(), "Annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            text("Entrée : reprendre ces visuels   ·   Échap : annuler")
+                .size(14)
+                .color(MUTED)
+                .into()
+        };
+
+        let panel = container(
+            column![
+                text(format!("Visuels de quel jeu pour « {} » ?", short(&cible, 34)))
+                    .size(18)
+                    .color(TEXT),
+                text("Le jeu garde son nom et ses options ; seuls ses visuels changent.")
+                    .size(13)
+                    .color(MUTED),
+                scrollable(rows).height(Length::Fixed(340.0)),
+                help,
+            ]
+            .spacing(12),
+        )
+        .padding(20)
+        .width(Length::Fixed(660.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.78,
                     ..Color::BLACK
                 })),
                 ..container::Style::default()

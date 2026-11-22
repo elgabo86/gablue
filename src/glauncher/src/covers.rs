@@ -264,6 +264,10 @@ pub enum CoverEvent {
     /// `assets/identities.txt` et c'est lui qui donne la clé partagée des
     /// visuels. L'interface met sa table à jour, sans réécrire le fichier.
     Identified { slug: String, identity: Identity },
+    /// Aucune fiche SteamGridDB pour ce jeu : la recherche négative est
+    /// datée dans `assets/absents.txt` (partagé), pour ne pas la refaire à
+    /// chaque démarrage et pour l'afficher dans les options (revérifiable).
+    Absent { slug: String, requete: String },
 }
 
 /// Travail en attente du worker, réparti en deux voies.
@@ -417,7 +421,12 @@ where
                             }
                         };
                         let Some((identity, key)) = resolved else {
-                            // jeu inconnu de SteamGridDB : rien à télécharger
+                            // jeu inconnu de SteamGridDB : rien à télécharger,
+                            // et la recherche négative est datée (absents.txt)
+                            emit(CoverEvent::Absent {
+                                slug: slug.clone(),
+                                requete: name.clone(),
+                            });
                             for kind in kinds {
                                 let dir = cache.join(kind.dir());
                                 let marks = marks.join(kind.dir());
@@ -934,6 +943,290 @@ pub fn forget(assets: &Path, marks_root: &Path, slug: &str, key: &str) {
         let _ = std::fs::remove_file(marks.join(format!("{slug}.miss")));
         let _ = std::fs::remove_file(marks.join(format!("{slug}.choice")));
     }
+    let _ = std::fs::remove_file(alias_mark(marks_root, slug));
+}
+
+/// Marque « introuvable sur SteamGridDB », **datée** : la recherche n'est pas
+/// une affirmation sur le monde, seulement sur le dernier essai. Elle expire
+/// au bout de `ABSENT_TTL` et se lève dès qu'une identification, un résultat
+/// de recherche ou une image choisie à la main la contredit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Absent {
+    /// Date du dernier essai, `AAAA-MM-JJ` (locale).
+    pub verifie: String,
+    /// Nom réellement cherché ce jour-là (une nouvelle requête mérite un
+    /// nouvel essai).
+    pub requete: String,
+}
+
+/// Délai de validité d'une marque « introuvable ».
+const ABSENT_TTL_JOURS: i64 = 30;
+
+/// Fichier partagé (`assets/`) des « introuvables » datés.
+pub fn absents_path(assets: &Path) -> PathBuf {
+    assets.join("absents.txt")
+}
+
+/// Lit `absents.txt` : `slug<TAB>verifie=AAAA-MM-JJ<TAB>requete=nom`.
+/// Les commentaires et lignes illisibles sont ignorés.
+pub fn load_absents(path: &Path) -> BTreeMap<String, Absent> {
+    let texte = std::fs::read_to_string(path).unwrap_or_default();
+    let mut absents = BTreeMap::new();
+    for ligne in texte.lines() {
+        let ligne = ligne.trim();
+        if ligne.is_empty() || ligne.starts_with('#') {
+            continue;
+        }
+        let mut champs = ligne.splitn(3, '\t');
+        let Some(slug) = champs.next().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let mut verifie = None;
+        let mut requete = None;
+        for champ in champs {
+            let (nom, valeur) = match champ.split_once('=') {
+                Some((nom, valeur)) => (nom.trim(), valeur.trim()),
+                None => continue,
+            };
+            match nom {
+                "verifie" => verifie = Some(valeur.to_string()),
+                "requete" => requete = Some(valeur.to_string()),
+                _ => {}
+            }
+        }
+        let (Some(verifie), Some(requete)) = (verifie, requete) else {
+            continue;
+        };
+        absents.insert(
+            slug.to_string(),
+            Absent {
+                verifie,
+                requete,
+            },
+        );
+    }
+    absents
+}
+
+/// Écrit (ou rafraîchit) la marque de `slug` avec la date du jour, en
+/// **préservant** le reste du fichier (commentaires, autres jeux). Rend la
+/// marque posée pour que l'interface tienne sa table à jour sans relire.
+pub fn marquer_absent(path: &Path, slug: &str, requete: &str) -> Absent {
+    let requete = requete.replace(['\t', '\n', '\r'], " ");
+    let texte = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lignes: Vec<String> = texte
+        .lines()
+        .filter(|ligne| {
+            let corps = ligne.trim();
+            !corps.is_empty()
+                && corps
+                    .split_once('\t')
+                    .map(|(nom, _)| nom.trim())
+                    .is_none_or(|nom| nom != slug)
+        })
+        .map(str::to_string)
+        .collect();
+    if lignes.is_empty() {
+        lignes.push(
+            "# jeux introuvables sur SteamGridDB : slug<TAB>verifie=AAAA-MM-JJ<TAB>requete=nom"
+                .to_string(),
+        );
+    }
+    lignes.push(format!(
+        "{slug}\tverifie={}\trequete={requete}",
+        date_aujourd_hui()
+    ));
+    write_atomic(path, format!("{}\n", lignes.join("\n")).as_bytes());
+    Absent {
+        verifie: date_aujourd_hui(),
+        requete: requete.to_string(),
+    }
+}
+
+/// Lève la marque de `slug` (identification, résultat trouvé, image choisie).
+pub fn clear_absent(path: &Path, slug: &str) {
+    let Ok(texte) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let garde: Vec<&str> = texte
+        .lines()
+        .filter(|ligne| {
+            let corps = ligne.trim();
+            corps.starts_with('#')
+                || corps
+                    .split_once('\t')
+                    .map(|(nom, _)| nom.trim())
+                    .is_none_or(|nom| nom != slug)
+        })
+        .collect();
+    // le fichier ne contient plus que le commentaire (ou des blancs) : on
+    // retire les lignes vides pour ne pas laisser un fichier fantôme
+    let utile = garde.iter().any(|ligne| {
+        let corps = ligne.trim();
+        !corps.is_empty() && !corps.starts_with('#')
+    });
+    if !utile {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    write_atomic(path, format!("{}\n", garde.join("\n")).as_bytes());
+}
+
+/// Marque encore fraîche ? Une marque périmée est ignorée : la prochaine
+/// demande de visuels refait une recherche et met la date à jour.
+pub fn absent_frais(absent: &Absent) -> bool {
+    jours_depuis_date(&absent.verifie)
+        .and_then(|jours| jours_aujourd_hui().checked_sub(jours))
+        .is_some_and(|age| (0..=ABSENT_TTL_JOURS).contains(&age))
+}
+
+/// Date de la marque en clair, pour les options : `23 nov. 2026`.
+pub fn date_verifie(absent: &Absent) -> String {
+    let Some(jours) = jours_depuis_date(&absent.verifie) else {
+        return absent.verifie.clone();
+    };
+    let (annee, mois, jour) = date_depuis_jours(jours);
+    const MOIS: [&str; 12] = [
+        "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.",
+        "nov.", "déc.",
+    ];
+    let nom = MOIS.get(mois.saturating_sub(1) as usize).copied().unwrap_or("");
+    format!("{jour} {nom} {annee}")
+}
+
+/// Retire les marqueurs `.miss` (introuvable par type) d'un jeu : « revérifier
+/// maintenant » doit redonner sa chance à SteamGridDB sans attendre 30 jours.
+pub fn oublier_introuvables(marks_root: &Path, slug: &str) {
+    for kind in ArtKind::ALL {
+        let _ = std::fs::remove_file(marks_root.join(kind.dir()).join(format!("{slug}.miss")));
+    }
+}
+
+/// Marqueur `.<slug>.alias` : les visuels de ce jeu ont été repris d'un autre
+/// jeu (ou choisis), donc aucune recherche automatique ne doit les renommer.
+pub fn alias_mark(marks_root: &Path, slug: &str) -> PathBuf {
+    marks_root.join(format!("{slug}.alias"))
+}
+
+/// Vrai si le jeu a des visuels repris d'un autre jeu (alias visuel).
+pub fn est_alias(marks_root: &Path, slug: &str) -> bool {
+    alias_mark(marks_root, slug).is_file()
+}
+
+/// Copie les visuels d'un jeu vers un autre (alias visuel) : la réponse pour
+/// un jeu absent de SteamGridDB — un fangame reprend l'art de sa série. Les
+/// fichiers copiés sont marqués `.choice` pour le jeu cible (une recherche
+/// automatique ne les remplacera pas) et ses marques « introuvable » tombent.
+/// Rend le nombre de visuels copiés.
+pub fn alias_visuels(
+    assets: &Path,
+    marks_root: &Path,
+    source_key: &str,
+    target_key: &str,
+    slug: &str,
+) -> usize {
+    if source_key == target_key {
+        // deux paquets du MÊME jeu partagent déjà leurs visuels : copier un
+        // fichier sur lui-même le tronquerait
+        return 0;
+    }
+    let mut copies = 0;
+    // marque d'alias : un jeu aux visuels repris ne doit plus être
+    // auto-identifié (la recherche par nom renommerait les fichiers copiés
+    // sous la clé d'un jeu qui n'est peut-être pas le bon)
+    let _ = std::fs::create_dir_all(marks_root);
+    write_atomic(&alias_mark(marks_root, slug), b"");
+    for kind in ArtKind::ALL {
+        let dir = assets.join(kind.dir());
+        let marks = marks_root.join(kind.dir());
+        let mut copie = None;
+        for ext in IMAGE_EXT {
+            let source = dir.join(format!("{source_key}.{ext}"));
+            if !source.is_file() {
+                continue;
+            }
+            let cible = dir.join(format!("{target_key}.{ext}"));
+            if std::fs::copy(&source, &cible).is_ok() {
+                copie = Some(ext);
+                copies += 1;
+            }
+        }
+        let Some(garde) = copie else {
+            continue;
+        };
+        // un seul fichier fait foi pour ce type
+        for ext in IMAGE_EXT {
+            if ext != garde {
+                let _ = std::fs::remove_file(dir.join(format!("{target_key}.{ext}")));
+            }
+        }
+        let _ = std::fs::create_dir_all(&marks);
+        write_atomic(&marks.join(format!("{slug}.choice")), b"");
+        let _ = std::fs::remove_file(marks.join(format!("{slug}.miss")));
+    }
+    copies
+}
+
+/// `AAAA-MM-JJ` → jours depuis l'époque (algorithme civil_from_days inverse).
+fn jours_depuis_date(date: &str) -> Option<i64> {
+    let mut morceaux = date.split('-');
+    let annee: i64 = morceaux.next()?.parse().ok()?;
+    let mois: i64 = morceaux.next()?.parse().ok()?;
+    let jour: i64 = morceaux.next()?.parse().ok()?;
+    if !(1..=12).contains(&mois) || !(1..=31).contains(&jour) {
+        return None;
+    }
+    let y = if mois <= 2 { annee - 1 } else { annee };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (mois + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + jour - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+/// Date **locale** du poste : les marques sont écrites en heure locale, donc
+/// les comparer à une date UTC faisait expirer une marque du jour même entre
+/// 23 h et minuit (constaté au banc le 23/11 à 00:45 CET).
+fn aujourd_hui_local() -> (i64, i64, i64) {
+    let secondes = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duree| duree.as_secs())
+        .unwrap_or(0);
+    let instant = secondes as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if !unsafe { libc::localtime_r(&instant, &mut tm) }.is_null() {
+        return (
+            tm.tm_year as i64 + 1900,
+            tm.tm_mon as i64 + 1,
+            tm.tm_mday as i64,
+        );
+    }
+    date_depuis_jours((secondes / 86_400) as i64)
+}
+
+fn jours_aujourd_hui() -> i64 {
+    let (annee, mois, jour) = aujourd_hui_local();
+    jours_depuis_date(&format!("{annee:04}-{mois:02}-{jour:02}")).unwrap_or(0)
+}
+
+/// Jours depuis l'époque → `(année, mois, jour)`.
+fn date_depuis_jours(jours: i64) -> (i64, i64, i64) {
+    let z = jours + 719_468;
+    let ere = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + ere * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let jour = doy - (153 * mp + 2) / 5 + 1;
+    let mois = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if mois <= 2 { y + 1 } else { y }, mois, jour)
+}
+
+fn date_aujourd_hui() -> String {
+    let (annee, mois, jour) = aujourd_hui_local();
+    format!("{annee:04}-{mois:02}-{jour:02}")
 }
 
 /// Fichier des années de sortie, dans `assets/` : c'est le dossier partagé
@@ -2744,5 +3037,67 @@ mod tests {
             );
             assert!(!choices.is_empty(), "{kind:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_absents {
+    use super::*;
+
+    #[test]
+    fn dates_aller_retour() {
+        assert_eq!(jours_depuis_date("1970-01-01"), Some(0));
+        assert_eq!(date_depuis_jours(0), (1970, 1, 1));
+        let jours = jours_depuis_date("2026-11-23").expect("date valide");
+        assert_eq!(date_depuis_jours(jours), (2026, 11, 23));
+    }
+
+    #[test]
+    fn date_locale_coherente() {
+        // la marque écrite aujourd'hui doit être considérée fraîche, même
+        // quand UTC est encore la veille (banc à 00:45 CET)
+        assert_eq!(
+            jours_depuis_date(&date_aujourd_hui()),
+            Some(jours_aujourd_hui())
+        );
+    }
+
+    #[test]
+    fn marque_absent_datee_puis_levee() {
+        let dir = std::env::temp_dir().join(format!("glauncher-absents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dossier de test");
+        let path = dir.join("absents.txt");
+        let marque = marquer_absent(&path, "jeu-inconnu", "Jeu Inconnu");
+        assert!(absent_frais(&marque), "{marque:?}");
+        assert_eq!(load_absents(&path).get("jeu-inconnu"), Some(&marque));
+        // une autre marque ne l'écrase pas
+        marquer_absent(&path, "autre", "Autre");
+        assert_eq!(load_absents(&path).len(), 2);
+        clear_absent(&path, "jeu-inconnu");
+        let relu = load_absents(&path);
+        assert!(!relu.contains_key("jeu-inconnu"));
+        assert!(relu.contains_key("autre"));
+        clear_absent(&path, "autre");
+        assert!(!path.exists(), "plus aucune marque = fichier retiré");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn alias_copie_et_marque_le_choix() {
+        let dir = std::env::temp_dir().join(format!("glauncher-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let assets = dir.join("assets");
+        let marks = dir.join("marks");
+        std::fs::create_dir_all(assets.join("grids")).expect("dossier grids");
+        std::fs::write(assets.join("grids").join("source.png"), b"png").expect("source");
+        let copies = alias_visuels(&assets, &marks, "source", "cible", "slug-cible");
+        assert_eq!(copies, 1);
+        assert_eq!(
+            std::fs::read(assets.join("grids").join("cible.png")).expect("copie"),
+            b"png"
+        );
+        assert!(marks.join("grids").join("slug-cible.choice").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
