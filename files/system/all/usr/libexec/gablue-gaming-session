@@ -32,6 +32,28 @@ export XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP
 systemctl --user start plasma-powerdevil.service 2>/dev/null \
     || log "powerdevil indisponible (bouton power au défaut de logind)"
 
+# Curseur : il doit disparaître tout seul quand on ne touche plus rien, y
+# compris sur un jeu (le launcher masque le sien, mais dans un jeu c'est le
+# compositeur qui tient le pointeur). KWin embarque l'effet `hidecursor`, mais
+# il n'est pas chargé par défaut : on le charge à chaud, SANS écrire `kwinrc`
+# (vérifié sur 6.8.3 : `loadEffect` répond true, `unloadEffect` le retire ;
+# la config de l'utilisateur n'est donc jamais modifiée). Le délai est celui
+# de l'effet (~5 s) tant qu'on ne décide pas de le régler.
+QDBUS=$(command -v qdbus6 || command -v qdbus || true)
+if [ -n "$QDBUS" ]; then
+    (
+        for _ in $(seq 1 150); do   # 30 s au plus, KWin démarre en ~1 s
+            "$QDBUS" org.kde.KWin /Effects >/dev/null 2>&1 && break
+            sleep 0.2
+        done
+        "$QDBUS" org.kde.KWin /Effects \
+            org.kde.kwin.Effects.loadEffect hidecursor >/dev/null 2>&1 \
+            || log "effet hidecursor non chargé (curseur visible au repos)"
+    ) &
+else
+    log "qdbus absent : curseur non masqué au repos"
+fi
+
 # KWin seul, en DRM, avec XWayland (beaucoup de jeux .wgp/.lgp en dépendent).
 # --exit-with-session : la session meurt avec le launcher, aucun compositeur
 # orphelin laissé devant un écran noir.

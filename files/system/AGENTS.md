@@ -48,7 +48,11 @@
   lui-même les trois variables `XDG_*` (utile lancé depuis un VT, sans
   greeter), démarre `plasma-powerdevil.service` (sans lui, logind applique son
   défaut `HandlePowerKey=poweroff` : le bouton power ÉTEINT la machine au lieu
-  de la mettre en veille) et `exec` KWin avec
+  de la mettre en veille) **et charge l'effet KWin `hidecursor`** à chaud
+  (`loadEffect` par D-Bus, jamais d'écriture dans `kwinrc`) pour que le
+  pointeur disparaisse au repos, y compris par-dessus un jeu — c'est le
+  compositeur qui tient le curseur, pas le launcher (qui masque le sien depuis
+  `src/cursor.rs`). Il `exec` ensuite KWin avec
   `--exit-with-session /usr/libexec/gablue-gaming-launcher`. Jamais `set -e` :
   un service absent n'est pas une panne de session.
 - **gablue-gaming-launcher** : boucle du launcher. Contrat de sortie : code
