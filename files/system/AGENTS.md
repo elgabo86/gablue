@@ -30,6 +30,37 @@
 - Permet `./jeu.exe` en terminal et le bouton « Exécuter » de Dolphin/KIO pour les `.exe` avec bit `+x` (copies NTFS/exFAT, archives)
 - Complément du patch runner `no_exe_executable_bit.mypatch` (dépôt `elgabo86/gwine`) : le wineserver gwine ne pose plus `+x` sur les `.exe`/`.com` créés par les installateurs → KIO les ouvre nativement via Windows.desktop → gwine (icônes + « Ouvrir avec » intacts). KIO ne traite un `.exe` comme binaire natif QUE s'il a `+x` (hardcodé, sans option)
 
+## Session graphique console (/usr/share/wayland-sessions)
+
+- **gablue-gaming.desktop** : la session « Gablue Gaming », choisie dans
+  plasmalogin. `Exec` = le même enrobage que Plasma
+  (`plasma-dbus-run-session-if-needed`) puis
+  `/usr/libexec/gablue-gaming-session`. **`DesktopNames=GablueGaming;KDE`** :
+  le premier nom devient `XDG_SESSION_DESKTOP` (c'est ce que lit
+  `glauncher::mode` pour savoir qu'il est en console) et la liste complète
+  devient `XDG_CURRENT_DESKTOP`, où **« KDE » doit rester** — c'est lui qui
+  fait choisir le backend KDE à `xdg-desktop-portal`, donc sans lui plus de
+  partage d'écran dans les jeux. `desktop-file-validate` râle sur
+  `DesktopNames` (« clé non standard ») : c'est une clé SDDM, Plasma utilise
+  la même, l'avertissement est attendu.
+- **gablue-gaming-session** : KWin **nu** (`--drm --xwayland`), sans
+  plasmashell — ni panneaux, ni notifications, ni Discover. Garantit
+  lui-même les trois variables `XDG_*` (utile lancé depuis un VT, sans
+  greeter), démarre `plasma-powerdevil.service` (sans lui, logind applique son
+  défaut `HandlePowerKey=poweroff` : le bouton power ÉTEINT la machine au lieu
+  de la mettre en veille) et `exec` KWin avec
+  `--exit-with-session /usr/libexec/gablue-gaming-launcher`. Jamais `set -e` :
+  un service absent n'est pas une panne de session.
+- **gablue-gaming-launcher** : boucle du launcher. Contrat de sortie : code
+  **0 = fin voulue** (KWin s'arrête, retour au greeter), **≠ 0 = plantage** →
+  relance après 1 s. En session console le launcher n'expose aucune sortie
+  (retour/Échap inertes) : la sortie passe par le menu système de `gpad`
+  (Home maintenu). Détail → `src/glauncher/AGENTS.md`.
+- **Pas encore là** (lots suivants) : la session « choix » avec compte à
+  rebours (autologin retardé sans passer par le greeter), les entrées
+  Mode console / Mode bureau de `gpad`, les réglages `session`/`autologin`/
+  `delay` de `/etc/gablue/login.conf` et la barre de mise à jour du launcher.
+
 ## Unités systemd utilisateur (/usr/lib/systemd/user)
 
 Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité plus faible que `~/.config/systemd/user/`, donc un drop-in utilisateur de même nom écrase le nôtre — laisser le même nom de fichier pour que le retrait côté utilisateur soit transparent).

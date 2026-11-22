@@ -1,0 +1,39 @@
+#!/usr/bin/bash
+
+# gablue-gaming-session — session « console » Gablue : KWin nu + glauncher.
+#
+# Lancée par plasmalogin via /usr/share/wayland-sessions/gablue-gaming.desktop.
+# Pas de plasmashell : ni panneaux, ni notifications, ni Discover — l'écran
+# n'appartient qu'au launcher. Les rares services de la coquille qui restent
+# utiles sont démarrés ici au mieux : un service absent ne doit pas tuer la
+# session.
+#
+# Sortie : le launcher rend la main avec le code 0 → KWin s'arrête et la
+# session se termine. Un plantage est relancé par gablue-gaming-launcher.
+
+set -uo pipefail   # jamais -e : un service absent n'est pas une panne
+
+log() { printf 'gablue-gaming: %s\n' "$*" >&2; }
+
+# Identité de session. Le greeter pose déjà ces variables depuis
+# `DesktopNames`, on les garantit ici pour deux raisons : xdg-desktop-portal
+# choisit son backend sur XDG_CURRENT_DESKTOP (sans « KDE », plus de partage
+# d'écran dans les jeux), et le launcher s'en sert pour son mode console
+# (lancé depuis un VT, sans greeter, il doit quand même se savoir en console).
+: "${XDG_SESSION_TYPE:=wayland}"
+: "${XDG_SESSION_DESKTOP:=GablueGaming}"
+: "${XDG_CURRENT_DESKTOP:=GablueGaming:KDE}"
+export XDG_SESSION_TYPE XDG_SESSION_DESKTOP XDG_CURRENT_DESKTOP
+
+# Bouton power, veille, DPMS : sans powerdevil, logind applique son défaut
+# (HandlePowerKey=poweroff) et le bouton ÉTEINT la machine au lieu de la
+# mettre en veille. Lancé comme unité utilisateur : c'est ainsi que Plasma le
+# démarre, et il a besoin de la session systemd, pas d'un fork nu.
+systemctl --user start plasma-powerdevil.service 2>/dev/null \
+    || log "powerdevil indisponible (bouton power au défaut de logind)"
+
+# KWin seul, en DRM, avec XWayland (beaucoup de jeux .wgp/.lgp en dépendent).
+# --exit-with-session : la session meurt avec le launcher, aucun compositeur
+# orphelin laissé devant un écran noir.
+exec kwin_wayland --drm --xwayland \
+    --exit-with-session /usr/libexec/gablue-gaming-launcher

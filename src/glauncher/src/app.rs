@@ -31,6 +31,7 @@ use crate::index::{Index, Refresh};
 use crate::launch;
 use crate::library::{self, ArtworkCache, Game};
 use crate::marquee;
+use crate::mode::Mode;
 use crate::music;
 use crate::playtime;
 use crate::pose::Pose;
@@ -748,6 +749,9 @@ pub struct App {
     glyphs: Glyphs,
     window: Option<window::Id>,
     fullscreen: bool,
+    /// Session console Gablue (KWin nu) ou bureau : en console, le launcher
+    /// ne s'auto-ferme pas, la sortie passe par le menu système de `gpad`.
+    mode: Mode,
     /// Visuels mémorisés par slug (pas de relecture à chaque réindexation).
     artwork: ArtworkCache,
     /// Index SQLite des paquets, partagé avec les threads de rafraîchissement.
@@ -875,6 +879,7 @@ impl App {
         notice: Option<String>,
         autoplay: Option<usize>,
         open_picker: bool,
+        mode: Mode,
     ) -> (Self, Task<Message>) {
         // ancienne disposition (covers/, icons/ à la racine) → assets/
         config.migrate_cache();
@@ -971,6 +976,7 @@ impl App {
             glyphs: Glyphs::for_kind(PadKind::Xbox),
             window: None,
             fullscreen,
+            mode,
             artwork,
             index,
             refreshing: false,
@@ -3650,7 +3656,13 @@ impl App {
                 Named::Enter | Named::Space => {
                     return Task::done(Message::OpenPage(self.selected));
                 }
-                Named::Escape => return Task::done(Message::Quit),
+                Named::Escape => {
+                    return if self.mode.is_console() {
+                        Task::none()
+                    } else {
+                        Task::done(Message::Quit)
+                    };
+                }
                 Named::F11 => return Task::done(Message::ToggleFullscreen),
                 Named::Tab => return Task::done(Message::ToggleView),
                 _ => {}
@@ -3665,6 +3677,7 @@ impl App {
                 "+" | "=" | "＋" => return Task::done(Message::Zoom(1)),
                 "-" | "_" | "−" | "–" | "‐" => return Task::done(Message::Zoom(-1)),
                 "f" => return Task::done(Message::ToggleFullscreen),
+                "q" if self.mode.is_console() => return Task::none(),
                 "q" => return Task::done(Message::Quit),
                 _ => {}
             },
@@ -3833,8 +3846,13 @@ impl App {
                     // « retour » ne quitte pas du premier coup : deux appuis
                     // rapprochés (1,5 s) sont nécessaires, pour ne pas
                     // s'éjecter sur une pression malheureuse en jouant.
+                    // En session console il ne quitte RIEN : le launcher est
+                    // la session, la sortie passe par le menu système de gpad
+                    // (Home maintenu), qui propose aussi Éteindre/Redémarrer.
                     PadButton::Back => {
-                        if self.back_press.is_some_and(|at| at.elapsed() < QUIT_WINDOW) {
+                        if self.mode.is_console() {
+                            Task::none()
+                        } else if self.back_press.is_some_and(|at| at.elapsed() < QUIT_WINDOW) {
                             Task::done(Message::Quit)
                         } else {
                             self.back_press = Some(std::time::Instant::now());
@@ -5560,8 +5578,12 @@ impl App {
     }
 
     fn footer(&self) -> Element<'_, Message> {
-        let hints: Element<'_, Message> = match self.pad_hints() {
-            true => row![
+        // En session console, aucune aide ne propose de quitter : le launcher
+        // n'a pas de sortie propre (c'est le menu système de gpad qui la
+        // porte). Afficher « Quitter » y serait un mensonge.
+        let console = self.mode.is_console();
+        let hints: Element<'_, Message> = match (self.pad_hints(), console) {
+            (true, false) => row![
                 hint(self.glyphs.confirm.clone(), "Ouvrir"),
                 hint(self.glyphs.back.clone(), "Quitter (2×)"),
                 hint(self.glyphs.view.clone(), self.next_view_label()),
@@ -5571,7 +5593,21 @@ impl App {
             .spacing(18)
             .align_y(Alignment::Center)
             .into(),
-            false => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
+            (true, true) => row![
+                hint(self.glyphs.confirm.clone(), "Ouvrir"),
+                hint(self.glyphs.view.clone(), self.next_view_label()),
+                hint(self.glyphs.zoom_out.clone(), "Taille −"),
+                hint(self.glyphs.zoom_in.clone(), "Taille +"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into(),
+            (false, false) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
+                .size(15)
+                .font(HELP_FONT)
+                .color(MUTED)
+                .into(),
+            (false, true) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran")
                 .size(15)
                 .font(HELP_FONT)
                 .color(MUTED)

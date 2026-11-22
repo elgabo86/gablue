@@ -13,6 +13,7 @@ mod kwin;
 mod launch;
 mod library;
 mod marquee;
+mod mode;
 mod music;
 mod playtime;
 mod pose;
@@ -301,7 +302,15 @@ fn main() -> iced::Result {
     };
 
     iced::application(
-        move || app::App::boot(config.clone(), notice.clone(), options.play, options.picker),
+        move || {
+            app::App::boot(
+                config.clone(),
+                notice.clone(),
+                options.play,
+                options.picker,
+                mode::Mode::detect(),
+            )
+        },
         app::App::update,
         app::App::view,
     )

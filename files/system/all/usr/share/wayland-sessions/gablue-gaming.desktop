@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Gaming
+Comment=Session console : KWin nu et le lanceur de jeux, sans bureau
+Exec=/usr/libexec/plasma-dbus-run-session-if-needed /usr/libexec/gablue-gaming-session
+TryExec=/usr/libexec/gablue-gaming-session
+# Le premier nom devient XDG_SESSION_DESKTOP (le launcher en déduit son mode
+# console), la liste complète devient XDG_CURRENT_DESKTOP — « KDE » doit y
+# rester, c'est lui qui fait choisir le backend KDE à xdg-desktop-portal
+# (sans lui, plus de partage d'écran dans les jeux).
+DesktopNames=GablueGaming;KDE

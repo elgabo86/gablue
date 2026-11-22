@@ -1,0 +1,22 @@
+#!/usr/bin/bash
+
+# gablue-gaming-launcher — boucle du launcher de la session console.
+#
+# Contrat de sortie avec la session (voir gablue-gaming-session) :
+#   0   l'utilisateur veut terminer la session → KWin s'arrête ;
+#   ≠ 0 plantage → on relance, une console ne laisse pas un écran noir.
+#
+# Le launcher n'expose AUCUNE sortie en mode console : le bouton « retour » et
+# Échap y sont inertes, et quitter passe par le menu système de l'overlay
+# manette (Home maintenu : Mode bureau, Redémarrer, Éteindre).
+
+set -uo pipefail
+: "${GLAUNCHER:=/usr/bin/glauncher}"   # surchargeable pour le banc d'essai
+
+while :; do
+    "$GLAUNCHER"
+    code=$?
+    [ "$code" -eq 0 ] && exit 0
+    printf 'gablue-gaming: glauncher sorti avec le code %s → relance\n' "$code" >&2
+    sleep 1
+done

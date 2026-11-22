@@ -96,6 +96,8 @@ leurs icônes, pour l'interface.
 - `src/cursor.rs` — `Idle` : cache le pointeur quand il n'a pas bougé (enveloppe
   d'interaction au-dessus de toute la vue) + relève qui donne l'heure au repos
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
+- `src/mode.rs` — mode de session : console (session nue) ou bureau, déduit de
+  `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP` (`GLAUNCHER_MODE` pour le banc)
 - `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
   avec `include_bytes!`
@@ -110,6 +112,27 @@ leurs icônes, pour l'interface.
   refaire n'a d'intérêt que pour changer la forme du scintillement.
 
 ## Contrats
+
+- **Mode console ou bureau, jamais une option** : `src/mode.rs` lit
+  `XDG_SESSION_DESKTOP` (nom posé par `DesktopNames` de
+  `files/system/all/usr/share/wayland-sessions/gablue-gaming.desktop`, session
+  KWin nue **sans plasmashell**) et `XDG_CURRENT_DESKTOP` en repli.
+  `GLAUNCHER_MODE=console|desktop` ne sert qu'au banc d'essai. Aucun drapeau
+  de ligne de commande à écrire deux fois : le même binaire lancé depuis le
+  bureau garde son comportement historique.
+- **En session console, le launcher ne se ferme pas** : « retour » (manette) et
+  `Échap`/`q` sont **inertes** — le launcher EST la session, donc le fermer
+  laisserait un écran noir. La sortie passe par le **menu système de `gpad`**
+  (Home maintenu : Mode bureau, Redémarrer, Éteindre), qui est joignable même
+  quand le launcher a le focus (déclencheur evdev). L'aide du pied de page n'y
+  affiche **aucune** mention de sortie (« Quitter (2×) », « Échap quitter »
+  disparaissent) : proposer une sortie qui n'existe pas serait un mensonge.
+  En mode bureau, rien ne change (double appui = fermer la fenêtre).
+- **Sortie de session = code 0** : `/usr/libexec/gablue-gaming-launcher` relance
+  le launcher tant qu'il sort en erreur (plantage = relance, une console ne
+  laisse pas un écran noir) et rend la main à KWin (`--exit-with-session`) dès
+  que le code est 0. Ne pas toucher à ce contrat sans mettre à jour
+  `/usr/libexec/gablue-gaming-session`, qui en dépend.
 
 - **Nom affiché** : le nom du fichier sans extension, jamais `.wgp`/`.lgp`, et
   aucun badge de format sur la vignette.
