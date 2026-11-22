@@ -144,12 +144,26 @@ centré** (520×360) qui ne contient que des actions définitives.
 |---|---|
 | `TOUT FERMER` | `scripts/killthemall` (jeux Windows/Wine, émulateurs, LGP/AppImage montés) **puis** `scripts/fermer-applis` (les applis du menu Applications : ES-DE, VacuumTube, Gablue TV, Jellyfin) — contrairement à Home+SELECT qui ne fait que `killthemall` |
 | `DECONNECTER LA MANETTE` | seulement si la manette qui pilote est en **Bluetooth** |
+| `FERMER LA SESSION` | `qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout` (fermeture propre des applications) ; repli `loginctl terminate-session $XDG_SESSION_ID` |
 | `REDEMARRER` | `systemctl reboot` |
 | `ETEINDRE` | `systemctl poweroff` |
 
 - **Toutes demandent deux appuis** (armement rouge + `?`, navigation désarme).
 - **Le menu se ferme avant d'agir** (`combo_apres`), comme le replay : le
   panneau ne doit ni rester à l'écran pendant l'extinction, ni se filmer.
+  `DECONNECTER LA MANETTE` est la seule commande **lancée tout de suite**
+  (détachée) en même temps que la fermeture : `gpad-trigger` tue le résident dès
+  que la manette part, une action différée serait perdue.
+- **Déconnexion Bluetooth non bloquante** (22/11/2026) : `bluetoothctl
+  disconnect` était lancé avec `.output()` — le menu restait affiché jusqu'à la
+  disparition effective de la manette (jusqu'à plusieurs secondes). Il part
+  maintenant en `spawn()` détaché, le menu se retire immédiatement. Mesuré au
+  banc avec un stub dormant 3 s : sortie du menu en **504 ms**, stub terminé
+  3 s plus tard.
+- **`FERMER LA SESSION` est différée** (`Apres::DeconnecterSession`, lancée
+  après destruction de la surface) : le menu ne doit pas rester dessus pendant
+  que les applications se ferment. Mesuré : sortie en **503 ms** puis
+  `SYSTEME logout (<stub>)`.
 - **Maintien alors que le panneau latéral est OUVERT** : `gpad-trigger` ne peut pas
   le voir — c'est l'overlay qui tient `EVIOCGRAB`, donc lui seul lit la manette.
   L'overlay vérifie le maintien **à chaque tour de boucle** (`surveiller_home`,
@@ -161,7 +175,7 @@ centré** (520×360) qui ne contient que des actions définitives.
   `gpad-trigger` reçoit le signal, **attend sa sortie** (pad rendu) et lance
   `--console`. Mesuré :
   `HOME MAINTENU -> menu systeme` + `[gpad-trigger] demande de menu systeme
-  (overlay)` + `SIGNAL -> fermeture` + `CONSOLE items=3`.
+  (overlay)` + `SIGNAL -> fermeture` + `CONSOLE items=4`.
 - **Bug de boucle corrigé (17/11/2026)** : `gpad-trigger` faisait
   `if (poll(...) <= 0) continue;`. Or `poll` renvoie **0** à chaque délai (50 ms)
   et **-1/EINTR** à chaque signal (SIGCHLD, SIGUSR1) : le bas de boucle — où
@@ -180,17 +194,22 @@ centré** (520×360) qui ne contient que des actions définitives.
   manette : relancer avant que l'ancienne ait rendu le pad donne `EBUSY`.
 - Côté overlay, `--console` (drapeau interne, journaux `CONSOLE …`) = surface
   plein écran + cadre centré, **pas de KWin**, pas de nom de menu, pas d'en-tête de
-  fenêtre, et **aucun titre** : trois ou quatre lignes et l'aide (**centrée**).
+  fenêtre, et **aucun titre** : quatre ou cinq lignes et l'aide (**centrée**).
   Le panneau latéral non plus n'a plus de titre `OVERLAY MANETTE` : le **nom du
   menu courant** s'affiche en bas (`nom_menu`, centré), plus de `L1 < PAGE > R1`
   en haut.
-- Banc : `POWEROFF` / `REBOOT` remplacent `systemctl` (le banc **ne doit jamais
-  éteindre la machine**), `KILLTHEMALL` et `BLUETOOTHCTL` comme d'habitude.
+- Banc : `POWEROFF` / `REBOOT` / `LOGOUT` remplacent `systemctl` / la fermeture
+  de session (le banc **ne doit jamais éteindre ni déconnecter la machine**),
+  `KILLTHEMALL` et `BLUETOOTHCTL` comme d'habitude.
 
-Mesuré : Home tenu → `HOME maintenu -> menu systeme` +
-`SIGNAL -> fermeture` + `CONSOLE items=4` ; `ARME TOUT FERMER` → `CONSOLE
-killthemall` + `GPAD_DOWN` + stub appelé ; `ARME DECONNECTER LA MANETTE` →
-`BT disconnect aa:bb:…` ; `ARME REDEMARRER` → `SYSTEME reboot` (stub).
+Mesuré (banc vpad, 22/11/2026) : Home tenu → `HOME maintenu -> menu systeme` +
+`SIGNAL -> fermeture` + `CONSOLE items=4` (5 avec une manette Bluetooth) ;
+`ARME TOUT FERMER` → `CONSOLE killthemall` + `GPAD_DOWN` + stub appelé ;
+`ARME DECONNECTER LA MANETTE` → `BT DISCONNECT aa:bb:…` + sortie du menu en
+**504 ms** (stub `bluetoothctl` dormant 3 s) ; `ARME FERMER LA SESSION` →
+`CONSOLE fermeture de session` + `FENETRE RETIREE -> action differee` +
+`SYSTEME logout (<stub>)` en **503 ms** ; `ARME REDEMARRER` → `SYSTEME reboot`
+(stub).
 
 ## Manette Bluetooth : déconnexion depuis le menu système
 
@@ -203,9 +222,12 @@ panneau, c'est tout.
   `/virtual/misc/uhid/` → Bluetooth ; l'adresse vient de `uniq`. Même règle que
   `padnodes.sh` (`transport=bt`). Vérifié sur la vraie DualSense :
   `BT 84:30:95:42:25:35`.
-- Action : `bluetoothctl disconnect <mac>` (sans root). La manette part →
-  `gpad-trigger` enlève le panneau → le gate se referme, donc l'overlay ne peut pas
-  rester avec une manette coupée.
+- Action : `bluetoothctl disconnect <mac>` (sans root), **lancé détaché**
+  (`spawn`, jamais `output`) : la commande peut mettre une seconde à rendre la
+  main, et l'attendre laissait le menu affiché jusqu'à la disparition effective
+  de la manette (constaté le 22/11/2026). Le menu se retire d'abord, puis
+  `gpad-trigger` enlève le panneau et le gate se referme, donc l'overlay ne peut
+  pas rester avec une manette coupée.
 - Hooks de banc : `PAD_BT_MAC=a4:ae:…` force la détection (manette virtuelle),
   `BLUETOOTHCTL=/chemin/stub` remplace l'outil. **Ne jamais déconnecter la
   vraie manette en test** : vérifier la détection et le stub suffisent.
@@ -240,3 +262,5 @@ Deux pièges payés, tous les deux dans `gpad-trigger` :
 | détection BT | `BT 84:30:95:42:25:35` sur la vraie DualSense ; rien sur une manette virtuelle |
 | deuxième manette | ne pilote pas (0 événement) ; manette partie → panneau enlevé, gate refermé |
 | Home maintenu | `HOME maintenu -> menu systeme` + `SIGNAL -> fermeture` + `CONSOLE items=4` |
+| `FERMER LA SESSION` | menu retiré en 503 ms puis `SYSTEME logout (<stub LOGOUT>)` ; jamais testé en réel au banc |
+| `DECONNECTER LA MANETTE` | menu retiré en 504 ms, `bluetoothctl` détaché (stub 3 s terminé après la sortie) |

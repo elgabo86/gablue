@@ -137,7 +137,7 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 | Geste | Effet |
 |---|---|
 | Home (appui court) | ouvre le panneau **au relâchement** ; le jeu a reçu l'appui |
-| Home maintenu ~1,2 s | **menu système** centré (Tout fermer / Déconnecter / Redémarrer / Éteindre) |
+| Home maintenu ~1,2 s | **menu système** centré (Tout fermer / Déconnecter la manette / Fermer la session / Redémarrer / Éteindre) |
 | Home + gauche | bascule l'**enregistrement** (indépendant du replay) |
 | Home + droite | capture d'écran |
 | Home + haut | **replay** : démarre le buffer, ou **sauvegarde** s'il tourne |

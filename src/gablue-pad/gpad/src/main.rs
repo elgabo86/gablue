@@ -943,6 +943,8 @@ enum Apres {
     /// menu console : redémarrer / éteindre (le panneau doit avoir disparu)
     Reboot,
     Eteindre,
+    /// menu console : déconnexion de la session (retour à l'écran de connexion)
+    DeconnecterSession,
     /// menu console : killthemall, après fermeture du menu
     ToutFermer,
 }
@@ -1383,6 +1385,7 @@ fn demande_confirmation(nom: &str) -> bool {
         nom,
         "FERMER"
             | "DECONNECTER LA MANETTE"
+            | "FERMER LA SESSION"
             | "REDEMARRER"
             | "ETEINDRE"
             | "TOUT FERMER"
@@ -1437,6 +1440,45 @@ fn lancer_systeme(var: &str, action: &str) {
     match c.spawn() {
         Ok(_) => println!("SYSTEME {action}"),
         Err(e) => eprintln!("SYSTEME {action}: {e}"),
+    }
+}
+
+/// Déconnexion de la session (« fermer la session », retour à l'écran de
+/// connexion). Le service KDE ferme les applications proprement (Plasma 6,
+/// `org.kde.Shutdown`) ; à défaut, logind termine la session du poste.
+/// `LOGOUT` remplace la commande : le banc ne doit JAMAIS déconnecter.
+fn lancer_deconnexion() {
+    if let Ok(p) = std::env::var("LOGOUT") {
+        match std::process::Command::new(&p).spawn() {
+            Ok(_) => println!("SYSTEME logout ({p})"),
+            Err(e) => eprintln!("SYSTEME logout {p}: {e}"),
+        }
+        return;
+    }
+    let qdbus = ["/usr/bin/qdbus6", "/usr/bin/qdbus"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists());
+    if let Some(q) = qdbus {
+        match std::process::Command::new(q)
+            .args(["org.kde.Shutdown", "/Shutdown", "org.kde.Shutdown.logout"])
+            .spawn()
+        {
+            Ok(_) => {
+                println!("SYSTEME logout (org.kde.Shutdown)");
+                return;
+            }
+            Err(e) => eprintln!("SYSTEME logout {q}: {e}"),
+        }
+    }
+    match std::env::var("XDG_SESSION_ID") {
+        Ok(id) if !id.is_empty() => match std::process::Command::new("/usr/bin/loginctl")
+            .args(["terminate-session", &id])
+            .spawn()
+        {
+            Ok(_) => println!("SYSTEME logout (loginctl {id})"),
+            Err(e) => eprintln!("SYSTEME logout loginctl: {e}"),
+        },
+        _ => eprintln!("SYSTEME logout: ni qdbus ni XDG_SESSION_ID"),
     }
 }
 
@@ -1998,6 +2040,7 @@ impl App {
                         // jamais posés par un combo (menu console seulement)
                         Apres::Reboot => "COMBO: REBOOT",
                         Apres::Eteindre => "COMBO: EXTINCTION",
+                        Apres::DeconnecterSession => "COMBO: DECONNEXION",
                         Apres::ToutFermer => "COMBO: TOUT FERMER",
                     }
                     .to_string();
@@ -3499,10 +3542,24 @@ impl App {
                     self.request_close();
                 }
                 "DECONNECTER LA MANETTE" => {
-                    // la manette part -> gpad-trigger enleve le panneau, gate referme
+                    // Le menu se retire TOUT DE SUITE : `bluetoothctl` peut
+                    // mettre une seconde à rendre la main, et l'ancien appel
+                    // bloquant laissait le menu à l'écran jusqu'à la disparition
+                    // effective de la manette (constaté). La commande part
+                    // détachée, donc rien à différer : `gpad-trigger` peut tuer
+                    // le résident dès que la manette part sans perdre l'action.
                     let mac = self.pad_bt.clone().unwrap_or_default();
                     println!("BT DISCONNECT {mac}");
                     self.status = bluetooth_disconnect(&mac);
+                    self.request_close();
+                }
+                "FERMER LA SESSION" => {
+                    // rien à filmer ici, mais le menu ne doit pas rester à
+                    // l'écran pendant que les applications se ferment
+                    self.status = "FERMETURE SESSION".to_string();
+                    self.combo_apres = Some(Apres::DeconnecterSession);
+                    println!("CONSOLE fermeture de session");
+                    self.request_close();
                 }
                 "CLAVIER VIRTUEL" => self.clavier_virtuel(),
                 "MODE SOURIS" => self.mouse_toggle(),
@@ -3913,6 +3970,7 @@ impl App {
             }
             Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
             Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
+            Apres::DeconnecterSession => lancer_deconnexion(),
             Apres::ToutFermer => {
                 // jeux Windows/émulateurs (killthemall) PUIS les applis du
                 // menu Applications : c'est ce que « tout fermer » veut dire
@@ -5196,6 +5254,12 @@ fn pad_bt_mac(evdev: &str) -> Option<String> {
 }
 
 /// Déconnexion de la manette Bluetooth (bluetoothctl, sans root).
+///
+/// **Détaché, jamais attendu** : `bluetoothctl disconnect` met jusqu'à une
+/// seconde (voire plus) à rendre la main, et l'ancien `.output()` bloquait le
+/// panneau — le menu restait affiché jusqu'à la disparition effective de la
+/// manette (constaté 22/11/2026). Le menu se retire d'abord, la commande vit
+/// sa vie.
 fn bluetooth_disconnect(mac: &str) -> String {
     if mac.is_empty() {
         return "BT: ADRESSE INCONNUE".to_string();
@@ -5206,22 +5270,9 @@ fn bluetooth_disconnect(mac: &str) -> String {
     }
     match std::process::Command::new(&outil)
         .args(["disconnect", mac])
-        .output()
+        .spawn()
     {
-        Ok(o) => {
-            let t = String::from_utf8_lossy(&o.stdout);
-            let l = t
-                .lines()
-                .rev()
-                .map(|l| l.trim())
-                .find(|l| !l.is_empty())
-                .unwrap_or("");
-            if l.is_empty() {
-                format!("BT: DECONNEXION {mac}")
-            } else {
-                format!("BT: {}", clip(l, 34))
-            }
-        }
+        Ok(_) => format!("BT: DECONNEXION {mac}"),
         Err(e) => format!("BT KO: {e}"),
     }
 }
@@ -5237,20 +5288,6 @@ fn hidraw_for_uniq(uniq: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Processus (comm, pid) qui tiennent ce node ouvert.
-
-/// "nom:pid, ..." lisible, tronqué
-
-fn clip(s: &str, n: usize) -> String {
-    if s.chars().count() <= n {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(n.saturating_sub(1)).collect();
-        t.push('.');
-        t
-    }
 }
 
 static ARRET_DEMANDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -6955,6 +6992,7 @@ fn main() {
         if app.pad_bt.is_some() {
             v.push(Entree::Action("DECONNECTER LA MANETTE"));
         }
+        v.push(Entree::Action("FERMER LA SESSION"));
         v.push(Entree::Action("REDEMARRER"));
         v.push(Entree::Action("ETEINDRE"));
         app.accueil = v;

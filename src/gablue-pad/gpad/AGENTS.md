@@ -973,7 +973,7 @@ nettoyer à la main.
 | `RECORDER`, `SCREENSHOT`, `MANGOHUD`, `VRR`, `BOOSTER`, `REPLAY`, `RUMBLE` | outils remplacés par des stubs |
 | `KILLTHEMALL`, `FERMERAPPLIS`, `SCRIPTS`, `MOUSE` | idem pour les actions et combos |
 | `GPAD_CLAVIER_LAYOUT`, `GPAD_CLAVIER_VARIANT` | forcent la disposition du clavier (banc, sans toucher `kxkbrc`) |
-| `REBOOT`, `POWEROFF`, `BLUETOOTHCTL` | commandes système remplacées (le banc n'éteint jamais la machine) |
+| `REBOOT`, `POWEROFF`, `LOGOUT`, `BLUETOOTHCTL` | commandes système remplacées (le banc n'éteint ni ne déconnecte jamais la session, et ne coupe jamais la vraie manette) |
 | `PAD_NODE` | manette qui a déclenché (transmise au replay et à `rumble`) |
 | `PAD_SONY`, `PAD_BT_MAC` | forcent famille / transport (banc, manette virtuelle) |
 | `GPAD_TRIGGER_PID` | pid de `gpad-trigger` à prévenir sur Home maintenu |
