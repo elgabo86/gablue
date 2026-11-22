@@ -65,6 +65,30 @@ launch_game() {
     
     [ -n "$game_args" ] && cmd="$cmd $game_args"
 
+    # gamescope : compositeur imbriqué (même rôle que `gwine --gamescope`).
+    # `--resolution` force la taille interne ; sans elle, `-f` seul laisse
+    # gamescope prendre la taille de l'écran. On enveloppe la commande ENTIÈRE
+    # (`cd` compris) : `printf %q` la protège pour le `eval` plus bas et pour
+    # le `bash -c` du namespace overlay.
+    if [ "${gamescope_opt:-false}" = "true" ]; then
+        if ! command -v gamescope >/dev/null 2>&1; then
+            error_exit "gamescope n'est pas installé"
+        fi
+        local gs_args="-f"
+        if [ -n "${resolution_opt:-}" ]; then
+            local gs_w
+            case "$resolution_opt" in
+                1080) gs_w=1920 ;;
+                900)  gs_w=1600 ;;
+                720)  gs_w=1280 ;;
+                480)  gs_w=854 ;;
+            esac
+            gs_args="-w $gs_w -h $resolution_opt -f"
+        fi
+        echo "Lancement sous gamescope: $gs_args"
+        cmd="gamescope $gs_args -- bash -c $(printf '%q' "$cmd")"
+    fi
+
     # Overlay manette : nom et icône du PAQUET pendant la partie. Le jeu tourne
     # en avant-plan sous ce processus (directement, ou via le `bash -c` de
     # l'overlay kernel) : publier `$$` suffit, gpad descend l'arbre. Le logo

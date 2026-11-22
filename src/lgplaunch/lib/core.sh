@@ -13,6 +13,9 @@ SELECT_EXE_PATH=
 mangohud_opt=""
 mangohud_layout_opt=""
 mangohud_fps_limit_opt=""
+# gamescope (--gamescope) et hauteur forcée (--resolution 1080|900|720|480)
+gamescope_opt=false
+resolution_opt=""
 # Normaliser $HOME vers /var/home (chemin réel sur Silverblue/Kinoite)
 HOME_REAL="$(realpath "$HOME")"
 SAVES_SYMLINK="/tmp/lgp-saves-$UID"

@@ -151,10 +151,15 @@ manette n'était libre.
   ligne passe en rouge ; `Croix` retire, `Rond` désarme. Formulation à l'écran
   explicite : le dossier **et son contenu ne sont pas touchés**, seule la liste
   change. Changer de ligne désarme aussi (on ne confirme que ce qu'on voit).
-- **Navigateur** : ligne 0 « Choisir ce dossier », puis « .. » et les
-  sous-dossiers (cachés écartés, tri alphabétique). `Croix` entre (ou choisit
-  la ligne 0), `Rond` remonte d'un niveau et **referme à la racine** (jamais de
-  cul-de-sac). En remontant, le curseur se pose sur le dossier quitté.
+- **Navigateur** (redessiné le 22/11, il était une simple liste de noms) :
+  même présentation que la page Réglages — titre, compteur « ligne / total »,
+  **fil d'Ariane** (trois derniers niveaux, le courant en accent), puis
+  « ✓ Choisir ce dossier » en tête (l'action pour laquelle on est venu),
+  « ↰ Remonter d'un niveau » et les dossiers préfixés « ▸ » (cachés écartés,
+  tri alphabétique). Dossier sans sous-dossier : une ligne le dit. `Croix`
+  entre (ou choisit la ligne 0), `Rond` remonte d'un niveau et **referme à la
+  racine** (jamais de cul-de-sac). En remontant, le curseur se pose sur le
+  dossier quitté.
 - **Écriture** : `config::save_game_dirs` ne réécrit **que la clé
   `game_dirs`** — commentaires, ordre et clés inconnues du fichier sont
   conservés, comme l'écrivain de Gablue Manager : deux écrivains sur le fichier
@@ -228,6 +233,11 @@ noir opaque l'aurait effacée.
   pour le son de capture). Cache `<cache>/gallery/<hash>.jpg`, clé = chemin +
   mtime (un fichier remplacé est refait). Rien n'anime la grille : pas de
   respiration, cadre de sélection fixe.
+- **Géométrie** : `galerie_geometrie(largeur)` (pure, testée) choisit le
+  nombre de colonnes pour une tuile visée de ~300 px (2 à 10) et **étale les
+  tuiles sur toute la largeur**. Avant, 6 colonnes de 240 px figées : sur un
+  écran 2K la galerie s'arrêtait « à la zone 1080 », ~1500 px au milieu de
+  2560 (constaté le 22/11). À 1080p : 6 colonnes ; à 2K : 8.
 - **Ouverture** : `Croix` sur une capture → aperçu plein écran dans le launcher
   (image **pleine**, pas la vignette), entrée en fondu avec un léger
   agrandissement (`Apercu.fade` piloté par `GalleryTick`, 8 Hz) ; gauche/droite
@@ -396,11 +406,11 @@ noir opaque l'aurait effacée.
   launcher ne scanne que les chemins écrits dans `config.toml`, jamais
   `~/Games` ou `~/Windows/Games` de sa propre initiative. Liste vide =
   bibliothèque vide (demandé, 19/11/2026).
-- **Dossiers de jeux** : `game_dirs` vit dans `config.toml` et le launcher se
-  contente de le lire. Pas de sélection de dossiers dans l'interface iced et
-  aucune écriture de cette config : le **choix des dossiers `.wgp`/`.lgp` se
-  fera dans `gablue-manager`** (à implémenter), qui écrit `game_dirs` puis
-  rafraîchit/relance le launcher. Le veilleur inotify, lui, reste ici.
+- **Dossiers de jeux** : `game_dirs` vit dans `config.toml`. Le choix se fait
+  à la manette dans **Réglages ▸ Ajouter un dossier…** (navigateur, voir la
+  section Réglages) : `config::save_game_dirs` ne réécrit que cette clé, en
+  préservant commentaires et clés inconnues (même contrat que Gablue Manager,
+  qui peut aussi l'écrire). Le veilleur inotify, lui, reste ici.
 - **Miniatures (grille)** : `assets/thumbs/<slug>.jpg` — 320 px de large, JPEG
   qualité 80, générées par `src/thumbs.rs`. La grille, la mosaïque et les
   vignettes de liste affichent la **miniature** tant que la largeur demandée
@@ -415,6 +425,22 @@ noir opaque l'aurait effacée.
   largeur ou qualité, et une cover plus récente que sa miniature la refait
   (mtime). Sonde : `cargo test --release bench_decodage -- --ignored
   --nocapture`.
+- **Options de lancement par jeu** (22/11) : trois lignes de plus dans
+  `Options ▸`, dessinées comme dans l'overlay (interrupteur ou valeur, pas de
+  texte « Croix = … ») — **Lancer dans gamescope**, **Résolution forcée**
+  (cycle Croix : celle du jeu → 1080 → 900 → 720 → 480 → retour) et, **pour un
+  `.wgp` seulement**, **Manettes en mode Xbox** (`gwine --xbox`, filtre
+  `all` = toutes les manettes ; `lgplaunch` n'a pas d'équivalent, la ligne
+  n'existe donc pas pour un `.lgp`). Les bascules **ne referment pas le menu** :
+  l'état se voit changer sous les yeux. Elles sont écrites tout de suite dans
+  `~/.local/share/glauncher/games.txt` (`src/pergame.rs`, une ligne par jeu
+  `<slug>\tgamescope=1\tres=1080\txbox=1`), **jamais dans `assets/`** : ce
+  dossier est partagé par Syncthing, alors qu'une TV 2K et un portable
+  n'appellent pas les mêmes réglages. Fusion à l'écriture (une ligne d'une
+  version future ou d'une autre session est conservée), ligne supprimée quand
+  tout revient au défaut. `launch::build` ajoute les options **devant le
+  paquet** (`--gamescope --resolution 1080 --xbox`), contrat commun à `gwine`
+  et `lgplaunch` (ce dernier a reçu `--gamescope`/`--resolution` pour ça).
 - **Lancement** : `launch_wgp`/`launch_lgp` + chemin du paquet en argument.
   `GLAUNCHER_LAUNCH_CMD` remplace toute la commande (tests).
 - **Temps de jeu** (`src/playtime.rs`) : écrit **avec les sauvegardes**, pas
@@ -759,9 +785,10 @@ noir opaque l'aurait effacée.
   réservée** : le bloc du bas se centre sur la page (une bande grise vide
   faisait pauvre, retour 18/11). La page vient **par-dessus la liste** dans une
   couche de profondeur **constante** (voir « Couche d'affichage »).
-- **Options réunies** : `Options ▸` ouvre un menu de **six** lignes — Grid,
-  Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` et `Date de
-  sortie…` (année connue en bout de ligne). Une ligne mène au menu d'images du
+- **Options réunies** : `Options ▸` ouvre un menu de **six lignes de visuels**
+  — Grid, Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` et `Date de
+  sortie…` (année connue en bout de ligne) — **suivies des options de lancement
+  du jeu** (voir ci-dessous). Une ligne mène au menu d'images du
   type choisi. **Aucun raccourci** n'ouvre ce menu depuis la liste, ni depuis la
   page (retiré le 20/11 : `C` sur la liste, puis `I`/`G`/`H`/`L`/`C`/`R`/`D` et
   les boutons manette Y/X sur la page) : le bouton de la page est le seul
@@ -1058,8 +1085,12 @@ noir opaque l'aurait effacée.
   1,5 s (`QUIT_WINDOW`) : le premier affiche « appuie encore sur retour pour
   quitter » et n'agit pas, une autre action annule l'invite — pas d'éjection
   sur une pression malheureuse en jouant ; dans le menu d'image il annule.
-  `BTN_NORTH` bascule grille → liste → mosaïque, `BTN_WEST`/`BTN_START`
-  ouvre le menu du tri. **Aucun raccourci n'ouvre les visuels depuis la
+  **`BTN_START` bascule grille → liste → mosaïque** et `BTN_NORTH` (Y/Triangle)
+  ouvre le menu du tri — Start et Triangle ont été **échangés** le 22/11
+  (Start est le geste fréquent, et son glyphe est explicite). `BTN_WEST`
+  (X/Carré) ouvre aussi le tri. **Le bouton qui a ouvert un menu le referme**
+  (Start sur les vues, Triangle/Carré sur le tri, `T` au clavier) : appuyer
+  deux fois ne laisse pas un menu ouvert. **Aucun raccourci n'ouvre les visuels depuis la
   liste** : ils se changent uniquement depuis la page d'un jeu, et sur la page
   seuls la croix gauche/droite, A et B agissent (« Options ▸ » est une
   pastille comme les autres). Dans les menus qui suivent (images, identification,
@@ -1175,6 +1206,18 @@ noir opaque l'aurait effacée.
   Vérifié à l'écran (captures `include_cursor`) : pas de flèche à l'ouverture
   sous le pointeur (ni pendant les 2 s qui suivent), flèche de retour au
   premier vrai déplacement, disparue ~2 s après.
+- **Langage visuel commun avec l'overlay** : le launcher et `gpad` sont un
+  **écosystème**, pas deux applications. Les options (`Réglages`, navigateur de
+  dossiers, galerie) utilisent les **mêmes contrôles** que l'overlay — ligne
+  sélectionnée en pastille d'accent, **interrupteur** (pilule + bouton) pour un
+  état on/off, **barre de réglage** (piste arrondie + remplissage d'accent) pour
+  un pourcentage, aide du bas en **glyphes de manette** — et non du texte
+  (« Croix = … ») quand c'est la manette qui pilote (`App::aide_menu`).
+  L'interrupteur et la barre s'inversent sur la ligne sélectionnée (piste
+  sombre, remplissage noir) pour rester lisibles sur l'accent.
+- **Aucun message d'état pour un réglage** qui se voit déjà sur sa ligne
+  (musique, volume) : « musique de fond : 60 % » dans le pied de page était du
+  bruit (demandé le 22/11). Seule une **erreur d'écriture** s'affiche.
 - **Aides dynamiques** : les glyphes du pied de page et des menus suivent le
   **dernier périphérique utilisé** (`Input::Keyboard` / `Input::Pad`), pas la
   simple présence d'une manette : reprendre le clavier fait réapparaître les

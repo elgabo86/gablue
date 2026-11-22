@@ -31,10 +31,11 @@ use crate::gallery;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
 use crate::index::{Index, Refresh};
 use crate::launch;
-use crate::library::{self, ArtworkCache, Game};
+use crate::library::{self, ArtworkCache, Game, Kind};
 use crate::marquee;
 use crate::mode::Mode;
 use crate::music;
+use crate::pergame;
 use crate::play;
 use crate::playtime;
 use crate::pose::Pose;
@@ -196,31 +197,46 @@ pub(crate) const HELP_FONT: Font = Font::with_name("Lato");
 const XBOX_CONFIRM: &[u8] = include_bytes!("../assets/glyphs/xbox/confirm.png");
 const XBOX_BACK: &[u8] = include_bytes!("../assets/glyphs/xbox/back.png");
 const XBOX_VIEW: &[u8] = include_bytes!("../assets/glyphs/xbox/view.png");
+const XBOX_MENU: &[u8] = include_bytes!("../assets/glyphs/xbox/menu.png");
+const XBOX_START: &[u8] = include_bytes!("../assets/glyphs/xbox/start.png");
 const XBOX_ZOOM_IN: &[u8] = include_bytes!("../assets/glyphs/xbox/zoom-in.png");
 const XBOX_ZOOM_OUT: &[u8] = include_bytes!("../assets/glyphs/xbox/zoom-out.png");
 const PS_CONFIRM: &[u8] = include_bytes!("../assets/glyphs/playstation/confirm.png");
 const PS_BACK: &[u8] = include_bytes!("../assets/glyphs/playstation/back.png");
 const PS_VIEW: &[u8] = include_bytes!("../assets/glyphs/playstation/view.png");
+const PS_MENU: &[u8] = include_bytes!("../assets/glyphs/playstation/menu.png");
+const PS_START: &[u8] = include_bytes!("../assets/glyphs/playstation/start.png");
 const PS_ZOOM_IN: &[u8] = include_bytes!("../assets/glyphs/playstation/zoom-in.png");
 const PS_ZOOM_OUT: &[u8] = include_bytes!("../assets/glyphs/playstation/zoom-out.png");
 
-/// Glyphes de boutons du jeu affiché dans le pied de page.
+/// Glyphes de boutons, dans le style de la manette utilisée.
+///
+/// `view` porte le bouton du **changement de type de liste** : depuis le
+/// 22/11 c'est **Start** (Triangle et Start ont été échangés, Start est
+/// explicite ; `sort` reste Triangle). `menu` = X/Carré (retirer, effacer,
+/// tout ce qui est armé).
 struct Glyphs {
     confirm: image::Handle,
     back: image::Handle,
     view: image::Handle,
+    sort: image::Handle,
+    menu: image::Handle,
     zoom_in: image::Handle,
     zoom_out: image::Handle,
 }
 
 impl Glyphs {
     fn for_kind(kind: PadKind) -> Self {
-        let (confirm, back, view, zoom_in, zoom_out) = match kind {
-            PadKind::Playstation => (PS_CONFIRM, PS_BACK, PS_VIEW, PS_ZOOM_IN, PS_ZOOM_OUT),
+        let (confirm, back, view, sort, menu, zoom_in, zoom_out) = match kind {
+            PadKind::Playstation => (
+                PS_CONFIRM, PS_BACK, PS_START, PS_VIEW, PS_MENU, PS_ZOOM_IN, PS_ZOOM_OUT,
+            ),
             _ => (
                 XBOX_CONFIRM,
                 XBOX_BACK,
+                XBOX_START,
                 XBOX_VIEW,
+                XBOX_MENU,
                 XBOX_ZOOM_IN,
                 XBOX_ZOOM_OUT,
             ),
@@ -229,6 +245,8 @@ impl Glyphs {
             confirm: image::Handle::from_bytes(confirm),
             back: image::Handle::from_bytes(back),
             view: image::Handle::from_bytes(view),
+            sort: image::Handle::from_bytes(sort),
+            menu: image::Handle::from_bytes(menu),
             zoom_in: image::Handle::from_bytes(zoom_in),
             zoom_out: image::Handle::from_bytes(zoom_out),
         }
@@ -710,24 +728,39 @@ enum Swap {
     Year(Option<u32>),
 }
 
-/// Ordre du menu « Options » de la page : les quatre types de visuels, puis
-/// l'identification du jeu et sa date de sortie. Le menu reste la seule porte
-/// d'entrée de tout ce qui touche aux visuels.
+/// Ordre du menu « Options » de la page : les quatre types de visuels,
+/// l'identification, la date de sortie, puis les **options de lancement**
+/// propres à ce jeu et à ce poste (`pergame`).
+///
+/// Le mode manette Xbox ne concerne que les `.wgp` : `gwine --xbox` filtre les
+/// manettes d'un jeu Windows, `lgplaunch` n'a pas d'équivalent — la ligne
+/// n'apparaît donc que pour un paquet Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArtMenuEntry {
     Kind(covers::ArtKind),
     Identify,
     Date,
+    Gamescope,
+    Resolution,
+    Xbox,
 }
 
-const ART_MENU: [ArtMenuEntry; 6] = [
-    ArtMenuEntry::Kind(covers::ArtKind::Grid),
-    ArtMenuEntry::Kind(covers::ArtKind::Hero),
-    ArtMenuEntry::Kind(covers::ArtKind::Logo),
-    ArtMenuEntry::Kind(covers::ArtKind::Icon),
-    ArtMenuEntry::Identify,
-    ArtMenuEntry::Date,
-];
+fn art_menu_entries(kind: Kind) -> Vec<ArtMenuEntry> {
+    let mut entries = vec![
+        ArtMenuEntry::Kind(covers::ArtKind::Grid),
+        ArtMenuEntry::Kind(covers::ArtKind::Hero),
+        ArtMenuEntry::Kind(covers::ArtKind::Logo),
+        ArtMenuEntry::Kind(covers::ArtKind::Icon),
+        ArtMenuEntry::Identify,
+        ArtMenuEntry::Date,
+        ArtMenuEntry::Gamescope,
+        ArtMenuEntry::Resolution,
+    ];
+    if kind == Kind::Wgp {
+        entries.push(ArtMenuEntry::Xbox);
+    }
+    entries
+}
 
 /// Les vues, dans l'ordre du menu « type de liste ». Les favoris ne sont pas
 /// une vue mais un tri (`state::SortBy::Favorites`).
@@ -1385,6 +1418,22 @@ impl App {
                 tasks.push(Task::done(Message::GalleryAct));
             }
         }
+        // crochet de banc : page d'un jeu (index) et, avec
+        // `GLAUNCHER_OPTIONS_DEMO`, son menu « Options » (réglages de
+        // lancement : gamescope, résolution, mode manette Xbox)
+        if let Ok(index) = std::env::var("GLAUNCHER_PAGE_DEMO") {
+            let index = index.parse::<usize>().unwrap_or(0);
+            if std::env::var_os("GLAUNCHER_OPTIONS_DEMO").is_some() {
+                // `OpenPage` remet `art_menu` à zéro : on pose directement la
+                // bascule différée, puis le menu (la page s'installe au
+                // sommet du fondu, sans passer par un message qui l'efface)
+                app.pending_page = Some(PageStep::Open(index));
+                app.page_fade_target = 1.0;
+                app.art_menu = Some(0);
+            } else {
+                tasks.push(Task::done(Message::OpenPage(index)));
+            }
+        }
         if std::env::var_os("GLAUNCHER_UPDATE_DEMO").is_some() {
             // crochet de banc : lance la mise à jour au démarrage (avec un
             // `GLAUNCHER_UPDATE_CMD` factice) pour regarder la barre sans
@@ -1533,8 +1582,7 @@ impl App {
     /// Nombre de colonnes de la galerie, calculé sur la largeur de la fenêtre
     /// (mêmes marges que la page, tuiles de 240 px).
     fn gallery_columns(&self) -> usize {
-        let utilisable = (self.viewport.0 - 120.0).max(240.0);
-        ((utilisable / 252.0).floor() as usize).clamp(2, 6)
+        galerie_geometrie(self.viewport.0).0
     }
 
     /// Efface l'élément `index` de la galerie. Le fichier disparaît du disque :
@@ -2773,27 +2821,51 @@ impl App {
             }
             Message::PageAct => self.page_act(),
             Message::ArtMenuNav(delta) => {
+                let last = self.art_entries().len().saturating_sub(1);
                 if let Some(choice) = self.art_menu.as_mut() {
-                    let last = ART_MENU.len() - 1;
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::ArtMenuChoose(index) => {
-                self.art_menu = Some(index.min(ART_MENU.len() - 1));
+                self.art_menu = Some(index.min(self.art_entries().len().saturating_sub(1)));
                 Task::done(Message::ArtMenuPick)
             }
             Message::ArtMenuPick => {
-                let Some(choice) = self.art_menu.take() else {
+                let Some(choice) = self.art_menu else {
                     return Task::none();
                 };
-                let Some(entry) = ART_MENU.get(choice).copied() else {
+                let Some(entry) = self.art_entries().get(choice).copied() else {
                     return Task::none();
                 };
                 match entry {
-                    ArtMenuEntry::Kind(kind) => Task::done(Message::OpenPicker(kind)),
-                    ArtMenuEntry::Identify => Task::done(Message::IdentifyOpen),
-                    ArtMenuEntry::Date => Task::done(Message::DateOpen),
+                    ArtMenuEntry::Kind(kind) => {
+                        self.art_menu = None;
+                        Task::done(Message::OpenPicker(kind))
+                    }
+                    ArtMenuEntry::Identify => {
+                        self.art_menu = None;
+                        Task::done(Message::IdentifyOpen)
+                    }
+                    ArtMenuEntry::Date => {
+                        self.art_menu = None;
+                        Task::done(Message::DateOpen)
+                    }
+                    // les réglages de lancement restent un **interrupteur** :
+                    // on ne referme pas le menu, l'état se voit changer sous
+                    // les yeux (comme un switch d'overlay)
+                    ArtMenuEntry::Gamescope => {
+                        self.bascule_option(|options| options.gamescope = !options.gamescope);
+                        Task::none()
+                    }
+                    ArtMenuEntry::Xbox => {
+                        self.bascule_option(|options| options.xbox = !options.xbox);
+                        Task::none()
+                    }
+                    ArtMenuEntry::Resolution => {
+                        self.bascule_option(|options| options.resolution_suivante());
+                        Task::none()
+                    }
                 }
             }
             Message::ArtMenuClose => {
@@ -3974,14 +4046,9 @@ impl App {
         } else {
             self.music = music::Music::start(&self.config.cache_dir(), volume);
         }
-        self.status = Some((
-            match (musique, volume) {
-                (false, _) => "musique de fond : coupée".to_string(),
-                (true, 0) => "musique de fond : volume 0 % (silencieuse)".to_string(),
-                (true, volume) => format!("musique de fond : {volume} %"),
-            },
-            false,
-        ));
+        // aucun message d'état : le réglage se voit sur la ligne (interrupteur,
+        // barre) — « musique de fond : 60 % » dans le pied de page était du
+        // bruit (demandé le 22/11)
         if let Err(err) = crate::config::save_music(&self.config_path, musique, volume) {
             self.status = Some((format!("écriture impossible ({err})"), true));
         }
@@ -4677,10 +4744,14 @@ impl App {
             };
         }
 
-        // menu « tri » (T) : haut/bas puis Entrée
+        // menu « tri » (T) : haut/bas puis Entrée, et T le referme
         if let Some(choice) = self.sort_menu {
             return match &key {
                 keyboard::Key::Named(Named::Escape) => {
+                    self.sort_menu = None;
+                    Task::none()
+                }
+                keyboard::Key::Character(touche) if touche.as_str() == "t" => {
                     self.sort_menu = None;
                     Task::none()
                 }
@@ -4948,7 +5019,9 @@ impl App {
                 if let Some(choice) = self.view_menu {
                     return match button {
                         PadButton::Confirm => Task::done(Message::ViewMenuChoose(choice)),
-                        PadButton::Back => {
+                        // le bouton qui l'a ouvert le referme : appuyer deux
+                        // fois sur Start ne doit pas laisser un menu ouvert
+                        PadButton::View | PadButton::Back => {
                             self.view_menu = None;
                             Task::none()
                         }
@@ -4961,7 +5034,8 @@ impl App {
                 if let Some(choice) = self.sort_menu {
                     return match button {
                         PadButton::Confirm => Task::done(Message::SortMenuChoose(choice)),
-                        PadButton::Back => {
+                        // même geste pour fermer que pour ouvrir
+                        PadButton::Menu | PadButton::Back => {
                             self.sort_menu = None;
                             Task::none()
                         }
@@ -4974,7 +5048,7 @@ impl App {
                 if let Some(choice) = self.year_menu {
                     return match button {
                         PadButton::Confirm => Task::done(Message::YearMenuChoose(choice)),
-                        PadButton::Back => {
+                        PadButton::Menu | PadButton::Back => {
                             self.year_menu = None;
                             Task::none()
                         }
@@ -5482,6 +5556,71 @@ impl App {
         self.pad.is_some() && self.input == Input::Pad
     }
 
+    /// Entrées du menu « Options », selon le format du paquet ouvert (le mode
+    /// manette Xbox ne s'adresse qu'aux `.wgp`).
+    fn art_entries(&self) -> Vec<ArtMenuEntry> {
+        let kind = self.art_kind();
+        art_menu_entries(kind)
+    }
+
+    fn art_kind(&self) -> Kind {
+        self.page
+            .as_ref()
+            .and_then(|page| self.games.get(page.index))
+            .map(|game| game.kind)
+            .unwrap_or(Kind::Lgp)
+    }
+
+    /// Réglages de lancement du jeu ouvert (défauts si aucun).
+    fn art_options(&self) -> pergame::Options {
+        self.page
+            .as_ref()
+            .and_then(|page| self.games.get(page.index))
+            .map(|game| pergame::lire(&game.slug))
+            .unwrap_or_default()
+    }
+
+    /// Applique une modification aux options du jeu ouvert et l'écrit tout de
+    /// suite (fichier local, jamais dans `assets/` synchronisé).
+    fn bascule_option<F: FnOnce(&mut pergame::Options)>(&mut self, modifier: F) {
+        let Some(game) = self
+            .page
+            .as_ref()
+            .and_then(|page| self.games.get(page.index))
+        else {
+            return;
+        };
+        let mut options = pergame::lire(&game.slug);
+        modifier(&mut options);
+        if let Err(err) = pergame::ecrire(&game.slug, options) {
+            self.status = Some((format!("réglages du jeu non enregistrés : {err}"), false));
+        }
+    }
+
+    /// Aide d'un menu : **glyphes de manette** quand c'est la manette qui
+    /// pilote, texte quand c'est le clavier. Les options parlaient jusqu'ici
+    /// uniquement en toutes lettres (« Croix = … ») alors que le pied de page
+    /// de la liste affichait déjà les glyphes : l'écosystème doit se
+    /// ressembler d'un écran à l'autre.
+    fn aide_menu<'a>(
+        &'a self,
+        items: &[(&'a image::Handle, &'static str)],
+        texte: &str,
+        danger: bool,
+    ) -> Element<'a, Message> {
+        if !self.pad_hints() || items.is_empty() {
+            return text(texte.to_string())
+                .size(13)
+                .color(if danger { DANGER } else { MUTED })
+                .into();
+        }
+        let mut ligne = Row::new().spacing(16).align_y(Alignment::Center);
+        for (glyphe, label) in items {
+            ligne = ligne.push(hint((*glyphe).clone(), label));
+        }
+        ligne.into()
+    }
+
     /// Image à afficher pour une vignette : la miniature (décodage 4× plus
     /// rapide) tant que la largeur demandée tient dans ses 320 px, la cover
     /// pleine au-delà (aucune image n'est agrandie).
@@ -5900,27 +6039,24 @@ impl App {
 
             // musique de fond : Croix coupe / relance (appliqué tout de suite)
             if index == settings.ligne_musique() {
-                let etat = if settings.musique { "♪ activée" } else { "coupée" };
                 let ligne = container(
                     row![
                         text("Musique de fond")
                             .size(17)
                             .width(Fill)
                             .color(if selected { Color::BLACK } else { TEXT }),
-                        text(format!("{etat} · Croix = {}", if settings.musique {
-                            "couper"
-                        } else {
-                            "relancer"
-                        }))
-                        .size(14)
-                        .color(if selected {
-                            Color::BLACK
-                        } else if settings.musique {
-                            ACCENT
-                        } else {
-                            MUTED
-                        }),
+                        text(if settings.musique { "activée" } else { "coupée" })
+                            .size(14)
+                            .color(if selected {
+                                Color::BLACK
+                            } else if settings.musique {
+                                ACCENT
+                            } else {
+                                MUTED
+                            }),
+                        interrupteur(settings.musique, selected),
                     ]
+                    .spacing(12)
                     .align_y(Alignment::Center),
                 )
                 .width(Fill)
@@ -5936,21 +6072,28 @@ impl App {
 
             // volume de la musique : gauche/droite par pas de 5 %
             if index == settings.ligne_volume() {
-                let valeur = format!("◀ {} % ▶", settings.volume);
                 let ligne = container(
                     row![
                         text("Volume de la musique")
                             .size(17)
                             .width(Fill)
                             .color(if selected { Color::BLACK } else { TEXT }),
-                        text(valeur).size(15).color(if selected {
-                            Color::BLACK
-                        } else if settings.musique {
-                            TEXT
-                        } else {
-                            MUTED
-                        }),
+                        barre(settings.volume, 170.0, selected),
+                        // « ◀ ▶ » : la barre seule ne dit pas qu'elle se
+                        // règle au pad (il n'y a pas de glyphe de croix
+                        // directionnelle dans les visuels embarqués)
+                        text(format!("◀ {} % ▶", settings.volume))
+                            .size(15)
+                            .width(Length::Fixed(86.0))
+                            .color(if selected {
+                                Color::BLACK
+                            } else if settings.musique {
+                                TEXT
+                            } else {
+                                MUTED
+                            }),
                     ]
+                    .spacing(12)
                     .align_y(Alignment::Center),
                 )
                 .width(Fill)
@@ -6066,6 +6209,41 @@ impl App {
             "Croix = ouvrir le dossier dans le navigateur · Carré = retirer de la liste · Rond = fermer".to_string()
         };
 
+        // glyphes de l'aide, selon la ligne courante (le texte reste pour le
+        // clavier : `aide_menu` choisit)
+        let glyphes: Vec<(&image::Handle, &'static str)> = if settings.confirm.is_some() {
+            vec![
+                (&self.glyphs.confirm, "Retirer"),
+                (&self.glyphs.back, "Annuler"),
+            ]
+        } else if settings.cle_sortie(settings.selected).is_some() {
+            vec![
+                (&self.glyphs.confirm, "Choisir"),
+                (&self.glyphs.menu, "Défaut"),
+                (&self.glyphs.back, "Fermer"),
+            ]
+        } else if settings.selected == settings.ligne_musique() {
+            vec![
+                (
+                    &self.glyphs.confirm,
+                    if settings.musique { "Couper" } else { "Relancer" },
+                ),
+                (&self.glyphs.back, "Fermer"),
+            ]
+        } else if settings.selected == 0 {
+            vec![
+                (&self.glyphs.confirm, "Ajouter"),
+                (&self.glyphs.back, "Fermer"),
+            ]
+        } else if settings.selected == settings.ligne_volume()
+            || settings.selected == settings.ligne_ecran()
+            || settings.selected < settings.lignes()
+        {
+            vec![(&self.glyphs.back, "Fermer")]
+        } else {
+            vec![(&self.glyphs.back, "Fermer")]
+        };
+
         let panel = container(
             column![
                 row![
@@ -6079,9 +6257,7 @@ impl App {
                     .size(13)
                     .color(MUTED),
                 rows,
-                text(aide)
-                    .size(13)
-                    .color(if settings.confirm.is_some() { DANGER } else { MUTED }),
+                self.aide_menu(&glyphes, &aide, settings.confirm.is_some()),
             ]
             .spacing(10),
         )
@@ -6107,51 +6283,45 @@ impl App {
 
     /// Navigateur de dossiers : chemin courant, « choisir ce dossier », puis
     /// « .. » et les sous-dossiers.
-    fn browser_view(
-        &self,
-        _settings: &Settings,
-        browser: &Browser,
-    ) -> Element<'_, Message> {
-        let visibles = self.lignes_visibles();
+    /// Navigateur de dossiers : même langage que la page Réglages (titre,
+    /// compteur, lignes en pastilles, aide en glyphes). Le chemin courant est
+    /// écrit en **fil d'Ariane**, et « Choisir ce dossier » est la première
+    /// ligne, détachée : c'est l'action pour laquelle on est venu.
+    fn browser_view(&self, _settings: &Settings, browser: &Browser) -> Element<'_, Message> {
+        let visibles = self.lignes_visibles().saturating_sub(2).max(3);
         let total = browser.entrees.len() + 1;
         let (top, fin) = fenetre(browser.selected, total, visibles);
-        let mut rows = Column::new().spacing(4);
+        let mut rows = Column::new().spacing(2);
+
         for index in top..fin {
             let selected = index == browser.selected;
-            let (label, detail) = if index == 0 {
-                ("Choisir ce dossier".to_string(), String::new())
+            // ligne 0 : l'action, en accent ; ensuite « .. » puis les dossiers
+            let (prefixe, label, couleur) = if index == 0 {
+                ("✓", "Choisir ce dossier".to_string(), ACCENT)
             } else {
                 let entree = &browser.entrees[index - 1];
-                (
-                    if entree.remonter {
-                        ".. (remonter)".to_string()
-                    } else {
-                        entree.nom.clone()
-                    },
-                    String::new(),
-                )
+                if entree.remonter {
+                    ("↰", "Remonter d'un niveau".to_string(), MUTED)
+                } else {
+                    ("▸", entree.nom.clone(), TEXT)
+                }
             };
             let ligne = container(
                 row![
+                    text(prefixe)
+                        .size(15)
+                        .width(Length::Fixed(18.0))
+                        .color(if selected { Color::BLACK } else { couleur }),
                     text(label)
-                        .size(18)
+                        .size(17)
                         .width(Fill)
-                        .color(if selected { Color::BLACK } else { TEXT }),
-                    text(detail)
-                        .size(14)
-                        .color(if selected { Color::BLACK } else { MUTED }),
+                        .color(if selected { Color::BLACK } else { couleur }),
                 ]
                 .align_y(Alignment::Center),
             )
             .width(Fill)
             .padding([11.0, 14.0])
-            .style(move |_| {
-                if selected {
-                    action_style(true)
-                } else {
-                    action_style(false)
-                }
-            });
+            .style(move |_| action_style(selected));
             rows = rows.push(mouse_area(ligne).on_press(if selected {
                 Message::BrowserAct
             } else {
@@ -6159,27 +6329,79 @@ impl App {
             }));
         }
 
+        // dossier vide : on le dit, plutôt que de laisser un panneau nu
+        if browser.entrees.iter().all(|entree| entree.remonter) {
+            rows = rows.push(
+                container(text("Aucun sous-dossier ici").size(14).color(MUTED))
+                    .width(Fill)
+                    .padding([10.0, 14.0]),
+            );
+        }
+
         let quoi = match browser.choix {
-            Choix::Jeux => "Dossiers de jeux",
+            Choix::Jeux => "Dossier de jeux à ajouter à la bibliothèque",
             Choix::Captures => "Dossier des enregistrements et replays",
             Choix::Shots => "Dossier des captures d'écran",
         };
+
+        // fil d'Ariane : les trois derniers niveaux, le courant en accent
+        let complet = folders::affiche(&browser.chemin);
+        let niveaux: Vec<&str> = complet
+            .split('/')
+            .filter(|partie| !partie.is_empty())
+            .collect();
+        let premiers = niveaux.len().saturating_sub(3);
+        let mut fil = Row::new().spacing(6).align_y(Alignment::Center);
+        if premiers > 0 {
+            fil = fil.push(text("… /").size(15).color(MUTED));
+        }
+        for (rang, niveau) in niveaux.iter().enumerate().skip(premiers) {
+            if rang > premiers {
+                fil = fil.push(text("/").size(15).color(MUTED));
+            }
+            let dernier = rang + 1 == niveaux.len();
+            fil = fil.push(
+                text((*niveau).to_string())
+                    .size(15)
+                    .color(if dernier { ACCENT } else { MUTED }),
+            );
+        }
+
+        let glyphes: Vec<(&image::Handle, &'static str)> = vec![
+            (&self.glyphs.confirm, "Entrer / choisir"),
+            (&self.glyphs.back, "Remonter"),
+        ];
+        let aide = "Croix = entrer dans le dossier (ou le choisir, première ligne) · Rond = remonter d'un niveau, et refermer à la racine";
+
         let panel = container(
             column![
-                text("Choisir un dossier").size(26).color(TEXT),
-                text(quoi).size(13).color(MUTED),
-                text(folders::affiche(&browser.chemin))
-                    .size(15)
-                    .color(ACCENT),
-                rows,
-                text("Croix = entrer / choisir · Rond = remonter d'un niveau")
+                row![
+                    text("Choisir un dossier").size(26).color(TEXT).width(Fill),
+                    text(format!(
+                        "{} / {}",
+                        browser.selected.saturating_add(1),
+                        total
+                    ))
                     .size(13)
                     .color(MUTED),
+                ]
+                .align_y(Alignment::Center),
+                text(quoi).size(13).color(MUTED),
+                container(fil).padding([8.0, 12.0]).style(|_| container::Style {
+                    background: Some(Background::Color(Color { a: 0.45, ..BG })),
+                    border: Border {
+                        radius: 10.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                }),
+                rows,
+                self.aide_menu(&glyphes, aide, false),
             ]
             .spacing(10),
         )
         .padding(24)
-        .width(Length::Fixed(860.0))
+        .width(Length::Fixed(780.0))
         .style(|_| picker_panel_style());
 
         container(panel)
@@ -6198,16 +6420,13 @@ impl App {
             .into()
     }
 
-    /// Galerie : grille de vignettes (captures puis vidéos, de la plus récente
-    /// à la plus ancienne). Aucune animation : la sélection est un cadre fixe,
-    /// les vignettes sont des images déjà réduites (320 px) et ne respirent pas
-    /// — une galerie se parcourt vite, avec beaucoup d'images.
     fn gallery_view(&self) -> Element<'_, Message> {
         let Some(galerie) = self.galerie.as_ref() else {
             return Row::new().into();
         };
-        let colonnes = self.gallery_columns().max(1);
-        let lignes_vues = (((self.viewport.1 - 290.0) / 202.0).floor() as usize).max(1);
+        let (colonnes, tuile_w, tuile_h, pas) = galerie_geometrie(self.viewport.0);
+        let colonnes = colonnes.max(1);
+        let lignes_vues = (((self.viewport.1 - 290.0) / pas).floor() as usize).max(1);
         let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
         let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes_vues);
         let mut grille = Column::new().spacing(14);
@@ -6223,8 +6442,8 @@ impl App {
                 let vignette: Element<'_, Message> =
                     match galerie.thumbs.get(&item.path).and_then(|handle| handle.clone()) {
                         Some(handle) => image(handle)
-                            .width(Length::Fixed(240.0))
-                            .height(Length::Fixed(135.0))
+                            .width(Length::Fixed(tuile_w))
+                            .height(Length::Fixed(tuile_h))
                             .content_fit(ContentFit::Cover)
                             .into(),
                         // vignette en cours de fabrication : case vide, jamais
@@ -6238,10 +6457,10 @@ impl App {
                             .size(18)
                             .color(MUTED),
                         )
-                        .width(Length::Fixed(240.0))
-                        .height(Length::Fixed(135.0))
-                        .center_x(Length::Fixed(240.0))
-                        .center_y(Length::Fixed(135.0))
+                        .width(Length::Fixed(tuile_w))
+                        .height(Length::Fixed(tuile_h))
+                        .center_x(Length::Fixed(tuile_w))
+                        .center_y(Length::Fixed(tuile_h))
                         .style(|_| container::Style {
                             background: Some(Background::Color(Color {
                                 a: 0.35,
@@ -6301,6 +6520,19 @@ impl App {
             "Croix = ouvrir · Carré = effacer · Rond = fermer".to_string()
         };
 
+        let glyphes: Vec<(&image::Handle, &'static str)> = if galerie.arme.is_some() {
+            vec![
+                (&self.glyphs.confirm, "Effacer"),
+                (&self.glyphs.back, "Annuler"),
+            ]
+        } else {
+            vec![
+                (&self.glyphs.confirm, "Ouvrir"),
+                (&self.glyphs.menu, "Effacer"),
+                (&self.glyphs.back, "Fermer"),
+            ]
+        };
+
         let panel = container(
             column![
                 text("Galerie").size(28).color(TEXT),
@@ -6324,9 +6556,7 @@ impl App {
                 ))
                 .size(12)
                 .color(MUTED),
-                text(aide)
-                    .size(13)
-                    .color(if galerie.arme.is_some() { DANGER } else { MUTED }),
+                self.aide_menu(&glyphes, &aide, galerie.arme.is_some()),
             ]
             .spacing(12),
         )
@@ -6374,10 +6604,13 @@ impl App {
         let image: Element<'_, Message> = Pose::new(image)
             .scale(1.0 + 0.04 * (1.0 - apercu.fade))
             .into();
+        let glyphes: Vec<(&image::Handle, &'static str)> = vec![(&self.glyphs.back, "Retour")];
         let pied = container(
-            text("Gauche/droite = précédente / suivante · Rond = retour")
-                .size(13)
-                .color(Color { a: 0.85, ..TEXT }),
+            self.aide_menu(
+                &glyphes,
+                "Gauche/droite = précédente / suivante · Rond = retour",
+                false,
+            ),
         )
         .width(Fill)
         .padding(12);
@@ -6671,48 +6904,98 @@ impl App {
         ];
         let identity = self.identities.get(&game.slug);
         let year = self.year_of(&game.slug);
+        let options = self.art_options();
+        let entries = art_menu_entries(game.kind);
 
         let mut rows = Column::new().spacing(6);
-        for (index, entry) in ART_MENU.iter().enumerate() {
+        for (index, entry) in entries.iter().enumerate() {
             let selected = index == choice;
-            let (label, mark) = match entry {
+            let couleur = if selected { Color::BLACK } else { TEXT };
+            // les trois options de lancement se dessinent comme dans
+            // l'overlay : interrupteur pour un état, valeur pour un cycle
+            let ligne = match entry {
+                ArtMenuEntry::Gamescope | ArtMenuEntry::Xbox => {
+                    let (label, actif) = if *entry == ArtMenuEntry::Gamescope {
+                        ("Lancer dans gamescope", options.gamescope)
+                    } else {
+                        ("Manettes en mode Xbox", options.xbox)
+                    };
+                    container(
+                        row![
+                            text(label).size(18).width(Fill).color(couleur),
+                            interrupteur(actif, selected),
+                        ]
+                        .align_y(Alignment::Center),
+                    )
+                }
+                ArtMenuEntry::Resolution => container(
+                    row![
+                        text("Résolution forcée").size(18).width(Fill).color(couleur),
+                        text("◀ ").size(14).color(if selected {
+                            Color::BLACK
+                        } else {
+                            MUTED
+                        }),
+                        text(options.resolution_label())
+                            .size(15)
+                            .color(if selected {
+                                Color::BLACK
+                            } else if options.resolution.is_some() {
+                                ACCENT
+                            } else {
+                                MUTED
+                            }),
+                        text(" ▶").size(14).color(if selected {
+                            Color::BLACK
+                        } else {
+                            MUTED
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                ),
                 ArtMenuEntry::Kind(kind) => {
                     let slot = covers::ArtKind::ALL
                         .iter()
                         .position(|known| known == kind)
                         .unwrap_or(0);
-                    (
-                        kind.label().to_string(),
-                        if marks[slot] { "✓" } else { "…" }.to_string(),
+                    let mark = if marks[slot] { "✓" } else { "…" };
+                    container(
+                        row![
+                            text(kind.label()).size(18).width(Fill).color(couleur),
+                            text(mark).size(14).color(if selected {
+                                Color::BLACK
+                            } else {
+                                MUTED
+                            }),
+                        ]
+                        .align_y(Alignment::Center),
                     )
                 }
-                ArtMenuEntry::Identify => (
-                    "Identifier le jeu…".to_string(),
-                    if identity.is_some() { "✓" } else { "" }.to_string(),
+                ArtMenuEntry::Identify => container(
+                    row![
+                        text("Identifier le jeu…").size(18).width(Fill).color(couleur),
+                        text(if identity.is_some() { "✓" } else { "" })
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
                 ),
-                ArtMenuEntry::Date => (
-                    "Date de sortie…".to_string(),
-                    year.map(|year| year.to_string()).unwrap_or_default(),
+                ArtMenuEntry::Date => container(
+                    row![
+                        text("Date de sortie…").size(18).width(Fill).color(couleur),
+                        text(year.map(|year| year.to_string()).unwrap_or_default())
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
                 ),
             };
-            let line = container(
-                row![
-                    text(label).size(18).width(Fill).color(if selected {
-                        Color::BLACK
-                    } else {
-                        TEXT
-                    }),
-                    text(mark)
-                        .size(14)
-                        .color(if selected { Color::BLACK } else { MUTED }),
-                ]
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .padding([9.0, 14.0])
-            .style(move |_| action_style(selected));
+            let ligne = ligne
+                .width(Fill)
+                .padding([9.0, 14.0])
+                .style(move |_| action_style(selected));
 
-            rows = rows.push(mouse_area(line).on_press(Message::ArtMenuChoose(index)));
+            rows = rows.push(mouse_area(ligne).on_press(Message::ArtMenuChoose(index)));
         }
 
         // ce que SteamGridDB croit que ce jeu est : la cause des mauvaises
@@ -6725,6 +7008,12 @@ impl App {
             _ => "Identification : automatique (premier résultat)".to_string(),
         };
 
+        let glyphes: Vec<(&image::Handle, &'static str)> = vec![
+            (&self.glyphs.confirm, "Valider"),
+            (&self.glyphs.back, "Fermer"),
+        ];
+        let aide = "Croix = choisir ou basculer · Rond = fermer · les réglages de lancement sont propres à ce poste";
+
         let panel = container(
             column![
                 text(format!("Options de « {} »", short(&game.name, 38)))
@@ -6732,6 +7021,7 @@ impl App {
                     .color(TEXT),
                 text(believed).size(12).color(MUTED),
                 rows,
+                self.aide_menu(&glyphes, aide, false),
             ]
             .spacing(12),
         )
@@ -7438,19 +7728,23 @@ impl App {
                 hint(self.glyphs.confirm.clone(), "Ouvrir"),
                 hint(self.glyphs.back.clone(), "Quitter (2×)"),
                 hint(self.glyphs.view.clone(), self.next_view_label()),
+                hint(self.glyphs.sort.clone(), "Tri"),
                 hint(self.glyphs.zoom_out.clone(), "Taille −"),
                 hint(self.glyphs.zoom_in.clone(), "Taille +"),
             ]
-            .spacing(18)
+            .spacing(16)
             .align_y(Alignment::Center)
             .into(),
+            // session console : la sortie n'existe pas (menu système de gpad),
+            // donc aucune aide ne la propose
             (true, true) => row![
                 hint(self.glyphs.confirm.clone(), "Ouvrir"),
                 hint(self.glyphs.view.clone(), self.next_view_label()),
+                hint(self.glyphs.sort.clone(), "Tri"),
                 hint(self.glyphs.zoom_out.clone(), "Taille −"),
                 hint(self.glyphs.zoom_in.clone(), "Taille +"),
             ]
-            .spacing(18)
+            .spacing(16)
             .align_y(Alignment::Center)
             .into(),
             (false, false) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
@@ -7769,6 +8063,119 @@ fn grid_metrics(
 /// droite réserve la place de la barre de défilement).
 fn usable_width(window_width: f32) -> f32 {
     (window_width - PAGE_PADDING_X - PAGE_PADDING_X_RIGHT).max(1.0)
+}
+
+/// Interrupteur façon overlay (`gpad`) : pilule arrondie, bouton à droite
+/// quand c'est activé. Le launcher et l'overlay doivent parler la même langue
+/// visuelle — c'est un écosystème, pas deux applications.
+///
+/// `sur_ligne` : la ligne porte le fond d'accent (sélection) ; la pilule
+/// s'inverse alors (piste sombre, bouton clair) pour rester lisible.
+fn interrupteur(actif: bool, sur_ligne: bool) -> Element<'static, Message> {
+    let piste = if actif {
+        if sur_ligne {
+            Color { a: 0.55, ..Color::BLACK }
+        } else {
+            ACCENT
+        }
+    } else if sur_ligne {
+        Color { a: 0.30, ..Color::BLACK }
+    } else {
+        Color { a: 0.22, ..TEXT }
+    };
+    let bouton = if actif {
+        if sur_ligne { Color::WHITE } else { Color::WHITE }
+    } else {
+        MUTED
+    };
+    let bouton = container(Row::new())
+        .width(Length::Fixed(18.0))
+        .height(Length::Fixed(18.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(bouton)),
+            border: Border {
+                radius: 9.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    container(
+        container(bouton)
+            .width(Fill)
+            .height(Fill)
+            .padding(5)
+            .align_x(if actif {
+                Alignment::End
+            } else {
+                Alignment::Start
+            }),
+    )
+    .width(Length::Fixed(50.0))
+    .height(Length::Fixed(28.0))
+    .style(move |_| container::Style {
+        background: Some(Background::Color(piste)),
+        border: Border {
+            radius: 14.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
+/// Barre de réglage (0..=100) : piste arrondie, remplissage d'accent — le
+/// même dessin que les curseurs de l'overlay, sans interaction à la souris
+/// (tout se règle au pad ou au clavier).
+fn barre(pourcent: u8, largeur: f32, sur_ligne: bool) -> Element<'static, Message> {
+    let part = (pourcent.min(100) as f32) / 100.0;
+    let plein = if sur_ligne { Color::BLACK } else { ACCENT };
+    let vide = if sur_ligne {
+        Color { a: 0.30, ..Color::BLACK }
+    } else {
+        Color { a: 0.16, ..TEXT }
+    };
+    let avant = container(Row::new())
+        .width(Length::Fixed((largeur * part).max(4.0)))
+        .height(Length::Fixed(8.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(plein)),
+            border: Border {
+                radius: 4.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    let apres = container(Row::new())
+        .width(Length::Fixed(largeur * (1.0 - part)))
+        .height(Length::Fixed(8.0))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(vide)),
+            border: Border {
+                radius: 4.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    row![avant, apres].spacing(0).into()
+}
+
+/// Géométrie de la galerie pour une largeur d'écran : `(colonnes, largeur de
+/// tuile, hauteur, pas d'une rangée)`.
+///
+/// La grille doit **remplir** la largeur : sur un écran 2K elle s'arrêtait
+/// « à la zone 1080 » (6 colonnes de 240 px figées, ~1500 px au milieu de
+/// 2560). Le nombre de colonnes suit donc la largeur, pour une tuile visée de
+/// ~300 px, et la tuile est étalée sur la place restante.
+fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
+    const GOUTTIERE: f32 = 12.0;
+    let dispo = (largeur - 48.0).max(240.0);
+    let colonnes = ((dispo / 300.0).floor() as usize).clamp(2, 10);
+    let tuile_w = ((dispo - GOUTTIERE * (colonnes as f32 - 1.0)) / colonnes as f32)
+        .floor()
+        .max(120.0);
+    let tuile_h = (tuile_w * 9.0 / 16.0).floor().max(68.0);
+    // une rangée = la vignette, l'interligne, la légende et les marges
+    (colonnes, tuile_w, tuile_h, tuile_h + 86.0)
 }
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
@@ -8095,6 +8502,25 @@ mod tests {
             assert!(offset.y.abs() <= precedent.1.y.abs() + 1e-3, "{e} : {offset:?}");
             precedent = (scale, offset);
         }
+    }
+
+    #[test]
+    fn galerie_remplit_la_largeur() {
+        // 1080p : 6 colonnes qui occupent toute la largeur utile
+        let (colonnes, w, h, pas) = galerie_geometrie(1920.0);
+        assert_eq!(colonnes, 6);
+        let occupe = w * colonnes as f32 + 12.0 * (colonnes as f32 - 1.0);
+        assert!((occupe - (1920.0 - 48.0)).abs() <= 3.0, "occupe {occupe}");
+        assert!(h < w && pas > h, "16:9 et la légende sous la vignette");
+        // 2K : plus de colonnes, et la grille occupe encore toute la largeur
+        let (colonnes, w, _, _) = galerie_geometrie(2560.0);
+        assert_eq!(colonnes, 8);
+        let occupe = w * colonnes as f32 + 12.0 * (colonnes as f32 - 1.0);
+        // arrondi vers le bas de la largeur de tuile : quelques pixels de
+        // reste, jamais une bande vide
+        assert!((occupe - (2560.0 - 48.0)).abs() <= 16.0, "occupe {occupe}");
+        // petite fenêtre : deux colonnes au moins, jamais zéro
+        assert_eq!(galerie_geometrie(400.0).0, 2);
     }
 
     #[test]

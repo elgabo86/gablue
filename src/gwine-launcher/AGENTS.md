@@ -196,6 +196,7 @@ fenêtre kdialog.
 ./gwine --720 ~/jeu.wgp        # Gamescope 1280x720 interne (raccourci)
 ./gwine --900 ~/jeu.wgp        # Gamescope 1600x900 interne (raccourci)
 ./gwine --1080 ~/jeu.wgp       # Gamescope 1920x1080 interne (raccourci)
+./gwine --resolution 900 ~/jeu.wgp  # Gamescope, hauteur forcée (1080/900/720/480), largeur au 16:9
 ./gwine --gamescope-args "-w 1920 -h 1080 -f --mangoapp" ~/jeu.wgp  # Args gamescope personnalisés
 ./gwine --mangohud off ~/jeu.wgp      # Sans overlay MangoHud
 ./gwine --fps-limit 60 ~/jeu.wgp      # Limite fps MangoHud pour ce lancement

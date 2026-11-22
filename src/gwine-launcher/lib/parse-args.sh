@@ -53,6 +53,7 @@ show_help() {
     echo "  --720             Gamescope en 1280x720 interne (raccourci)"
     echo "  --900             Gamescope en 1600x900 interne (raccourci)"
     echo "  --1080            Gamescope en 1920x1080 interne (raccourci)"
+    echo "  --resolution H    Gamescope avec hauteur forcée : 1080, 900, 720 ou 480"
     echo "  --no-gamescope    Désactiver gamescope par défaut"
     echo "  --mangohud on|off Afficher l'overlay MangoHud (défaut : on)"
     echo "  --mangohud-layout horizontal|rectangle   Disposition de l'overlay"
@@ -95,7 +96,7 @@ show_help() {
 }
 
 # Options valides reconnues par gwine
-VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--check" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--no-gamescope" "--mangohud" "--mangohud-layout" "--fps-limit"
+VALID_OPTIONS=("--help" "-h" "--fix" "--xbox" "--xbox-ds4" "--xbox-dualsense" "--xbox-on" "--xbox-off" "--reset" "--nofix" "--exewgp" "--init" "--check" "--force" "--offline" "--update" "--cmd" "--regedit" "--reg" "--winecfg" "--winetricks" "--winetrick" "--download-components" "--cachepack" "--nosandbox" "--joytest" "--args" "--gameid" "--use-ln-mounts" "--kill" "--dir" "--x11" "--wayland" "--env" "--dxvk" "--dxvk-async" "--gamescope" "--gamescope-args" "--720" "--900" "--1080" "--resolution" "--no-gamescope" "--mangohud" "--mangohud-layout" "--fps-limit"
 )
 
 # Vérifie si une option est valide
@@ -286,6 +287,27 @@ $2"
                 gamescope_mode=true
                 gamescope_args="-w 1920 -h 1080 -f --mangoapp"
                 shift
+                ;;
+            # Forme unique utilisée par glauncher : hauteur seule, largeur au
+            # 16:9 (le lanceur n'a pas à connaître la largeur de chaque mode)
+            --resolution)
+                if [ -n "${2:-}" ]; then
+                    case "$2" in
+                        1080) gamescope_args="-w 1920 -h 1080 -f --mangoapp" ;;
+                        900)  gamescope_args="-w 1600 -h 900 -f --mangoapp" ;;
+                        720)  gamescope_args="-w 1280 -h 720 -f --mangoapp" ;;
+                        480)  gamescope_args="-w 854 -h 480 -f --mangoapp" ;;
+                        *)
+                            echo "Erreur: --resolution attend 1080, 900, 720 ou 480" >&2
+                            exit 1
+                            ;;
+                    esac
+                    gamescope_mode=true
+                    shift 2
+                else
+                    echo "Erreur: --resolution nécessite une hauteur (1080, 900, 720 ou 480)" >&2
+                    exit 1
+                fi
                 ;;
             --no-gamescope)
                 gamescope_off_mode=true

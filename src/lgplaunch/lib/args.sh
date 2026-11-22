@@ -43,6 +43,22 @@ parse_arguments() {
                     error_exit "--fps-limit nécessite une valeur (0 = illimitée)"
                 fi
                 ;;
+            --gamescope)
+                gamescope_opt=true
+                shift
+                ;;
+            --resolution)
+                if [ -n "${2:-}" ]; then
+                    case "$2" in
+                        1080|900|720|480) resolution_opt="$2" ;;
+                        *) error_exit "--resolution attend 1080, 900, 720 ou 480" ;;
+                    esac
+                    gamescope_opt=true
+                    shift 2
+                else
+                    error_exit "--resolution nécessite une hauteur (1080, 900, 720 ou 480)"
+                fi
+                ;;
             *)
                 fullpath="$1"
                 shift

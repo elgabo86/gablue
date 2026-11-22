@@ -17,6 +17,7 @@ mod library;
 mod marquee;
 mod mode;
 mod music;
+mod pergame;
 mod play;
 mod playtime;
 mod pose;

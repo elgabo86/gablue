@@ -16,7 +16,7 @@ principe que `src/gwine-launcher/`) :
 | `build.sh` | concatène `lib/*.sh` + le code principal en `lgplaunch-standalone.sh` (bannières `# Module:`) |
 | `lib/core.sh` | variables globales (HOME réel, chemins `/tmp/lgp-*`, `--exe`), `error_exit` |
 | `lib/overlay.sh` | overlayfs kernel via `unshare -U -m` : vérification, enregistrement différé, montage/démontage, nettoyage des marqueurs |
-| `lib/args.sh` | `parse_arguments` (`--args`, `--exe`, `--exe=<rel>`, fichier, `--mangohud`, `--mangohud-layout`, `--fps-limit`) |
+| `lib/args.sh` | `parse_arguments` (`--args`, `--exe`, `--exe=<rel>`, fichier, `--mangohud`, `--mangohud-layout`, `--fps-limit`, `--gamescope`, `--resolution`) |
 | `lib/mangohud.sh` | réglages de l'overlay MangoHud, globaux (`~/.config/lgplaunch/options`) : `handle_mangohud_options` (CLI), `apply_mangohud_settings` (`MANGOHUD`, `MANGOHUD_CONFIG`, `MANGOHUD_BIN`) |
 | `lib/lgp.sh` | montage squashfuse, démontage (instance déjà lancée, orphelins), `.launch`/`.args`, nom interne `.gamename` |
 | `lib/exe.sh` | `--exe` : validation (relatif, sans `..`), scan des exécutables, menu |
@@ -86,6 +86,15 @@ réécriture). Le code principal (`main`) est extrait du lanceur par
   seul le montage et son scan précèdent.
 - **Classique** : exécutable direct, `.script.sh` du dossier puis `.env`,
   arguments `--args`.
+- **gamescope** (par lancement) : `--gamescope` enveloppe la commande dans un
+  compositeur imbriqué — `gamescope -f -- bash -c <commande>` — et
+  `--resolution 1080|900|720|480` force la taille interne (`-w` au 16:9 +
+  `-h`, `-f`). Même contrat que `gwine --gamescope --resolution H` : les
+  options par jeu de `glauncher` sont identiques pour un `.lgp` et un `.wgp`.
+  La commande **entière** (dont `cd` et le wrapper MangoHud) est enveloppée,
+  `printf %q` la protégeant du `eval` et du `bash -c` du namespace overlay ;
+  à la sortie du jeu, gamescope se referme avec son enfant. Refusé si
+  `gamescope` n'est pas installé (erreur claire, pas de lancement bancal).
 - **MangoHud** (overlay, global) : `lib/mangohud.sh`, options dans
   `~/.config/lgplaunch/options` (`mangohud=on|off`, `mangohud_layout`,
   `fps_limit`), posées en CLI (`--mangohud on|off`, `--mangohud-layout

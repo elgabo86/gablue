@@ -438,9 +438,12 @@ fn button_of(code: KeyCode) -> Option<PadButton> {
     match code {
         KeyCode::BTN_SOUTH => Some(PadButton::Confirm),
         KeyCode::BTN_EAST => Some(PadButton::Back),
-        KeyCode::BTN_NORTH => Some(PadButton::View),
+        // Start et Triangle sont ÉCHANGÉS (demandé le 22/11) : Start change le
+        // type de liste (le geste le plus fréquent, et son glyphe est
+        // explicite), Triangle ouvre le tri.
+        KeyCode::BTN_NORTH => Some(PadButton::Menu),
         KeyCode::BTN_WEST => Some(PadButton::Menu),
-        KeyCode::BTN_START => Some(PadButton::Menu),
+        KeyCode::BTN_START => Some(PadButton::View),
         KeyCode::BTN_TL => Some(PadButton::PageUp),
         KeyCode::BTN_TR => Some(PadButton::PageDown),
         KeyCode::BTN_TL2 => Some(PadButton::ZoomOut),
