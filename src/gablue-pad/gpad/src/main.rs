@@ -3421,7 +3421,20 @@ impl App {
                 self.status = format!("{a:?} SANS EFFET");
                 println!("NAV {a:?}");
             }
-            Action::Cycle(sens) => self.cycler_fenetre(sens),
+            // L2/R2 : panneau ouvert et application compagne présente → on
+            // bascule jeu ⇄ app (le geste du quotidien : regarder une vidéo à
+            // côté du jeu). Sinon, défilement des fenêtres comme avant.
+            Action::Cycle(sens) => {
+                if self.visible && !self.closing {
+                    // les fenêtres ont pu changer depuis l'ouverture du panneau
+                    self.refresh_bascule();
+                }
+                if self.visible && !self.closing && self.bascule_app.is_some() {
+                    self.basculer();
+                } else {
+                    self.cycler_fenetre(sens);
+                }
+            }
             Action::Accept => self.run_item(),
             // Une confirmation est en attente : B ne fait QUE la désarmer.
             // Il ne doit ni revenir en arrière ni fermer le panneau (demandé) —

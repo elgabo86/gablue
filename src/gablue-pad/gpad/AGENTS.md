@@ -674,7 +674,8 @@ page qui liste les fenêtres **activables** avec leur icône (titre + marqueur
 `ACTIVE`). A active la fenêtre choisie par son UUID KWin (`internalId`), puis le
 panneau revient **à la page d'origine** (`fen_retour`) ; `B` y revient aussi
 sans activer. L2/R2 font la même chose
-sans ouvrir la liste.
+sans ouvrir la liste — **sauf quand le panneau est ouvert et qu'une app
+compagne tourne** : la gâchette bascule alors jeu ⇄ app (voir `BASCULER`).
 
 Filtre = celui d'une barre des tâches : `normalWindow && !skipTaskbar && resourceClass`.
 Sans lui, `plasmashell`, `xwaylandvideobridge` et le panneau lui-même
@@ -684,6 +685,15 @@ fenêtre active de l'en-tête** (`wininfo.js`) : le pont vidéo XWayland
 (`xwaylandvideobridge`, `normalWindow` mais `skipTaskbar`) prend le focus au
 login et, sans ce filtre, le panneau s'ouvrait sur la page FENÊTRE du pont au
 lieu de la page APPLICATIONS (vécu 18/11/2026).
+
+**L2/R2 dans le panneau ouvert** : si une application compagne est ouverte à
+côté du jeu (`bascule_app`, relue à chaque appui), la gâchette **bascule jeu ⇄
+app** au lieu de faire défiler les fenêtres — c'est le geste du quotidien
+(regarder une vidéo à côté du jeu), et il referme le panneau comme la ligne
+`BASCULER`. Sans app compagne, le cyclage reprend son cours. Vérifié au banc
+(manette virtuelle `evgrab/vpad`, KWin virtuel) : `GPAD_BASCULE_DEMO=1` +
+R2 → script `kwin-activer-…` chargé et panneau fermé ; sans la démo, R2 →
+`CYCLE 1 ok=true`.
 
 **Cyclage L2/R2** (`cycler_fenetre`) : script KWin **généré** à chaque appui
 (`CYCLE_JS`), ancré sur l'**UUID** de la fenêtre active (poussé par `wininfo.js`)
