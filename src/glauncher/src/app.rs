@@ -864,8 +864,10 @@ struct Galerie {
 /// Capture d'écran ouverte en plein écran (animation d'entrée).
 struct Apercu {
     index: usize,
-    /// Opacité d'entrée (0 → 1) : l'image monte en fondu et grossit un peu.
-    fade: f32,
+    /// Entrée de l'image : 1 → 0 en ~0,16 s (60 Hz). Elle n'est pas pilotée
+    /// par le minuteur de la galerie (8 Hz) : à ce rythme il fallait une
+    /// seconde entière pour la voir — « trop long » (constaté le 23/11).
+    entree: f32,
 }
 
 /// Page « Réglages » du launcher (hors jeu) : la liste des dossiers de jeux.
@@ -1105,6 +1107,13 @@ pub struct App {
     lecteur: Option<play::Lecteur>,
     /// Vidéo à lancer dès que le voile est noir (même mécanisme que le jeu).
     a_lancer_video: Option<(PathBuf, String, std::time::Instant)>,
+    /// Voile noir de l'ouverture d'un film **sans** l'hyperespace des
+    /// étoiles : il couvre l'animation d'ouverture de la fenêtre de mpv
+    /// (qui « venait de bas à droite ») puis s'efface en ~0,18 s.
+    video_veil: f32,
+    video_veil_target: f32,
+    /// Instant où le voile peut se lever (mpv a eu le temps de s'ouvrir).
+    video_lift_at: Option<std::time::Instant>,
     /// Défilement animé vers la sélection.
     scroll_id: Id,
     scroll: f32,
@@ -1311,6 +1320,9 @@ impl App {
             apercu: None,
             lecteur: None,
             a_lancer_video: None,
+            video_veil: 0.0,
+            video_veil_target: 0.0,
+            video_lift_at: None,
             pending_slug: None,
             pending_key: None,
             zoom: None,
@@ -1494,10 +1506,10 @@ impl App {
         if animating {
             subscriptions.push(window::frames().map(|_| Message::Tick));
         }
-        // Galerie : une lecture vidéo tourne (il faut voir quand mpv sort) ou
-        // l'aperçu d'une capture monte en fondu. Minuteur à 8 Hz, comme la
-        // poussière et le pointeur : au repos, le fil dort.
-        gallery::set_ticking(self.lecteur.is_some() || self.apercu.is_some());
+        // Galerie : une lecture vidéo tourne (il faut voir quand mpv sort).
+        // Minuteur à 8 Hz, comme la poussière et le pointeur : au repos, le
+        // fil dort. L'entrée de l'aperçu, elle, est à 60 Hz (`animating`).
+        gallery::set_ticking(self.lecteur.is_some());
         Subscription::batch(subscriptions)
     }
 
@@ -1509,6 +1521,10 @@ impl App {
             || (self.scroll - self.scroll_target).abs() > 0.5
             || self.page_assets_animating()
             || self.to_launch.is_some()
+            || self.a_lancer_video.is_some()
+            || self.video_lift_at.is_some()
+            || (self.video_veil - self.video_veil_target).abs() > 0.001
+            || self.apercu.as_ref().is_some_and(|apercu| apercu.entree > 0.0)
             || self.title_scrolls()
             || self.loading()
             // respiration de la vignette sélectionnée : continue, donc à la
@@ -1516,8 +1532,8 @@ impl App {
             || self.breath_pulses()
             // changement de taille : chaque vignette glisse vers sa place
             || self.zoom.is_some()
-            // aperçu d'une capture : entrée en fondu (pilotée par `tick`)
-            || self.apercu.as_ref().is_some_and(|apercu| apercu.fade < 1.0)
+            // aperçu d'une capture : entrée courte (pilotée par `tick`)
+            || self.apercu.as_ref().is_some_and(|apercu| apercu.entree > 0.0)
             || self.a_lancer_video.is_some()
     }
 
@@ -2320,6 +2336,9 @@ impl App {
             Message::GalleryClose => {
                 self.galerie = None;
                 self.apercu = None;
+                self.video_veil = 0.0;
+                self.video_veil_target = 0.0;
+                self.video_lift_at = None;
                 Task::none()
             }
             Message::GalleryNav(delta) => {
@@ -2350,15 +2369,25 @@ impl App {
                 let index = galerie.selected;
                 match item.genre {
                     gallery::Genre::Image => {
-                        self.apercu = Some(Apercu { index, fade: 0.0 });
+                        // l'image est là TOUT DE SUITE ; seule une petite
+                        // mise à l'échelle (60 Hz) accompagne l'ouverture
+                        self.apercu = Some(Apercu {
+                            index,
+                            entree: 1.0,
+                        });
                         Task::none()
                     }
                     gallery::Genre::Video => {
-                        // même fondu au noir que le lancement d'un jeu : le
-                        // film apparaît quand l'écran est noir
+                        // Voile noir **sans** l'« hyperespace » des étoiles :
+                        // le fondu du lancement de jeu faisait filer la
+                        // poussière pendant ~1 s avant d'ouvrir le film
+                        // (jugé trop long, 23/11). Le film est lancé tout de
+                        // suite, le voile ne se lève que quand mpv a eu le
+                        // temps de s'ouvrir en plein écran.
+                        self.video_veil = 1.0;
+                        self.video_veil_target = 1.0;
                         self.a_lancer_video =
                             Some((item.path.clone(), item.nom(), std::time::Instant::now()));
-                        self.fade_target = 1.0;
                         Task::none()
                     }
                 }
@@ -2421,11 +2450,6 @@ impl App {
                 {
                     return Task::done(Message::GalleryVideoEnd);
                 }
-                if let Some(apercu) = self.apercu.as_mut()
-                    && apercu.fade < 1.0
-                {
-                    apercu.fade = (apercu.fade + 0.12).min(1.0);
-                }
                 Task::none()
             }
             Message::GalleryVideoEnd => {
@@ -2433,6 +2457,9 @@ impl App {
                     lecteur.tuer();
                 }
                 self.fade_target = 0.0;
+                self.video_veil = 0.0;
+                self.video_veil_target = 0.0;
+                self.video_lift_at = None;
                 self.status = None;
                 match self.window {
                     Some(id) => window::gain_focus(id).map(|()| Message::Nothing),
@@ -2459,7 +2486,9 @@ impl App {
                 };
                 let cible = (position as i64 + delta as i64).clamp(0, images.len() as i64 - 1);
                 apercu.index = images[cible as usize];
-                apercu.fade = 0.0;
+                // l'image suivante arrive tout de suite, avec sa propre
+                // petite entrée (on ne refait pas le fondu complet)
+                apercu.entree = 1.0;
                 Task::none()
             }
             Message::ApercuClose => {
@@ -3649,27 +3678,47 @@ impl App {
             spawn_launch(name, command, self.config.cache_dir(), slug, key);
         }
 
-        // écran noir atteint : on lance le film (même voile que pour un jeu)
-        if self.fade >= 0.999
-            && let Some((fichier, nom, started)) = self.a_lancer_video.take()
-        {
+        // lecture d'un film : lancement IMMÉDIAT (plus de montée en fondu de
+        // ~1 s avec la poussière qui file). Le voile noir est déjà posé ; il
+        // ne se lèvera qu'après l'ouverture de la fenêtre de mpv, sinon on
+        // voyait son animation « venir de bas à droite » (constaté le 23/11).
+        if let Some((fichier, nom, started)) = self.a_lancer_video.take() {
             match play::Lecteur::lance(&fichier) {
                 Some(lecteur) => {
                     eprintln!(
-                        "glauncher : écran noir en {} ms, lecture de {nom}",
+                        "glauncher : lecture de {nom} demandée en {} ms",
                         started.elapsed().as_millis()
                     );
                     self.lecteur = Some(lecteur);
-                    // le voile se lève DERRIÈRE la fenêtre de mpv : au retour
-                    // d'une lecture, le launcher est déjà visible
-                    self.fade_target = 0.0;
+                    self.video_lift_at = Some(now + Duration::from_millis(400));
                     self.status = Some((format!("lecture : {nom}"), false));
                 }
                 None => {
-                    self.fade_target = 0.0;
+                    self.video_veil_target = 0.0;
                     self.status = Some(("lecture impossible (mpv absent ?)".to_string(), true));
                 }
             }
+        }
+        // la fenêtre de mpv a eu le temps de s'ouvrir : le voile se lève
+        if let Some(at) = self.video_lift_at
+            && now >= at
+        {
+            self.video_lift_at = None;
+            self.video_veil_target = 0.0;
+        }
+        if (self.video_veil - self.video_veil_target).abs() > 0.001 {
+            let pas = dt / 0.18;
+            self.video_veil = if self.video_veil < self.video_veil_target {
+                (self.video_veil + pas).min(self.video_veil_target)
+            } else {
+                (self.video_veil - pas).max(self.video_veil_target)
+            };
+        }
+        // entrée de l'aperçu d'une capture : 0,16 s, à 60 Hz
+        if let Some(apercu) = self.apercu.as_mut()
+            && apercu.entree > 0.0
+        {
+            apercu.entree = (apercu.entree - dt / 0.16).max(0.0);
         }
 
         // Bascule de liste : montée vers le fond, échange au sommet, descente.
@@ -5203,7 +5252,11 @@ impl App {
         // celui de la page (`page_fade`, ouverture et fermeture) et celui
         // d'une bascule de liste (`swap_fade`) — jamais ensemble, donc le plus
         // opaque des trois suffit.
-        let veil_opacity = self.fade.max(self.page_fade).max(self.swap_fade);
+        let veil_opacity = self
+            .fade
+            .max(self.page_fade)
+            .max(self.swap_fade)
+            .max(self.video_veil);
         let veil = container(Row::new())
             .width(Fill)
             .height(Fill)
@@ -6426,10 +6479,12 @@ impl App {
         };
         let (colonnes, tuile_w, tuile_h, pas) = galerie_geometrie(self.viewport.0);
         let colonnes = colonnes.max(1);
-        let lignes_vues = (((self.viewport.1 - 290.0) / pas).floor() as usize).max(1);
+        // rangées qui tiennent VRAIMENT : la hauteur restante, pas une
+        // constante pessimiste (4 rangées en 2K au lieu de 5)
+        let lignes_vues = (((self.viewport.1 - GALERIE_CHROME) / pas).floor() as usize).max(1);
         let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
         let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes_vues);
-        let mut grille = Column::new().spacing(14);
+        let mut grille = Column::new().spacing(10);
         for ligne in haut..bas {
             let mut rangee = Row::new().spacing(12);
             for colonne in 0..colonnes {
@@ -6560,7 +6615,7 @@ impl App {
             ]
             .spacing(12),
         )
-        .padding(24)
+        .padding(20)
         .width(Fill)
         .height(Fill);
 
@@ -6595,14 +6650,16 @@ impl App {
             return Row::new().into();
         };
         // l'image PLEINE (pas la vignette) : c'est une capture, on la regarde
+        // l'image arrive pleine, elle ne « monte » pas en fondu : une entrée
+        // de 0,16 s (légère mise à l'échelle) suffit à faire une transition
         let image: Element<'_, Message> = image(image::Handle::from_path(&item.path))
             .width(Fill)
             .height(Fill)
             .content_fit(ContentFit::Contain)
-            .opacity(apercu.fade)
+            .opacity(1.0 - 0.30 * apercu.entree)
             .into();
         let image: Element<'_, Message> = Pose::new(image)
-            .scale(1.0 + 0.04 * (1.0 - apercu.fade))
+            .scale(1.0 + 0.03 * apercu.entree)
             .into();
         let glyphes: Vec<(&image::Handle, &'static str)> = vec![(&self.glyphs.back, "Retour")];
         let pied = container(
@@ -8166,6 +8223,12 @@ fn barre(pourcent: u8, largeur: f32, sur_ligne: bool) -> Element<'static, Messag
 /// « à la zone 1080 » (6 colonnes de 240 px figées, ~1500 px au milieu de
 /// 2560). Le nombre de colonnes suit donc la largeur, pour une tuile visée de
 /// ~300 px, et la tuile est étalée sur la place restante.
+///
+/// `pas` est le pas RÉEL d'une rangée : vignette + 6 px d'interligne avec sa
+/// légende (trois lignes) + 12 px de marge de tuile + 10 px entre deux
+/// rangées. Il valait `tuile_h + 86` (5 px de trop), ce qui faisait perdre
+/// une rangée entière en 2K : la galerie s'arrêtait à 4 rangées alors que la
+/// 5e tenait (constaté le 23/11).
 fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
     const GOUTTIERE: f32 = 12.0;
     let dispo = (largeur - 48.0).max(240.0);
@@ -8174,9 +8237,13 @@ fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
         .floor()
         .max(120.0);
     let tuile_h = (tuile_w * 9.0 / 16.0).floor().max(68.0);
-    // une rangée = la vignette, l'interligne, la légende et les marges
-    (colonnes, tuile_w, tuile_h, tuile_h + 86.0)
+    (colonnes, tuile_w, tuile_h, tuile_h + 77.0)
 }
+
+/// Hauteur prise au-dessus et au-dessous de la grille de la galerie : padding
+/// (2 × 20), titre (28), sous-titre (13), compteur (12), aide (13) et leurs
+/// quatre interlignes de 12. Mesuré sur une capture 2560×1440 le 23/11 : 173.
+const GALERIE_CHROME: f32 = 173.0;
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
     row![

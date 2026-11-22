@@ -238,11 +238,24 @@ noir opaque l'aurait effacée.
   tuiles sur toute la largeur**. Avant, 6 colonnes de 240 px figées : sur un
   écran 2K la galerie s'arrêtait « à la zone 1080 », ~1500 px au milieu de
   2560 (constaté le 22/11). À 1080p : 6 colonnes ; à 2K : 8.
+  **Rangées** : `lignes_vues` se calcule sur la hauteur réellement libre
+  (`hauteur - GALERIE_CHROME`, 173 px mesurés : padding 2×20, titre,
+  sous-titre, compteur, aide et leurs interlignes), pas sur une constante
+  pessimiste. `pas` = `tuile_h + 77` (vignette + interligne + légende + marge
+  + 10 px entre rangées) : le `+86` d'avant, avec un chrome de 290, ne
+  laissait que **4 rangées en 2K alors que la 5ᵉ tenait** (constaté le 23/11).
+  Résultat : 5 rangées à 2560×1440, 3 à 1080p.
 - **Ouverture** : `Croix` sur une capture → aperçu plein écran dans le launcher
-  (image **pleine**, pas la vignette), entrée en fondu avec un léger
-  agrandissement (`Apercu.fade` piloté par `GalleryTick`, 8 Hz) ; gauche/droite
-  passe à la capture précédente/suivante. Une vidéo → même fondu au noir qu'un
-  lancement de jeu, puis `mpv --fullscreen` (voir ci-dessous).
+  (image **pleine**, pas la vignette) : l'image est là **tout de suite**, seule
+  une entrée de 0,16 s (opacité 0,70 → 1 et échelle 1,03 → 1) l'accompagne,
+  pilotée à **60 Hz** par `tick` (`Apercu.entree`, dans `animating`). Avant,
+  elle suivait le minuteur de la galerie (8 Hz) : il fallait une seconde
+  entière pour la voir — jugé trop long (23/11). Gauche/droite passe à la capture
+  précédente/suivante. Une vidéo → **voile noir séparé** (`video_veil`, sans
+  l'« hyperespace » des étoiles qu'on voyait filer ~1 s), `mpv` lancé tout de
+  suite, et le voile ne se lève que 400 ms après (`video_lift_at`) : il couvre
+  l'animation d'ouverture de la fenêtre de mpv, qui sinon « venait de bas à
+  droite » (constaté le 23/11).
 - **Lecture vidéo** (`src/play.rs`) : `mpv --no-config --fullscreen --osc=no`
   avec une socket IPC. Le launcher garde la main : **Croix = pause**, **gauche/
   droite = ±5 s** (`seek … relative`), **Rond = sortie** (puis délai de grâce
