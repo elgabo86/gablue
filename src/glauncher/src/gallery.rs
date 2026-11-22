@@ -50,6 +50,12 @@ pub struct Item {
     pub mtime: SystemTime,
     /// Taille en octets, pour l'afficher sous la vignette.
     pub taille: u64,
+    /// Nom du jeu au moment de la capture (`None` : capture d'avant cette
+    /// métadonnée, ou faite hors jeu). Lu dans le sidecar `<fichier>.jeu` ou,
+    /// à défaut, dans le `iTXt Title` du PNG.
+    pub titre: Option<String>,
+    /// Logo du jeu (chemin d'un PNG transparent), pour la copie partageable.
+    pub logo: Option<PathBuf>,
 }
 
 impl Item {
@@ -164,16 +170,256 @@ pub fn scanne() -> Vec<Item> {
             if !meta.is_file() {
                 continue;
             }
+            let (titre, logo) = legende_capture(&path, genre);
             items.push(Item {
                 path,
                 genre,
                 mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                 taille: meta.len(),
+                titre,
+                logo,
             });
         }
     }
     items.sort_by(|a, b| b.mtime.cmp(&a.mtime));
     items
+}
+
+/// Nom du jeu et logo d'une capture : le **sidecar** `<fichier>.jeu` d'abord
+/// (écrit par `screenshot.sh` / `recorder.sh` / `replay.sh`), puis, pour une
+/// image plus ancienne, la métadonnée `iTXt`/`tEXt` `Title` du PNG. Aucune
+/// lecture du média au-delà des quelques octets qui précèdent les données.
+fn legende_capture(path: &Path, genre: Genre) -> (Option<String>, Option<PathBuf>) {
+    let sidecar = PathBuf::from(format!("{}.jeu", path.display()));
+    if let Ok(texte) = std::fs::read_to_string(&sidecar) {
+        let champ = |cle: &str| {
+            texte
+                .lines()
+                .find_map(|ligne| ligne.strip_prefix(&format!("{cle}=")))
+                .map(|valeur| valeur.trim().to_string())
+                .filter(|valeur| !valeur.is_empty())
+        };
+        let logo = champ("logo").map(PathBuf::from);
+        return (champ("nom"), logo);
+    }
+    if genre == Genre::Image {
+        return (titre_png(path), None);
+    }
+    (None, None)
+}
+
+/// `Title` d'un PNG, sans décoder l'image : on lit les morceaux jusqu'à
+/// `IDAT` (les métadonnées sont avant, toujours chez nous). Un fichier
+/// quelconque n'est pas une erreur, juste « pas de titre ».
+fn titre_png(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut sigle = [0u8; 8];
+    f.read_exact(&mut sigle).ok()?;
+    if sigle != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+        return None;
+    }
+    let mut entete = [0u8; 8];
+    for _ in 0..32 {
+        f.read_exact(&mut entete).ok()?;
+        let len = u32::from_be_bytes([entete[0], entete[1], entete[2], entete[3]]) as usize;
+        let type_ = &entete[4..8];
+        if type_ == b"IDAT" || type_ == b"IEND" {
+            return None;
+        }
+        if len > 8192 {
+            // morceau inattendu : on ne saute pas 4 Mo pour rien
+            return None;
+        }
+        let mut data = vec![0u8; len];
+        f.read_exact(&mut data).ok()?;
+        let mut crc = [0u8; 4];
+        f.read_exact(&mut crc).ok()?;
+        if type_ == b"iTXt" {
+            // clé\0 flag\0 méthode\0 langue\0 traduit\0 texte
+            let champs: Vec<&[u8]> = data.splitn(6, |octet| *octet == 0).collect();
+            if champs.len() == 6 && champs[0] == b"Title" && champs[1] == [0] {
+                return Some(String::from_utf8_lossy(champs[5]).to_string());
+            }
+        } else if type_ == b"tEXt" {
+            let mut parts = data.splitn(2, |octet| *octet == 0);
+            if let (Some(cle), Some(valeur)) = (parts.next(), parts.next())
+                && cle == b"Title"
+            {
+                return Some(String::from_utf8_lossy(valeur).to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Met un fichier à la **corbeille XDG** (`~/.local/share/Trash`) au lieu de
+/// l'effacer (demandé le 23/11) : le fichier et son `.trashinfo` sont posés
+/// dans les sous-dossiers de la corbeille, récupérables depuis Dolphin.
+///
+/// Aucune suppression définitive : si le rangement échoue (disque plein,
+/// corbeille inaccessible), l'erreur remonte et le fichier reste en place.
+pub fn mettre_a_la_corbeille(path: &Path) -> Result<PathBuf, String> {
+    let racine = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+        })
+        .ok_or_else(|| "ni XDG_DATA_HOME ni HOME : corbeille introuvable".to_string())?
+        .join("Trash");
+    let fichiers = racine.join("files");
+    let infos = racine.join("info");
+    std::fs::create_dir_all(&fichiers)
+        .and_then(|_| std::fs::create_dir_all(&infos))
+        .map_err(|erreur| format!("corbeille indisponible : {erreur}"))?;
+
+    let nom = path
+        .file_name()
+        .map(|nom| nom.to_string_lossy().to_string())
+        .filter(|nom| !nom.is_empty())
+        .ok_or_else(|| "fichier sans nom".to_string())?;
+    let (tige, extension) = match nom.rsplit_once('.') {
+        Some((tige, extension)) if !tige.is_empty() => (tige.to_string(), format!(".{extension}")),
+        _ => (nom.clone(), String::new()),
+    };
+    // nom déjà pris dans la corbeille : suffixe `.1`, `.2`… comme le fait gio
+    let mut cible = fichiers.join(&nom);
+    let mut n = 1u32;
+    while cible.exists() || infos.join(format!("{}.trashinfo", cible.file_name().unwrap().to_string_lossy())).exists() {
+        cible = fichiers.join(format!("{tige}.{n}{extension}"));
+        n += 1;
+        if n > 9999 {
+            return Err("trop de doublons dans la corbeille".to_string());
+        }
+    }
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    let info = format!(
+        "[Trash Info]\nPath={}\nDeletionDate={}\n",
+        encoder_chemin(&absolute.to_string_lossy()),
+        horodatage_maintenant()
+    );
+    let nom_cible = cible
+        .file_name()
+        .map(|nom| nom.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let info_path = infos.join(format!("{nom_cible}.trashinfo"));
+    let info_tmp = infos.join(format!("{nom_cible}.trashinfo.part"));
+    std::fs::write(&info_tmp, info)
+        .and_then(|_| std::fs::rename(&info_tmp, &info_path))
+        .map_err(|erreur| format!("écriture du .trashinfo impossible : {erreur}"))?;
+    if let Err(erreur) = std::fs::rename(&absolute, &cible) {
+        let _ = std::fs::remove_file(&info_path);
+        return Err(format!("déplacement vers la corbeille impossible : {erreur}"));
+    }
+    Ok(cible)
+}
+
+/// Échappement RFC 2396 du chemin dans `.trashinfo` (`/` reste littéral).
+fn encoder_chemin(chemin: &str) -> String {
+    let mut sortie = String::with_capacity(chemin.len() + 8);
+    for octet in chemin.bytes() {
+        match octet {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                sortie.push(octet as char)
+            }
+            _ => sortie.push_str(&format!("%{octet:02X}")),
+        }
+    }
+    sortie
+}
+
+/// `DeletionDate` au format `AAAA-MM-JJThh:mm:ss` (heure **locale**).
+fn horodatage_maintenant() -> String {
+    let secondes = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duree| duree.as_secs())
+        .unwrap_or(0);
+    let instant = secondes as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&instant, &mut tm) }.is_null() {
+        let (annee, mois, jour, heure, minute) = civil(secondes);
+        return format!(
+            "{annee:04}-{mois:02}-{jour:02}T{heure:02}:{minute:02}:{:02}",
+            secondes % 60
+        );
+    }
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec
+    )
+}
+
+/// Copie partageable d'une capture : le screenshot avec le **logo du jeu**
+/// incrusté en bas à droite (18 % de la largeur, marge de 2,5 %). L'original
+/// n'est jamais modifié. Le sidecar `.jeu` est recopié pour que la copie garde
+/// son nom de jeu dans la galerie ; elle s'appelle `<original>-logo.png`.
+pub fn copie_avec_logo(item: &Item) -> Result<PathBuf, String> {
+    if item.genre != Genre::Image {
+        return Err("la copie avec logo ne concerne que les captures".to_string());
+    }
+    let logo = item
+        .logo
+        .as_ref()
+        .filter(|chemin| chemin.is_file())
+        .ok_or_else(|| {
+            "aucun logo connu pour cette capture (prise hors jeu, ou visuel disparu)"
+                .to_string()
+        })?;
+    let mut fond = image::open(&item.path)
+        .map_err(|erreur| format!("capture illisible : {erreur}"))?
+        .to_rgba8();
+    let marque = image::open(logo)
+        .map_err(|erreur| format!("logo illisible : {erreur}"))?
+        .to_rgba8();
+    let (largeur, hauteur) = fond.dimensions();
+    if largeur == 0 || hauteur == 0 {
+        return Err("capture vide".to_string());
+    }
+    // le logo reste un sceau discret : 18 % de la largeur, et jamais plus de
+    // 30 % de la hauteur pour un logo très vertical
+    let visee = (largeur as f32 * 0.18).round().max(48.0) as u32;
+    let ratio = marque.height() as f32 / marque.width().max(1) as f32;
+    let mut lw = visee.min(largeur).max(1);
+    let mut lh = (lw as f32 * ratio).round().max(1.0) as u32;
+    if lh as f32 > hauteur as f32 * 0.30 {
+        lh = (hauteur as f32 * 0.30).round().max(1.0) as u32;
+        lw = (lh as f32 / ratio.max(0.01)).round().max(1.0) as u32;
+    }
+    let marque = image::imageops::resize(&marque, lw, lh, FilterType::Lanczos3);
+    let marge = ((largeur as f32 * 0.025).round() as u32).max(12);
+    let x = largeur.saturating_sub(lw + marge);
+    let y = hauteur.saturating_sub(lh + marge);
+    image::imageops::overlay(&mut fond, &marque, x as i64, y as i64);
+
+    let tige = item
+        .path
+        .file_stem()
+        .map(|tige| tige.to_string_lossy().to_string())
+        .unwrap_or_else(|| "capture".to_string());
+    let sortie = item.path.with_file_name(format!("{tige}-logo.png"));
+    // écriture atomique : une copie interrompue ne laisse pas un PNG tronqué
+    let temporaire = item.path.with_file_name(format!("{tige}-logo.png.part"));
+    fond.save_with_format(&temporaire, image::ImageFormat::Png)
+        .map_err(|erreur| format!("écriture impossible : {erreur}"))?;
+    std::fs::rename(&temporaire, &sortie)
+        .map_err(|erreur| format!("rangement impossible : {erreur}"))?;
+    let sidecar = PathBuf::from(format!("{}.jeu", item.path.display()));
+    if sidecar.is_file() {
+        let _ = std::fs::copy(&sidecar, format!("{}.jeu", sortie.display()));
+    }
+    Ok(sortie)
 }
 
 /// Dossier réglé, ou défaut quand la clé est absente/vide. Le chemin est
@@ -327,6 +573,8 @@ mod tests {
             genre: Genre::Image,
             mtime: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_795_386_660),
             taille: 1,
+            titre: None,
+            logo: None,
         };
         let date = item.date_lisible();
         // « 22 nov. 2026 · HH:MM » — l'heure dépend du fuseau du poste
@@ -359,10 +607,22 @@ mod tests {
             genre: Genre::Video,
             mtime: SystemTime::UNIX_EPOCH,
             taille: 3 * 1024 * 1024,
+            titre: None,
+            logo: None,
         };
         assert_eq!(item.genre.badge(), "VIDÉO");
         assert_eq!(item.poids(), "3.0 Mo");
         assert_eq!(item.nom(), "Video_20261122_223100.mp4");
+    }
+
+    #[test]
+    fn chemin_corbeille_echappe() {
+        // le .trashinfo est un fichier URL-encodé ; les espaces et accents
+        // doivent être échappés, les `/` rester littéraux
+        assert_eq!(
+            encoder_chemin("/home/gab/Images/Screenshots/a b é.png"),
+            "/home/gab/Images/Screenshots/a%20b%20%C3%A9.png"
+        );
     }
 
     #[test]
@@ -372,6 +632,8 @@ mod tests {
             genre: Genre::Image,
             mtime: SystemTime::UNIX_EPOCH,
             taille: 1,
+            titre: None,
+            logo: None,
         };
         let avant = cle_cache(&item);
         item.mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);

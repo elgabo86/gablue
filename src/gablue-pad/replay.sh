@@ -96,6 +96,36 @@ start() {
     fi
 }
 
+# --- nom du jeu en métadonnée (sidecar `<fichier>.jeu`) ---------------------
+# La galerie du launcher lit le nom du jeu dans ce fichier (et le logo pour la
+# copie partageable). Deux sources, dans cet ordre : `running.txt` du launcher
+# (`nom`, `logo`), puis celui du lanceur gwine/lgplaunch (`titre`, `nom`). Les
+# PID servent de garde : un fichier qui traîne après un plantage ne doit pas
+# étiqueter un clip avec le dernier jeu.
+champ_fichier() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1; }
+pids_vivants() {
+    local p q=0
+    for p in ${1//,/ }; do kill -0 "$p" 2>/dev/null && q=1; done
+    [[ $q == 1 ]]
+}
+ecrire_sidecar() {
+    local f=$1 titre="" logo=""
+    local launcher="${XDG_CACHE_HOME:-$HOME/.cache}/glauncher/running.txt"
+    if [[ -f "$launcher" ]] && pids_vivants "$(champ_fichier "$launcher" pids)"; then
+        titre=$(champ_fichier "$launcher" nom)
+        logo=$(champ_fichier "$launcher" logo)
+    fi
+    local session="$RT/gablue/running.txt"
+    if [[ -z "$titre" && -f "$session" ]] && pids_vivants "$(champ_fichier "$session" pids)"; then
+        titre=$(champ_fichier "$session" titre)
+        [[ -n "$titre" ]] || titre=$(champ_fichier "$session" nom)
+    fi
+    [[ -n "$titre" ]] || return 0
+    { printf 'nom=%s\n' "$titre"
+      [[ -n "$logo" ]] && printf 'logo=%s\n' "$logo"
+    } > "$f.jeu" 2>/dev/null || true
+}
+
 save() {
     local r; r=$(sock '{"cmd":"status"}') || { echo "ECHEC: démon arrêté"; return 1; }
     bool_oui "$(champ "$r" replay)" || { echo "ECHEC: replay inactif"; return 1; }
@@ -105,6 +135,7 @@ save() {
         # Seul retour : la vibration. Aucune notification, aucun son — tout ce
         # qui s'affiche ou se joue peut atterrir dans un clip.
         [[ -x "$RUMBLE" ]] && "$RUMBLE" "${PAD_NODE:--}" 140 60
+        ecrire_sidecar "$f"
         echo "replay sauvegardé : $f"
     else
         echo "ECHEC: sauvegarde refusée ($(champ "$r" err))"

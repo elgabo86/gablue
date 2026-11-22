@@ -218,20 +218,51 @@ manette n'était libre.
 Section **séparée** (menus des vues → « Galerie… », triangle/T), plein écran
 en session console. Deux dossiers lus dans `recorder.conf` : `screenshot_*.png`
 (captures) et `Video_*.mp4` / `Replay_*.mp4` (enregistrements, replays), triés
-du plus récent au plus ancien. Un seul flux, chaque tuile porte son genre
-(`CAPTURE` / `VIDÉO`), son poids et sa date **locale au propre**
-(« 22 nov. 2026 · 22:31 ») — **jamais le nom du fichier**
-(`Video_20261120_101500.mp4` ne dit rien à personne) ; la confirmation
-d'effacement nomme l'élément par cette même date. Le fond garde la **poussière
-d'étoiles** du launcher (`sparkles`), posée au-dessus de la grille : un fond
-noir opaque l'aurait effacée.
+du plus récent au plus ancien. Un seul flux, chaque tuile affiche **deux
+lignes** : le nom du jeu quand la capture le connaît (métadonnée), puis
+`genre · date · poids` ; sans nom de jeu, `genre · poids` puis la date
+**locale au propre** (« 22 nov. 2026 · 22:31 ») — **jamais le nom du fichier**
+(`Video_20261120_101500.mp4` ne dit rien à personne). Le fond garde la
+**poussière d'étoiles** du launcher (`sparkles`), posée au-dessus de la
+grille : un fond noir opaque l'aurait effacée.
+
+- **Nom du jeu et logo** : `screenshot.sh`, `recorder.sh` et `replay.sh`
+  écrivent un sidecar `<fichier>.jeu` (`nom=`, `logo=`) en lisant
+  `running.txt` (launcher d'abord, puis `gwine`/`lgplaunch`), avec les PID
+  comme garde (un fichier qui traîne après un plantage n'étiquette rien).
+  Les captures `gpad-shot --titre=` portent en plus un `iTXt Title` dans le
+  PNG ; la galerie lit le sidecar, puis cette métadonnée pour les anciennes
+  captures. Le nom est **dans la galerie**, jamais gravé dans les pixels.
+- **Filtre** : `Triangle` cycle tout → captures → vidéos (`GalleryFilter`,
+  aussi `Tab`). C'est lui qui rend les captures accessibles quand une
+  bibliothèque de milliers de vidéos les enterre en fin de tri (constaté le
+  23/11). **Taille fixe** : pas de zoom dans la galerie — un cran de zoom sur
+  une grille plein écran n'apportait rien (retiré le 23/11, `galerie_geometrie`
+  ne prend plus de paramètre).
+- **Confirmation d'effacement** : `Carré` ouvre un **panneau centré**
+  (`gallery_confirm_view`) — nom/date/poids et deux glyphes, Croix = corbeille,
+  Rond = annuler. Tant qu'il est ouvert, aucun autre bouton n'agit ; la tuile
+  armée porte un liseré rouge. Pas de texte « effacer ? » sous la tuile (il
+  décalait la grille).
+- **Corbeille, jamais de suppression** : `gallery::mettre_a_la_corbeille`
+  range le fichier dans la **corbeille XDG** (`~/.local/share/Trash/files` +
+  `.trashinfo` URL-encodé, date locale, suffixes `.1`, `.2` en cas de
+  collision) ; le sidecar `.jeu` suit. Échec = fichier laissé en place.
+- **Copie partageable** : dans l'aperçu, `Carré` (ou `C`) écrit
+  `<original>-logo.png` à côté : le screenshot avec le **logo du jeu** incrusté
+  en bas à droite (18 % de la largeur, marge 2,5 %, jamais plus de 30 % de la
+  hauteur), écriture atomique, sidecar recopié. L'original n'est pas touché ;
+  sans logo connu (capture hors jeu), le bouton n'est pas proposé.
 
 - **Vignettes** (`src/gallery.rs`) : fabriquées sur un fil de fond, une par une
   (`gallery::spawn`), pas sur le fil de l'interface — iced décode en plus sur un
   seul thread, et une capture 4K pèse 5 à 15 Mo. Réduction à 320 px en JPEG
   qualité 80 ; pour une vidéo, `ffmpeg` extrait une image à 0,5 s (déjà présent
   pour le son de capture). Cache `<cache>/gallery/<hash>.jpg`, clé = chemin +
-  mtime (un fichier remplacé est refait). Rien n'anime la grille : pas de
+  mtime (un fichier remplacé est refait). **À la demande** : seules les
+  vignettes de la fenêtre visible (+ un rang de marge) sont demandées
+  (`gallery_prepare`, `prepared`), sinon ouvrir une galerie de milliers de
+  vidéos lancerait autant de `ffmpeg`. Rien n'anime la grille : pas de
   respiration, cadre de sélection fixe.
 - **Géométrie** : `galerie_geometrie(largeur)` (pure, testée) choisit le
   nombre de colonnes pour une tuile visée de ~300 px (2 à 10) et **étale les
@@ -634,6 +665,15 @@ noir opaque l'aurait effacée.
   fondu du lancement (`veil_opacity = max(fade, page_fade)`), donc aucun enfant
   de plus dans la pile. Le minuteur des particules reste coupé (page ouverte),
   c'est le fondu lui-même qui demande les images (`animating`).
+- **Menus et entrée en galerie** : fondu d'apparition par un voile noir
+  **au-dessus** de la couche `menus` (`overlay_fade`, `FONDU_MENUS` 0,18 s à
+  60 Hz), relancé quand `overlay_signature` change : ouverture d'un menu ou
+  d'un prompt, entrée en galerie, menu qui en remplace un autre. iced 0.14 n'a
+  pas d'opacité de sous-arbre : ce voile est le seul fondu global possible
+  sans repeindre chaque couleur de panneau. Il existe **toujours** dans la
+  pile (opacité nulle au repos), comme le voile de lancement. L'aperçu d'une
+  photo et le panneau d'effacement en sont exclus : ils ont leur propre
+  transition et un noir plein écran clignoterait pour rien.
 - **Visuels arrivés en retard sur une page ouverte** (héros, logo, cover) : un
   compteur par visuel (`page_hero`, `page_logo`, `page_cover`, 0,30 s —
   `PAGE_ASSET_SECONDS`), remis à 1 à l'ouverture si l'image est déjà là

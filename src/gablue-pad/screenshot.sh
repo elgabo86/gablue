@@ -30,6 +30,48 @@ f="$DIR/screenshot_$(date +%Y%m%d_%H%M%S).png"
 
 mkdir -p "$DIR"
 
+# --- jeu en cours : nom affiché et logo ------------------------------------
+# Deux sources, dans cet ordre :
+#  - `<cache>/glauncher/running.txt` : écrit par le launcher pendant une partie
+#    (`nom` = nom de la bibliothèque, `logo` = chemin du logo), et supprimé à
+#    la fin du jeu ;
+#  - `$XDG_RUNTIME_DIR/gablue/running.txt` : écrit par `gwine`/`lgplaunch`
+#    (nom du paquet) pour les lancements hors launcher.
+# Les PID servent de garde : un fichier qui traîne après un plantage ne doit
+# pas étiqueter une capture de bureau avec le dernier jeu.
+RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+champ() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1; }
+pids_vivants() {
+    local p q=0
+    for p in ${1//,/ }; do kill -0 "$p" 2>/dev/null && q=1; done
+    [[ $q == 1 ]]
+}
+titre=""; logo=""
+run_launcher="${XDG_CACHE_HOME:-$HOME/.cache}/glauncher/running.txt"
+if [[ -f "$run_launcher" ]]; then
+    if pids_vivants "$(champ "$run_launcher" pids)"; then
+        titre=$(champ "$run_launcher" nom)
+        logo=$(champ "$run_launcher" logo)
+    fi
+fi
+run_session="$RT/gablue/running.txt"
+if [[ -z "$titre" && -f "$run_session" ]]; then
+    if pids_vivants "$(champ "$run_session" pids)"; then
+        titre=$(champ "$run_session" titre)
+        [[ -n "$titre" ]] || titre=$(champ "$run_session" nom)
+    fi
+fi
+
+# sidecar `<fichier>.jeu` : la galerie y lit le nom du jeu (et le logo pour la
+# copie avec logo). Écrit même quand gpad-shot échoue (repli spectacle).
+ecrire_sidecar() {
+    local f=$1
+    [[ -n "$titre" ]] || return 0
+    { printf 'nom=%s\n' "$titre"
+      [[ -n "$logo" ]] && printf 'logo=%s\n' "$logo"
+    } > "$f.jeu" 2>/dev/null || true
+}
+
 # son de déclencheur d'abord : sans lui on ne sait pas si la capture est partie
 # (le son ne peut pas se retrouver dans un PNG, rien ne justifie de l'attendre)
 w="$HERE/sounds/shot.wav"
@@ -46,7 +88,16 @@ if [[ -z "$SHOT" ]]; then
     SHOT=$(command -v gpad-shot)
 fi
 
-if [[ -n "$SHOT" ]] && "$SHOT" "$f"; then
+capture_ok=0
+if [[ -n "$SHOT" ]]; then
+    if [[ -n "$titre" ]]; then
+        "$SHOT" --titre="$titre" "$f" && capture_ok=1
+    else
+        "$SHOT" "$f" && capture_ok=1
+    fi
+fi
+if [[ $capture_ok == 1 ]]; then
+    ecrire_sidecar "$f"
     echo "capture : $f"
     exit 0
 fi
@@ -66,6 +117,7 @@ fi
 spectacle -f -b -n -o "$f"
 
 if [[ -f "$f" ]]; then
+    ecrire_sidecar "$f"
     echo "capture : $f"
 else
     echo "ECHEC: fichier non créé ($f)"

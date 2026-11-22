@@ -229,6 +229,9 @@ pub fn release(cache: &Path) {
     if let Err(error) = uncurtain(cache) {
         eprintln!("glauncher : nettoyage KWin impossible : {error}");
     }
+    // plus de jeu : le fichier ne doit pas survivre et étiqueter une capture
+    // de bureau avec le dernier jeu (métadonnée des captures, 23/11)
+    let _ = std::fs::remove_file(running_path(cache));
 }
 
 /// Décharge le script laissé par une session précédente tuée en pleine partie.

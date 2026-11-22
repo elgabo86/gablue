@@ -29,8 +29,13 @@ pub enum PadButton {
     Right,
     Confirm,
     Back,
+    /// Carré / X : action contextuelle (menu du tri, effacer, défaut).
     Menu,
-    /// Bascule grille / liste.
+    /// Triangle / Y : bouton distinct de Carré. Il a son propre rôle depuis
+    /// le 23/11 — Triangle armait l'effacement de la galerie parce qu'il
+    /// partageait `Menu` avec Carré (constaté par l'utilisateur).
+    North,
+    /// Start (Options) : change le type de liste.
     View,
     /// L2 : vignettes plus petites.
     ZoomOut,
@@ -440,8 +445,10 @@ fn button_of(code: KeyCode) -> Option<PadButton> {
         KeyCode::BTN_EAST => Some(PadButton::Back),
         // Start et Triangle sont ÉCHANGÉS (demandé le 22/11) : Start change le
         // type de liste (le geste le plus fréquent, et son glyphe est
-        // explicite), Triangle ouvre le tri.
-        KeyCode::BTN_NORTH => Some(PadButton::Menu),
+        // explicite), Triangle ouvre le tri. Triangle et Carré restent deux
+        // boutons DISTINCTS (`North` / `Menu`) : les confondre faisait
+        // effacer une capture avec Triangle dans la galerie.
+        KeyCode::BTN_NORTH => Some(PadButton::North),
         KeyCode::BTN_WEST => Some(PadButton::Menu),
         KeyCode::BTN_START => Some(PadButton::View),
         KeyCode::BTN_TL => Some(PadButton::PageUp),

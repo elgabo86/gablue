@@ -225,6 +225,13 @@ unité systemd + deflate plus coûteux). Aucun paquet nouveau au runtime :
   `~/.config/gablue/recorder.conf` (même fichier que l'enregistreur),
   réglable depuis les Réglages du launcher et Gablue Manager ; clé absente ou
   vide = `~/Images/Screenshots`. `SCREENSHOT_DIR` reste prioritaire (bancs).
+- **Nom du jeu** : `screenshot.sh` passe `--titre=<nom>` (variable
+  `GPAD_SHOT_TITRE` acceptée) → `gpad-shot` écrit un `iTXt Title` (UTF-8, pas
+  `tEXt` Latin-1) **dans le PNG**, jamais dans les pixels, et pose un sidecar
+  `<fichier>.jeu` (`nom=`, `logo=`). `recorder.sh` et `replay.sh` posent le
+  même sidecar sur leurs clips finalisés. La galerie du launcher s'en sert
+  pour la légende et la copie avec logo ; les PID de `running.txt` servent de
+  garde (fichier orphelin après un plantage = aucune étiquette).
 
 Trois pièges payés, à ne pas réintroduire :
 

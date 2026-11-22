@@ -550,6 +550,10 @@ pub enum Message {
     /// Carré : armer l'effacement (Croix confirme, Rond annule).
     GalleryArm,
     GalleryUnarm,
+    /// Triangle (ou Tab) : cycle tout → captures → vidéos.
+    GalleryFilter,
+    /// Carré dans l'aperçu : copie du screenshot avec le logo du jeu.
+    ApercuCopy,
     /// Une vignette de galerie est prête (ou absente).
     GalleryThumb {
         path: PathBuf,
@@ -787,6 +791,29 @@ fn view_label(view: ViewMode) -> &'static str {
     }
 }
 
+/// Légende d'en-tête de la galerie : filtre courant et volumétrie réelle
+/// (affichés / préparés), pour ne pas confondre « 3 captures » et « 1200
+/// vidéos » quand un filtre est actif.
+fn galerie_legende(galerie: &Galerie) -> String {
+    let images = galerie.tous.iter().filter(|item| item.genre == gallery::Genre::Image).count();
+    let videos = galerie.tous.len().saturating_sub(images);
+    let filtrees = match galerie.filtre {
+        None => String::new(),
+        Some(gallery::Genre::Image) => format!(" · {images} capture(s) au total"),
+        Some(gallery::Genre::Video) => format!(" · {videos} vidéo(s) au total"),
+    };
+    let restant = if galerie.restant > 0 {
+        format!(" · {} vignette(s) en préparation", galerie.restant)
+    } else {
+        String::new()
+    };
+    format!(
+        "{} affichée(s) · {} chargée(s){filtrees}{restant}",
+        galerie.items.len(),
+        galerie.thumbs.len()
+    )
+}
+
 /// Position d'une vue dans `VIEWS`.
 fn view_index(view: ViewMode) -> usize {
     VIEWS.iter().position(|&v| v == view).unwrap_or(0)
@@ -852,11 +879,20 @@ fn clavier_helper() -> String {
 /// `recorder.conf`, la plus récente en tête. Les vignettes arrivent du worker
 /// de fond (`gallery::spawn`) et restent en mémoire pour la session.
 struct Galerie {
+    /// Tout ce que contiennent les dossiers (le filtre ne le relit pas).
+    tous: Vec<gallery::Item>,
+    /// Éléments affichés : `tous` filtré par `filtre`.
     items: Vec<gallery::Item>,
+    /// `None` = tout, sinon captures ou vidéos (Triangle fait défiler).
+    filtre: Option<gallery::Genre>,
     selected: usize,
     /// Effacement armé (index) : Croix efface, Rond ou un déplacement désarme.
     arme: Option<usize>,
     thumbs: std::collections::HashMap<PathBuf, Option<image::Handle>>,
+    /// Chemins dont la vignette a déjà été demandée (le fil de vignettes ne
+    /// traite que la fenêtre visible : une galerie de 2000 vidéos ne lance
+    /// pas 2000 `ffmpeg`).
+    prepared: HashSet<PathBuf>,
     /// Vignettes encore attendues (aucune roue pour ça : le compteur suffit).
     restant: usize,
 }
@@ -1034,6 +1070,14 @@ pub struct App {
     back_press: Option<std::time::Instant>,
     /// L'invite « appuie encore sur retour » est affichée.
     quit_hint: bool,
+    /// Fondu d'apparition des menus et de la galerie (1 = noir, 0 = fini) :
+    /// un voile noir AU-DESSUS de la couche `menus`, qui se dissipe en 0,18 s
+    /// à 60 Hz. iced 0.14 n'a pas d'opacité de sous-arbre : c'est le seul
+    /// moyen d'un vrai fondu sans toucher chaque couleur de panneau.
+    overlay_fade: f32,
+    /// Signature des couches visibles au message précédent : tout changement
+    /// (ouverture, remplacement, fermeture) relance `overlay_fade`.
+    overlay_vu: u64,
     glyphs: Glyphs,
     window: Option<window::Id>,
     fullscreen: bool,
@@ -1283,6 +1327,8 @@ impl App {
             pads: Vec::new(),
             back_press: None,
             quit_hint: false,
+            overlay_fade: 0.0,
+            overlay_vu: 0,
             glyphs: Glyphs::for_kind(PadKind::Xbox),
             window: None,
             fullscreen,
@@ -1535,6 +1581,8 @@ impl App {
             // aperçu d'une capture : entrée courte (pilotée par `tick`)
             || self.apercu.as_ref().is_some_and(|apercu| apercu.entree > 0.0)
             || self.a_lancer_video.is_some()
+            // fondu d'apparition des menus / galerie
+            || self.overlay_fade > 0.001
     }
 
     /// Téléchargements en cours (ou tout juste finis) : la roue de chargement
@@ -1598,12 +1646,74 @@ impl App {
     /// Nombre de colonnes de la galerie, calculé sur la largeur de la fenêtre
     /// (mêmes marges que la page, tuiles de 240 px).
     fn gallery_columns(&self) -> usize {
+        // taille FIXE (demandé le 23/11 : le zoom était une mauvaise idée)
         galerie_geometrie(self.viewport.0).0
+    }
+
+    /// Applique le filtre courant en gardant la sélection sur le même
+    /// fichier quand il reste visible.
+    fn gallery_apply_filter(&mut self) {
+        let Some(galerie) = self.galerie.as_mut() else {
+            return;
+        };
+        let courant = galerie
+            .items
+            .get(galerie.selected)
+            .map(|item| item.path.clone());
+        let filtre = galerie.filtre;
+        galerie.items = galerie
+            .tous
+            .iter()
+            .filter(|item| filtre.is_none_or(|genre| item.genre == genre))
+            .cloned()
+            .collect();
+        galerie.selected = courant
+            .and_then(|path| galerie.items.iter().position(|item| item.path == path))
+            .unwrap_or(0)
+            .min(galerie.items.len().saturating_sub(1));
+        galerie.arme = None;
+    }
+
+    /// Demande les vignettes de la fenêtre visible (plus un rang de marge) :
+    /// une galerie de milliers de vidéos ne lance pas mille `ffmpeg`.
+    fn gallery_prepare(&mut self) {
+        let cache = self.config.cache_dir().join("gallery");
+        let colonnes = self.gallery_columns().max(1);
+        let pas = galerie_geometrie(self.viewport.0).3;
+        let lignes = (((self.viewport.1 - GALERIE_CHROME) / pas).floor() as usize).max(1);
+        let Some(galerie) = self.galerie.as_mut() else {
+            return;
+        };
+        let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
+        let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes);
+        let debut = haut.saturating_sub(1) * colonnes;
+        let fin = ((bas + 1) * colonnes).min(galerie.items.len());
+        let lot: Vec<gallery::Item> = galerie.items[debut.min(fin)..fin]
+            .iter()
+            .filter(|item| !galerie.prepared.contains(&item.path))
+            .cloned()
+            .collect();
+        for item in &lot {
+            galerie.prepared.insert(item.path.clone());
+        }
+        galerie.restant += lot.len();
+        if lot.is_empty() {
+            return;
+        }
+        gallery::spawn(lot, cache, |event| match event {
+            gallery::Event::Thumb { path, bytes } => {
+                post(Message::GalleryThumb { path, bytes });
+            }
+            gallery::Event::Done => {}
+        });
     }
 
     /// Efface l'élément `index` de la galerie. Le fichier disparaît du disque :
     /// l'action n'est atteignable qu'après un appui sur Carré puis la Croix,
     /// et un déplacement désarme (on ne confirme que ce qu'on voit).
+    /// Retire l'élément de la galerie en le **mettant à la corbeille** (jamais
+    /// d'effacement définitif). Le sidecar `.jeu` suit, sinon il étiquetterait
+    /// une future capture du même nom.
     fn gallery_delete(&mut self, index: usize) {
         let Some(galerie) = self.galerie.as_mut() else {
             return;
@@ -1611,18 +1721,29 @@ impl App {
         let Some(item) = galerie.items.get(index).cloned() else {
             return;
         };
-        match std::fs::remove_file(&item.path) {
-            Ok(()) => {
+        let sidecar = PathBuf::from(format!("{}.jeu", item.path.display()));
+        match gallery::mettre_a_la_corbeille(&item.path) {
+            Ok(corbeille) => {
+                if sidecar.is_file() {
+                    let _ = gallery::mettre_a_la_corbeille(&sidecar);
+                }
                 galerie.items.remove(index);
+                galerie.tous.retain(|autre| autre.path != item.path);
+                galerie.prepared.remove(&item.path);
                 galerie.thumbs.remove(&item.path);
                 galerie.selected = galerie.selected.min(galerie.items.len().saturating_sub(1));
-                self.status = Some((format!("{} effacé", item.nom()), false));
-                // la vignette en cache devient orpheline : elle est petite et
-                // rangée sous une clé (chemin + mtime), donc jamais réutilisée
-                println!("GALERIE efface {}", item.path.display());
+                self.status = Some((
+                    format!("{} dans la corbeille", item.nom()),
+                    false,
+                ));
+                println!(
+                    "GALERIE corbeille {} -> {}",
+                    item.path.display(),
+                    corbeille.display()
+                );
             }
             Err(err) => {
-                self.status = Some((format!("effacement impossible ({err})"), true));
+                self.status = Some((format!("corbeille impossible ({err})"), true));
             }
         }
     }
@@ -1816,7 +1937,48 @@ impl App {
         Theme::Dark
     }
 
+    /// Signature des couches qui s'ouvrent en fondu (menus, prompts, galerie).
+    /// Un bit par couche : deux menus qui se remplacent changent la signature
+    /// et relancent le fondu.
+    fn overlay_signature(&self) -> u64 {
+        let mut sig = 0u64;
+        let mut bit = |valeur: bool| {
+            sig = (sig << 1) | u64::from(valeur);
+        };
+        bit(self.settings.is_some());
+        bit(self.view_menu.is_some());
+        bit(self.sort_menu.is_some());
+        bit(self.year_menu.is_some());
+        bit(self.art_menu.is_some());
+        bit(self.picker.is_some());
+        bit(self.identify.is_some());
+        bit(self.identify_menu.is_some());
+        bit(self.replace.is_some());
+        bit(self.date.is_some());
+        // la galerie entre en fondu ; l'aperçu d'une photo et le panneau
+        // d'effacement ont leur propre transition et ne doivent PAS faire
+        // clignoter tout l'écran en noir (23/11)
+        bit(self.galerie.is_some());
+        sig
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // Le fondu est armé APRÈS le traitement : la vue qui suit cette mise à
+        // jour voit déjà le voile, sinon le menu apparaissait une image en
+        // plein puis passait au noir. Les `return` internes de `update_inner`
+        // ramènent leur Task ici, donc aucun chemin d'ouverture n'est oublié.
+        let task = self.update_inner(message);
+        let signature = self.overlay_signature();
+        if signature != self.overlay_vu && signature != 0 {
+            // un menu (ou la galerie) vient de s'ouvrir, ou un menu en
+            // remplace un autre : voile entier, `tick` le dissipe
+            self.overlay_fade = 1.0;
+        }
+        self.overlay_vu = signature;
+        task
+    }
+
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Window(id) => {
                 self.window = Some(id);
@@ -2281,15 +2443,16 @@ impl App {
                 Task::none()
             }
             Message::GalleryOpen => {
-                let items = gallery::scanne();
-                let restant = items.len();
-                let cache = self.config.cache_dir().join("gallery");
+                let tous = gallery::scanne();
                 let mut galerie = Galerie {
-                    items,
+                    items: tous.clone(),
+                    tous,
+                    filtre: None,
                     selected: 0,
                     arme: None,
                     thumbs: std::collections::HashMap::new(),
-                    restant,
+                    prepared: HashSet::new(),
+                    restant: 0,
                 };
                 // banc : `apercu`/`video` sélectionne le premier élément du
                 // genre, pour photographier le lecteur sans manette
@@ -2308,18 +2471,6 @@ impl App {
                         galerie.selected = index;
                     }
                 }
-                // les vignettes déjà en cache arrivent tout de suite (lecture
-                // de fichiers) : la grille se remplit sans attendre ffmpeg
-                gallery::spawn(
-                    galerie.items.clone(),
-                    cache,
-                    |event| match event {
-                        gallery::Event::Thumb { path, bytes } => {
-                            post(Message::GalleryThumb { path, bytes });
-                        }
-                        gallery::Event::Done => {}
-                    },
-                );
                 // la couche menus est reconstruite à part : rien à préserver
                 self.view_menu = None;
                 self.status = Some((format!("galerie : {} élément(s)", galerie.items.len()), false));
@@ -2329,8 +2480,10 @@ impl App {
                         false,
                     ));
                 }
-                galerie.restant = restant;
                 self.galerie = Some(galerie);
+                // les vignettes déjà en cache arrivent tout de suite (lecture
+                // de fichiers), les autres suivent par fenêtre visible
+                self.gallery_prepare();
                 Task::none()
             }
             Message::GalleryClose => {
@@ -2352,6 +2505,7 @@ impl App {
                 let cible = galerie.selected as i64 + delta as i64;
                 galerie.selected = cible.clamp(0, total as i64 - 1) as usize;
                 galerie.arme = None;
+                self.gallery_prepare();
                 Task::none()
             }
             Message::GalleryAct => {
@@ -2420,7 +2574,7 @@ impl App {
                     .map(|item| item.nom())
                     .unwrap_or_default();
                 self.status = Some((
-                    format!("effacer {nom} ? Croix = effacer · Rond = annuler"),
+                    format!("mettre {nom} à la corbeille ? Croix = oui · Rond = annuler"),
                     true,
                 ));
                 Task::none()
@@ -2430,6 +2584,22 @@ impl App {
                     galerie.arme = None;
                 }
                 self.status = None;
+                Task::none()
+            }
+            Message::GalleryFilter => {
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                galerie.filtre = match galerie.filtre {
+                    None => Some(gallery::Genre::Image),
+                    Some(gallery::Genre::Image) => Some(gallery::Genre::Video),
+                    Some(gallery::Genre::Video) => None,
+                };
+                self.gallery_apply_filter();
+                self.gallery_prepare();
+                if let Some(galerie) = self.galerie.as_ref() {
+                    self.status = Some((galerie_legende(galerie), false));
+                }
                 Task::none()
             }
             Message::GalleryThumb { path, bytes } => {
@@ -2493,6 +2663,31 @@ impl App {
             }
             Message::ApercuClose => {
                 self.apercu = None;
+                Task::none()
+            }
+            Message::ApercuCopy => {
+                let Some(item) = self
+                    .apercu
+                    .as_ref()
+                    .and_then(|apercu| {
+                        self.galerie
+                            .as_ref()
+                            .and_then(|galerie| galerie.items.get(apercu.index))
+                    })
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                match gallery::copie_avec_logo(&item) {
+                    Ok(path) => {
+                        self.status = Some((
+                            format!("copie avec logo : {}", path.display()),
+                            false,
+                        ));
+                        println!("GALERIE copie {}", path.display());
+                    }
+                    Err(erreur) => self.status = Some((erreur, true)),
+                }
                 Task::none()
             }
             Message::ClosePicker => {
@@ -3720,6 +3915,10 @@ impl App {
         {
             apercu.entree = (apercu.entree - dt / 0.16).max(0.0);
         }
+        // menus et entrée en galerie : voile noir qui se dissipe (0,18 s)
+        if self.overlay_fade > 0.0 {
+            self.overlay_fade = (self.overlay_fade - dt / FONDU_MENUS).max(0.0);
+        }
 
         // Bascule de liste : montée vers le fond, échange au sommet, descente.
         if (self.swap_fade - self.swap_fade_target).abs() > 0.001 {
@@ -4623,6 +4822,9 @@ impl App {
                 keyboard::Key::Named(Named::Escape) => Task::done(Message::ApercuClose),
                 keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::ApercuNav(-1)),
                 keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::ApercuNav(1)),
+                keyboard::Key::Character(ch) if ch.as_ref() == "c" => {
+                    Task::done(Message::ApercuCopy)
+                }
                 _ => Task::none(),
             };
         }
@@ -4633,12 +4835,17 @@ impl App {
             };
             let colonnes = self.gallery_columns() as i32;
             let arme = self.galerie.as_ref().is_some_and(|galerie| galerie.arme.is_some());
+            if arme {
+                return match key {
+                    keyboard::Key::Named(Named::Escape) => Task::done(Message::GalleryUnarm),
+                    keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                        Task::done(Message::GalleryAct)
+                    }
+                    _ => Task::none(),
+                };
+            }
             return match key {
-                keyboard::Key::Named(Named::Escape) => Task::done(if arme {
-                    Message::GalleryUnarm
-                } else {
-                    Message::GalleryClose
-                }),
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::GalleryClose),
                 keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::GalleryNav(-1)),
                 keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::GalleryNav(1)),
                 keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::GalleryNav(-colonnes)),
@@ -4649,6 +4856,7 @@ impl App {
                     Task::done(Message::GalleryAct)
                 }
                 keyboard::Key::Named(Named::Delete) => Task::done(Message::GalleryArm),
+                keyboard::Key::Named(Named::Tab) => Task::done(Message::GalleryFilter),
                 _ => Task::none(),
             };
         }
@@ -4964,6 +5172,7 @@ impl App {
                         PadButton::Back => Task::done(Message::ApercuClose),
                         PadButton::Left => Task::done(Message::ApercuNav(-1)),
                         PadButton::Right => Task::done(Message::ApercuNav(1)),
+                        PadButton::Menu => Task::done(Message::ApercuCopy),
                         _ => Task::none(),
                     };
                 }
@@ -4973,14 +5182,20 @@ impl App {
                         .galerie
                         .as_ref()
                         .is_some_and(|galerie| galerie.arme.is_some());
+                    // panneau de confirmation ouvert : Croix/Rond, rien d'autre
+                    if arme {
+                        return match button {
+                            PadButton::Confirm => Task::done(Message::GalleryAct),
+                            PadButton::Back => Task::done(Message::GalleryUnarm),
+                            _ => Task::none(),
+                        };
+                    }
                     return match button {
                         PadButton::Confirm => Task::done(Message::GalleryAct),
-                        PadButton::Back => Task::done(if arme {
-                            Message::GalleryUnarm
-                        } else {
-                            Message::GalleryClose
-                        }),
+                        PadButton::Back => Task::done(Message::GalleryClose),
                         PadButton::Menu => Task::done(Message::GalleryArm),
+                        // triangle / Y : filtre tout → captures → vidéos
+                        PadButton::North => Task::done(Message::GalleryFilter),
                         PadButton::Left => Task::done(Message::GalleryNav(-1)),
                         PadButton::Right => Task::done(Message::GalleryNav(1)),
                         PadButton::Up => Task::done(Message::GalleryNav(-colonnes)),
@@ -5070,7 +5285,7 @@ impl App {
                         PadButton::Confirm => Task::done(Message::ViewMenuChoose(choice)),
                         // le bouton qui l'a ouvert le referme : appuyer deux
                         // fois sur Start ne doit pas laisser un menu ouvert
-                        PadButton::View | PadButton::Back => {
+                        PadButton::View | PadButton::North | PadButton::Back => {
                             self.view_menu = None;
                             Task::none()
                         }
@@ -5084,7 +5299,7 @@ impl App {
                     return match button {
                         PadButton::Confirm => Task::done(Message::SortMenuChoose(choice)),
                         // même geste pour fermer que pour ouvrir
-                        PadButton::Menu | PadButton::Back => {
+                        PadButton::Menu | PadButton::North | PadButton::Back => {
                             self.sort_menu = None;
                             Task::none()
                         }
@@ -5097,7 +5312,7 @@ impl App {
                 if let Some(choice) = self.year_menu {
                     return match button {
                         PadButton::Confirm => Task::done(Message::YearMenuChoose(choice)),
-                        PadButton::Menu | PadButton::Back => {
+                        PadButton::Menu | PadButton::North | PadButton::Back => {
                             self.year_menu = None;
                             Task::none()
                         }
@@ -5146,11 +5361,13 @@ impl App {
                     PadButton::PageUp => self.navigate(Nav::PageUp),
                     PadButton::ZoomIn => Task::done(Message::Zoom(1)),
                     PadButton::ZoomOut => Task::done(Message::Zoom(-1)),
-                    // triangle / Y : le MENU des types de liste (le cycle
-                    // rapide reste au clavier, V/Tab)
+                    // start : le MENU des types de liste (le cycle rapide
+                    // reste au clavier, V/Tab)
                     PadButton::View => Task::done(Message::ViewMenu),
-                    // carré / X : le MENU du tri (A→Z, récents, favoris)
-                    PadButton::Menu => Task::done(Message::SortMenu),
+                    // triangle / Y et carré / X : le MENU du tri (A→Z,
+                    // récents, favoris). Les deux boutons sont distincts
+                    // depuis le 23/11, mais gardent ce raccourci.
+                    PadButton::North | PadButton::Menu => Task::done(Message::SortMenu),
                     PadButton::Confirm => Task::done(Message::OpenPage(self.selected)),
                     // « retour » ne quitte pas du premier coup : deux appuis
                     // rapprochés (1,5 s) sont nécessaires, pour ne pas
@@ -5307,10 +5524,26 @@ impl App {
         if self.galerie.is_some() {
             menus = stack![menus, self.gallery_view()].into();
         }
+        if self.galerie.as_ref().is_some_and(|galerie| galerie.arme.is_some()) {
+            menus = stack![menus, self.gallery_confirm_view()].into();
+        }
         if self.apercu.is_some() {
             menus = stack![menus, self.apercu_view()].into();
         }
-        view = stack![view, menus].into();
+        // Fondu d'apparition : un voile noir AU-DESSUS des menus, dissipé par
+        // `tick`. Il existe MÊME à opacité nulle (comme le voile de lancement) :
+        // l'arbre garde la même forme d'un rendu à l'autre.
+        let entree = container(Row::new())
+            .width(Fill)
+            .height(Fill)
+            .style(move |_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: self.overlay_fade,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            });
+        view = stack![view, menus, entree].into();
 
         // Roue de chargement : emplacement TOUJOURS présent (jamais un enfant
         // conditionnel de la pile racine : un changement de forme recrée le
@@ -6530,24 +6763,44 @@ impl App {
                         })
                         .into(),
                     };
-                // Seul libellé : la DATE, au propre. Le nom du fichier
+                // Deux lignes, pas plus : le **nom du jeu** quand la capture
+                // le connaît (métadonnée écrite au moment de la prise), puis
+                // `genre · date · poids`. Le nom du FICHIER
                 // (`Video_20261120_101500.mp4`) ne dit rien à personne et
-                // faisait du bruit sous chaque vignette.
+                // n'apparaît jamais. Capture d'avant la métadonnée : la
+                // première ligne reprend le badge et le poids, comme avant.
+                let date = item.date_lisible();
+                let (premiere, seconde, taille, teinte) = match item.titre.as_deref() {
+                    Some(titre) => (
+                        short(titre, 30),
+                        format!("{} · {date} · {}", item.genre.badge(), item.poids()),
+                        14,
+                        if selectionne { ACCENT } else { TEXT },
+                    ),
+                    None => (
+                        format!("{} · {}", item.genre.badge(), item.poids()),
+                        date,
+                        12,
+                        if selectionne { ACCENT } else { MUTED },
+                    ),
+                };
                 let legende = column![
-                    text(format!("{} · {}", item.genre.badge(), item.poids()))
-                        .size(12)
-                        .color(if selectionne { ACCENT } else { MUTED }),
-                    text(item.date_lisible()).size(14).color(TEXT),
-                    // la place de l'alerte est réservée : la tuile ne grandit
-                    // pas d'un coup quand on arme l'effacement
-                    text(if arme { "effacer ? Croix = oui" } else { "" })
-                        .size(12)
-                        .color(if arme { DANGER } else { MUTED }),
+                    text(premiere).size(taille).color(teinte),
+                    text(seconde).size(12).color(MUTED),
                 ]
                 .spacing(2);
+                // la confirmation est un vrai panneau : la tuile armée se
+                // contente d'un liseré rouge, sans texte qui pousse la grille
                 let tuile = container(column![vignette, legende].spacing(6))
                     .padding(6)
-                    .style(move |_| card_style(selectionne, false));
+                    .style(move |_| {
+                        let mut style = card_style(selectionne, false);
+                        if arme {
+                            style.border.color = DANGER;
+                            style.border.width = 2.0;
+                        }
+                        style
+                    });
                 let cliquable: Element<'_, Message> =
                     mouse_area(tuile).on_press(Message::GalleryChoose(index)).into();
                 rangee = rangee.push(cliquable);
@@ -6555,49 +6808,40 @@ impl App {
             grille = grille.push(rangee);
         }
 
-        let aide = if let Some(index) = galerie.arme {
-            // on nomme l'élément par sa date : c'est ce que la tuile affiche
-            let quoi = galerie
-                .items
-                .get(index)
-                .map(|item| {
-                    if item.genre == gallery::Genre::Video {
-                        format!("la vidéo du {}", item.date_lisible())
-                    } else {
-                        format!("la capture du {}", item.date_lisible())
-                    }
-                })
-                .unwrap_or_default();
-            format!("Effacer {quoi} ? Le fichier sera supprimé du disque. Croix = effacer · Rond = annuler")
-        } else if galerie.items.is_empty() {
-            "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer).".to_string()
-        } else {
-            "Croix = ouvrir · Carré = effacer · Rond = fermer".to_string()
-        };
+        let (aide, glyphes): (String, Vec<(&image::Handle, &'static str)>) =
+            if galerie.items.is_empty() {
+                (
+                    "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer)."
+                        .to_string(),
+                    vec![(&self.glyphs.back, "Fermer")],
+                )
+            } else {
+                (
+                    "Croix = ouvrir · Carré = corbeille · Triangle = captur./vidéos · Rond = fermer"
+                        .to_string(),
+                    vec![
+                        (&self.glyphs.confirm, "Ouvrir"),
+                        (&self.glyphs.menu, "Corbeille"),
+                        (&self.glyphs.sort, "Filtrer"),
+                        (&self.glyphs.back, "Fermer"),
+                    ],
+                )
+            };
 
-        let glyphes: Vec<(&image::Handle, &'static str)> = if galerie.arme.is_some() {
-            vec![
-                (&self.glyphs.confirm, "Effacer"),
-                (&self.glyphs.back, "Annuler"),
-            ]
-        } else {
-            vec![
-                (&self.glyphs.confirm, "Ouvrir"),
-                (&self.glyphs.menu, "Effacer"),
-                (&self.glyphs.back, "Fermer"),
-            ]
+        let filtre = match galerie.filtre {
+            None => "tout",
+            Some(gallery::Genre::Image) => "captures",
+            Some(gallery::Genre::Video) => "vidéos",
         };
-
         let panel = container(
             column![
-                text("Galerie").size(28).color(TEXT),
-                text(format!(
-                    "{} élément(s) · {} chargée(s)",
-                    galerie.items.len(),
-                    galerie.thumbs.len()
-                ))
-                .size(13)
-                .color(MUTED),
+                row![
+                    text("Galerie").size(28).color(TEXT),
+                    text(filtre).size(17).color(ACCENT),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+                text(galerie_legende(galerie)).size(13).color(MUTED),
                 grille,
                 text(format!(
                     "{}/{} · {}",
@@ -6611,7 +6855,7 @@ impl App {
                 ))
                 .size(12)
                 .color(MUTED),
-                self.aide_menu(&glyphes, &aide, galerie.arme.is_some()),
+                self.aide_menu(&glyphes, &aide, false),
             ]
             .spacing(12),
         )
@@ -6635,6 +6879,71 @@ impl App {
             container(Row::new()).width(Fill).height(Fill).into()
         };
         stack![fond, panel, poussiere].into()
+    }
+
+    /// Confirmation d'effacement : un vrai panneau au centre, pas un texte
+    /// sous la tuile (demandé le 23/11). Croix efface, Rond annule — les deux
+    /// seuls boutons actifs tant qu'il est ouvert.
+    fn gallery_confirm_view(&self) -> Element<'_, Message> {
+        let Some(galerie) = self.galerie.as_ref() else {
+            return Row::new().into();
+        };
+        let Some(item) = galerie.arme.and_then(|index| galerie.items.get(index)) else {
+            return Row::new().into();
+        };
+        let quoi = if item.genre == gallery::Genre::Video {
+            "CETTE VIDÉO"
+        } else {
+            "CETTE CAPTURE"
+        };
+        let mut texte = column![text(format!("METTRE {quoi} À LA CORBEILLE ?"))
+            .size(20)
+            .color(TEXT)]
+        .spacing(10);
+        if let Some(titre) = item.titre.as_deref() {
+            texte = texte.push(text(short(titre, 44)).size(17).color(ACCENT));
+        }
+        texte = texte.push(
+            text(format!("{} · {}", item.genre.badge(), item.poids()))
+                .size(14)
+                .color(MUTED),
+        );
+        texte = texte.push(text(item.date_lisible()).size(14).color(MUTED));
+        texte = texte.push(
+            text("Le fichier part dans la corbeille : récupérable depuis Dolphin.")
+                .size(13)
+                .color(MUTED),
+        );
+        texte = texte.push(
+            self.aide_menu(
+                &[
+                    (&self.glyphs.confirm, "Corbeille"),
+                    (&self.glyphs.back, "Annuler"),
+                ],
+                "Croix = corbeille · Rond = annuler",
+                true,
+            ),
+        );
+
+        let panel = container(texte)
+            .padding(26)
+            .width(Length::Fixed(520.0))
+            .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.82,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     /// Capture d'écran en plein écran : fondu et léger agrandissement à
@@ -6661,16 +6970,19 @@ impl App {
         let image: Element<'_, Message> = Pose::new(image)
             .scale(1.0 + 0.03 * apercu.entree)
             .into();
-        let glyphes: Vec<(&image::Handle, &'static str)> = vec![(&self.glyphs.back, "Retour")];
-        let pied = container(
-            self.aide_menu(
-                &glyphes,
-                "Gauche/droite = précédente / suivante · Rond = retour",
-                false,
-            ),
-        )
-        .width(Fill)
-        .padding(12);
+        let mut glyphes: Vec<(&image::Handle, &'static str)> =
+            vec![(&self.glyphs.back, "Retour")];
+        if item.logo.is_some() {
+            glyphes.insert(0, (&self.glyphs.menu, "Copie avec le logo"));
+        }
+        let aide = if item.logo.is_some() {
+            "Gauche/droite = précédente / suivante · Carré = copie avec le logo · Rond = retour"
+        } else {
+            "Gauche/droite = précédente / suivante · Rond = retour · (copie avec logo : capture faite en jeu uniquement)"
+        };
+        let pied = container(self.aide_menu(&glyphes, aide, false))
+            .width(Fill)
+            .padding(12);
 
         let fond = container(Row::new())
             .width(Fill)
@@ -8232,7 +8544,10 @@ fn barre(pourcent: u8, largeur: f32, sur_ligne: bool) -> Element<'static, Messag
 fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
     const GOUTTIERE: f32 = 12.0;
     let dispo = (largeur - 48.0).max(240.0);
-    let colonnes = ((dispo / 300.0).floor() as usize).clamp(2, 10);
+    // taille FIXE : une tuile visée de 300 px, sans cran de zoom (le zoom de
+    // la galerie a été retiré le 23/11, jugé inutile sur une grille plein écran)
+    let visee = 300.0;
+    let colonnes = ((dispo / visee).floor() as usize).clamp(2, 10);
     let tuile_w = ((dispo - GOUTTIERE * (colonnes as f32 - 1.0)) / colonnes as f32)
         .floor()
         .max(120.0);
@@ -8244,6 +8559,8 @@ fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
 /// (2 × 20), titre (28), sous-titre (13), compteur (12), aide (13) et leurs
 /// quatre interlignes de 12. Mesuré sur une capture 2560×1440 le 23/11 : 173.
 const GALERIE_CHROME: f32 = 173.0;
+/// Durée du fondu d'apparition des menus et de la galerie (secondes).
+const FONDU_MENUS: f32 = 0.18;
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
     row![

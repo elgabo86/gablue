@@ -283,8 +283,31 @@ static int ecrire_chunk(FILE *f, const char *type, const unsigned char *data,
            (!len || fwrite(data, 1, len, f) == len) && fwrite(fin, 1, 4, f) == 4;
 }
 
+/* iTXt (UTF-8, non compressé) : clé + texte lisible par `identify`, `exiftool`
+ * et la galerie du launcher. tEXt serait Latin-1 : un titre accentué ou
+ * japonais y serait corrompu, d'où l'iTXt. */
+static int ecrire_itxt(FILE *f, const char *cle, const char *texte)
+{
+    size_t lc = strlen(cle), lt = strlen(texte);
+    size_t len = lc + 1 + 1 + 1 + 1 + 1 + lt; /* clé\0 flag méthode lang\0 trad\0 texte */
+    unsigned char *d = calloc(1, len);
+    if (!d)
+        return 0;
+    unsigned char *p = d;
+    memcpy(p, cle, lc);
+    p += lc + 1;         /* clé + NUL */
+    *p++ = 0;            /* compression : aucune */
+    *p++ = 0;            /* méthode */
+    *p++ = 0;            /* langue : vide */
+    *p++ = 0;            /* mot-clé traduit : vide */
+    memcpy(p, texte, lt);
+    int ok = ecrire_chunk(f, "iTXt", d, len);
+    free(d);
+    return ok;
+}
+
 static int ecrire_png(const char *chemin, const capture_t *c,
-                      const unsigned char *raw, size_t len)
+                      const unsigned char *raw, size_t len, const char *titre)
 {
     const int bpp = (c->format == 13) ? 3 : 4;
     /* QImage::Format 16/17/18 = octets R,V,B(,A) ; 4/5 et 13 = B,V,R */
@@ -340,6 +363,7 @@ static int ecrire_png(const char *chemin, const capture_t *c,
                               8, 2, 0, 0, 0}; /* 8 bits RVB, pas d'entrelacement */
     int ok = fwrite(sig, 1, 8, f) == 8 &&
              ecrire_chunk(f, "IHDR", ihdr, sizeof ihdr) &&
+             (!titre || !*titre || ecrire_itxt(f, "Title", titre)) &&
              ecrire_chunk(f, "IDAT", z, (size_t)zlen) &&
              ecrire_chunk(f, "IEND", NULL, 0);
     free(z);
@@ -393,10 +417,23 @@ static char *chemin_defaut(void)
 
 int main(int argc, char **argv)
 {
-    char *chemin = argc > 1 ? strdup(argv[1]) : chemin_defaut();
-    if (argc > 2 || !chemin) {
-        fprintf(stderr, "usage: gpad-shot [fichier.png]\n");
-        free(chemin);
+    /* --titre=<texte> : nom du jeu (ou de la fenêtre) gravé en métadonnée
+     * iTXt, jamais dans les pixels (demandé le 23/11). */
+    const char *titre = getenv("GPAD_SHOT_TITRE");
+    const char *fichier = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "--titre=", 8) == 0)
+            titre = argv[i] + 8;
+        else if (!fichier)
+            fichier = argv[i];
+        else {
+            fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [fichier.png]\n");
+            return 2;
+        }
+    }
+    char *chemin = fichier ? strdup(fichier) : chemin_defaut();
+    if (!chemin) {
+        fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [fichier.png]\n");
         return 2;
     }
 
@@ -424,7 +461,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int rc = ecrire_png(chemin, &c, buf, len);
+    int rc = ecrire_png(chemin, &c, buf, len, titre);
     free(buf);
     dbus_connection_unref(conn);
     free(chemin);
