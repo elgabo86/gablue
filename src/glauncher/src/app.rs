@@ -11,7 +11,7 @@ use iced::futures::sink::SinkExt;
 use iced::futures::{Stream, StreamExt};
 use iced::keyboard::key::Named;
 use iced::widget::operation;
-use iced::widget::scrollable::AbsoluteOffset;
+use iced::widget::scrollable::{AbsoluteOffset, RelativeOffset};
 use iced::widget::{
     Column, Id, Row, column, container, image, mouse_area, row, scrollable, stack, text, text_input,
 };
@@ -78,6 +78,11 @@ pub(crate) const PAGE_PADDING_Y: f32 = 18.0;
 pub(crate) const FOOTER_BAND: f32 = 56.0;
 /// Colonnes du menu de choix d'image.
 const PICKER_COLUMNS: usize = 5;
+
+/// Identifiant du défilement du menu de choix d'image : la navigation à la
+/// manette change la sélection sans que le `scrollable` suive, donc les
+/// dernières lignes restaient sous le panneau (signalé le 23/11).
+const PICKER_SCROLL: &str = "glauncher-picker";
 const PADDING: f32 = 12.0;
 /// Marge horizontale du launcher (padding de la vue), à gauche. À droite on
 /// ajoute `SCROLLBAR_GUTTER` : la barre de défilement d'iced est une
@@ -2941,6 +2946,24 @@ impl App {
                         Nav::PageDown => (picker.index + columns * 2).min(last),
                         Nav::PageUp => picker.index.saturating_sub(columns * 2),
                     };
+                    // La grille défile avec la sélection : `RelativeOffset` ne
+                    // demande aucune mesure (iced borne de lui-même), la
+                    // dernière rangée arrive donc en bas du panneau au lieu
+                    // de rester dessous.
+                    let lignes = picker.choices.len().div_ceil(columns).max(1);
+                    let ligne = picker.index / columns;
+                    let y = if lignes > 1 {
+                        ligne as f32 / (lignes - 1) as f32
+                    } else {
+                        0.0
+                    };
+                    return operation::snap_to(
+                        Id::new(PICKER_SCROLL),
+                        RelativeOffset {
+                            x: None,
+                            y: Some(y),
+                        },
+                    );
                 }
                 Task::none()
             }
@@ -5959,8 +5982,12 @@ impl App {
         // La place réservée suit la même progression, donc la moitié basse se
         // comprime et glisse vers le bas au lieu de sauter d'un coup.
         let reveal = 1.0 - (1.0 - self.page_hero).powi(2);
-        let dispo = (self.viewport.1 - band_h * reveal).max(300.0);
-        let cover_h = (dispo * 0.72).clamp(300.0, 520.0);
+        // Le bloc occupe franchement la place sous la bande (0,78 de la
+        // hauteur restante) : à 0,68 il restait centré avec une grande bande
+        // vide sous la ligne d'aide, qui paraissait remontée (signalé le
+        // 23/11). Le plafond évite qu'il touche le bas sur un écran très haut.
+        let dispo = (self.viewport.1 - band_h * reveal - 12.0).max(300.0);
+        let cover_h = (dispo * 0.78).clamp(300.0, 540.0);
         let cover_w = cover_h * 205.0 / 308.0;
         // tout le bloc suit la cover : textes, pastilles et espacements
         let ech = (cover_h / 308.0).clamp(1.0, 1.7);
@@ -5981,10 +6008,15 @@ impl App {
             .into()
         });
 
+        // Hauteur BORNÉE : le logo suivait `ech` sans plafond et, sur un grand
+        // écran, poussait les pastilles et la ligne d'aide hors du bas de page
+        // (constaté le 23/11). 150 px suffisent à le lire, quel que soit `ech`.
+        let logo_h = (118.0 * ech).min(150.0);
+        let logo_w = logo_h * 450.0 / 155.0;
         let logo: Element<'_, Message> = match &game.logo {
             Some(handle) => image(handle.clone())
-                .width(Length::Fixed(450.0 * ech))
-                .height(Length::Fixed(155.0 * ech))
+                .width(Length::Fixed(logo_w))
+                .height(Length::Fixed(logo_h))
                 .content_fit(ContentFit::Contain)
                 // logo arrivé après l'ouverture : il monte en fondu
                 .opacity(ease_reveal(self.page_logo))
@@ -6087,7 +6119,7 @@ impl App {
                 .into()
         };
 
-        let body = container(
+        let bloc = container(
             column![
                 row![
                     cover,
@@ -6099,14 +6131,28 @@ impl App {
                 .align_y(Alignment::Center),
                 help,
             ]
-            .spacing(30.0 * ech)
+            .spacing(16.0 * ech)
             .align_x(Alignment::Center),
         )
         .width(Fill)
         .height(Fill)
-        .padding(20.0 * ech)
-        .center_x(Fill)
-        .center_y(Fill);
+        .padding(20.0 * ech);
+        // Avec une bande héros, le bloc est POSÉ EN BAS (8 px de marge) :
+        // centré, il laissait une grande bande vide sous la ligne d'aide, qui
+        // paraissait remontée (signalé deux fois le 23/11). Sans héros, il
+        // reste centré sur la page — collé en bas d'un écran vide, il faisait
+        // pauvre (retour 18/11).
+        let body = if game.hero.is_some() {
+            bloc.align_y(Alignment::End).padding(Padding {
+                top: 20.0 * ech,
+                right: 20.0 * ech,
+                bottom: 8.0,
+                left: 20.0 * ech,
+            })
+        } else {
+            bloc.center_y(Fill)
+        }
+        .center_x(Fill);
 
         let mut page_body = Column::new().spacing(0);
         if let Some(band) = band {
@@ -6128,7 +6174,13 @@ impl App {
     /// branchée ET que c'est elle qui a servi en dernier : reprendre le clavier
     /// fait réapparaître les touches dans le pied de page et les menus.
     fn pad_hints(&self) -> bool {
-        self.pad.is_some() && self.input == Input::Pad
+        self.pad.is_some()
+            && (self.input == Input::Pad
+                // session console : aucun clavier physique. Un mouvement de
+                // souris (gpad-mouse, pointeur du jeu) basculait l'état en
+                // « clavier » et les pages de jeu affichaient des aides en
+                // texte, donc sans glyphes (signalé le 23/11).
+                || self.mode.is_console())
     }
 
     /// Entrées du menu « Options », selon le format du paquet ouvert (le mode
@@ -7901,7 +7953,10 @@ impl App {
                 rows = rows.push(current);
             }
 
-            scrollable(rows).height(Fill).into()
+            scrollable(rows)
+                .id(Id::new(PICKER_SCROLL))
+                .height(Fill)
+                .into()
         };
 
         // aide adaptée : glyphes à la manette (« retour » y annule), clavier

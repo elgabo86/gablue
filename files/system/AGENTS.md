@@ -124,7 +124,21 @@
   KWin ignore SIGTERM, d'où le SIGKILL explicite ;
   (3) **se détacher** dans une unité transitoire (`systemd-run --collect`) :
   la bascule tue la session qui l'a demandée, un script resté dedans
-  s'arrêterait au milieu du chemin.
+  s'arrêterait au milieu du chemin ;
+  (4) **l'utilisateur demandeur** vient de `PKEXEC_UID` **ou** `SUDO_UID`,
+  jamais de `id -u` : lancé par sudo, le script prenait root et écrivait un
+  autologin pour root — deux sessions graphiques sur le même siège, et root
+  connecté à la place de l'utilisateur ;
+  (5) **la sortie se juge sur les processus et leur cgroup**, pas sur l'état de
+  l'unité : `MainPID` ne désigne que `kwin_wayland_wrapper` (le compositeur est
+  son enfant), `cgroup.procs` est un pseudo-fichier de taille 0 (donc `-s` est
+  toujours faux) et « deactivating » n'est pas « arrêté ». Et une session
+  laissée en « closing » par `loginctl terminate-session` part au
+  `loginctl kill-session -s SIGKILL`.
+  Piège transverse, celui qui a rendu la bascule lente puis silencieusement
+  inopérante : **aucun préfixe arithmétique dans un chemin** —
+  `UID_NUM=10#$(id -u …)` donne la chaîne `10#1000`, donc `/run/user/10#1000`,
+  et toutes les commandes `systemctl --user` échouent sans un mot.
   `FERMER LA SESSION` de `gpad` l'appelle en mode `greeter` **quand un
   autologin est armé**, sinon il garde la déconnexion polie de Plasma.
 - **Pas encore là** (lots suivants) : la session « choix » avec compte à

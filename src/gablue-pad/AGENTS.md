@@ -159,6 +159,17 @@ autologin est armé** (fichier `zz-gablue-session.conf` présent) : une simple
 déconnexion relancerait la même session (plasmalogin garde `Session=` en
 mémoire, bug KDE 522181). Détail et pièges → `files/system/AGENTS.md`.
 
+**Bascule jeu ⇄ application compagne** (`BASCULER JEU / APP`, page JEU en tête
+quand une app compagne est ouverte, page FENETRES, et L2/R2 panneau ouvert) :
+elle ne se contente pas d'activer la fenêtre. Celle du jeu est **plein écran**,
+donc dans une couche au-dessus des fenêtres normales — l'app restait derrière
+et l'écran semblait revenir au jeu (constaté le 23/11/2026 avec Gablue TV et
+Jellyfin). Le plein écran du jeu est retiré en allant vers l'app et remis en
+revenant (`script_bascule`, testé), `keepAbove` levé au passage, et
+l'activation part dans le **même** script KWin (deux chargements se
+marcheraient dessus). Un seul jeu à la fois : c'est le modèle du launcher
+(`running: Option<String>`), il n'y a donc jamais de choix entre deux jeux.
+
 Le changement de session fait aussi **redémarrer** `gablue-pad.service` côté
 console : l'unité vit dans le gestionnaire utilisateur, partagée entre
 sessions ; un `start` sur une unité déjà `active` ne rafraîchit pas son

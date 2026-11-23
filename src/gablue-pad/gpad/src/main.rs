@@ -898,12 +898,20 @@ impl Cat {
     /// ligne annonçant « INACTIF » n'apprend rien).
     fn entrees(self, dispo: Dispo) -> Vec<Entree> {
         match self {
-            Cat::Jeu => vec![
-                Entree::Fenetre,
-                Entree::Action("FERMER"),
-                Entree::Action("PLEIN ECRAN"),
-                Entree::Action("TOUT FERMER"),
-            ],
+            Cat::Jeu => {
+                let mut v = vec![Entree::Fenetre];
+                // le geste du quotidien (regarder une vidéo à côté du jeu) :
+                // en tête de JEU, là où le panneau s'ouvre — la ligne
+                // n'existait que dans FENETRES, donc introuvable (signalé le
+                // 23/11 : « pas de bouton pour basculer »)
+                if dispo.bascule {
+                    v.push(Entree::Basculer);
+                }
+                v.push(Entree::Action("FERMER"));
+                v.push(Entree::Action("PLEIN ECRAN"));
+                v.push(Entree::Action("TOUT FERMER"));
+                v
+            }
             // le sélecteur jeu ⇄ application compagne passe avant la liste :
             // c'est le geste du quotidien (regarder une vidéo à côté du jeu)
             Cat::Fenetres => {
@@ -3762,19 +3770,47 @@ impl App {
         );
     }
 
-    /// Active la fenêtre du jeu ou celle de l'app, puis referme le panneau.
+    /// Passe du jeu à l'application compagne, ou l'inverse, puis referme le
+    /// panneau.
+    ///
+    /// Activer la fenêtre ne suffit PAS : celle du jeu est **plein écran**, et
+    /// KWin la garde dans une couche au-dessus des fenêtres normales — l'app
+    /// activée restait derrière et l'écran semblait revenir au jeu (constaté
+    /// le 23/11/2026 avec Gablue TV et Jellyfin). Le plein écran du jeu est
+    /// donc retiré en allant vers l'app et remis en revenant ; l'activation
+    /// part dans le MÊME script, sinon deux chargements KWin se marchent
+    /// dessus. `keepAbove` est levé au passage : le launcher s'en sert le temps
+    /// du démarrage du jeu, jamais après.
     fn basculer(&mut self) {
-        let cible = if self.bascule_sur_app {
-            self.bascule_jeu.clone()
-        } else {
-            self.bascule_app.clone()
-        };
-        let Some(f) = cible else {
-            self.status = "BASCULER: AUCUNE FENETRE".to_string();
+        let (Some(jeu), Some(app)) = (self.bascule_jeu.clone(), self.bascule_app.clone()) else {
+            self.status = "BASCULER: JEU OU APP ABSENT".to_string();
             return;
         };
-        if self.activer_par_uuid(&f.uuid) {
-            self.status = format!("ACTIVE: {}", f.titre());
+        // sur l'app → on revient au jeu (plein écran remis) ; sur le jeu → on
+        // va à l'app (plein écran retiré)
+        let (cible, jeu_plein_ecran) = if self.bascule_sur_app {
+            (&jeu, true)
+        } else {
+            (&app, false)
+        };
+        let plugin = self.nom_plugin("bascule");
+        let Some(kbus) = &self.kbus else {
+            self.status = "BASCULER: KWIN INJOIGNABLE".to_string();
+            return;
+        };
+        let script = script_bascule(&jeu.uuid, &cible.uuid, jeu_plein_ecran);
+        let chemin = format!("/tmp/opencode/kwin-bascule-{}.js", std::process::id());
+        if std::fs::write(&chemin, script).is_err() {
+            self.status = "BASCULER: ECRITURE IMPOSSIBLE".to_string();
+            return;
+        }
+        if kbus.un_shot(&chemin, &plugin) {
+            self.status = format!("BASCULE: {}", cible.titre());
+            println!(
+                "BASCULE -> {} (jeu plein écran: {})",
+                cible.titre(),
+                jeu_plein_ecran
+            );
             self.request_close();
         } else {
             self.status = "BASCULER: ECHEC KWIN".to_string();
@@ -6493,6 +6529,31 @@ struct Fenetre {
     active: bool,
 }
 
+/// Script KWin de la bascule jeu ⇄ application compagne.
+///
+/// L'activation seule ne suffit pas : la fenêtre du jeu est plein écran, donc
+/// dans la couche au-dessus des fenêtres normales — l'app restait derrière
+/// (constaté le 23/11/2026). Le plein écran du jeu est donc piloté en même
+/// temps que l'activation, dans un seul script (deux chargements KWin se
+/// marcheraient dessus).
+fn script_bascule(jeu: &str, cible: &str, jeu_plein_ecran: bool) -> String {
+    format!(
+        "var ws = workspace.stackingOrder;\n\
+         for (var i = 0; i < ws.length; i++) {{\n\
+         \x20   var w = ws[i];\n\
+         \x20   if (String(w.internalId) === \"{jeu}\") {{\n\
+         \x20       w.fullScreen = {plein};\n\
+         \x20       w.keepAbove = false;\n\
+         \x20   }}\n\
+         \x20   if (String(w.internalId) === \"{cible}\") {{\n\
+         \x20       w.keepAbove = false;\n\
+         \x20       workspace.activeWindow = w;\n\
+         \x20   }}\n\
+         }}\n",
+        plein = if jeu_plein_ecran { "true" } else { "false" },
+    )
+}
+
 impl Fenetre {
     /// Nom affichable : le titre, ou la classe quand la fenêtre n'en a pas
     /// (Project Midas envoie un titre vide) — une ligne sans texte serait
@@ -8021,6 +8082,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// La bascule ne doit pas seulement activer : le plein écran du jeu est
+    /// retiré en allant vers l'app, remis en revenant (sinon l'app reste
+    /// derrière la fenêtre plein écran, et l'écran semble revenir au jeu).
+    #[test]
+    fn bascule_pilote_le_plein_ecran_du_jeu() {
+        let vers_app = script_bascule("{jeu}", "{app}", false);
+        assert!(vers_app.contains("w.fullScreen = false"));
+        assert_eq!(vers_app.matches("workspace.activeWindow = w").count(), 1);
+        assert!(vers_app.contains("\"{app}\""));
+
+        let vers_jeu = script_bascule("{jeu}", "{app}", true);
+        assert!(vers_jeu.contains("w.fullScreen = true"));
+        assert!(!vers_jeu.contains("w.fullScreen = false"));
     }
 
     fn pid_mort() -> i32 {

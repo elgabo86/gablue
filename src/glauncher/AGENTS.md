@@ -310,6 +310,24 @@ grille : un fond noir opaque l'aurait effacée.
 
 ## Contrats
 
+- **Les aides de commande restent en glyphes en session console** : en console
+  il n'y a pas de clavier physique, mais un mouvement de souris (gpad-mouse,
+  pointeur du jeu) basculait l'état d'entrée en « clavier » et les pages de jeu
+  affichaient des aides en texte, sans glyphes (signalé le 23/11/2026). Le
+  critère `pad_hints()` accepte donc l'état souris quand `mode.is_console()`.
+- **Page de jeu : le logo est borné et l'aide est posée en bas** : le logo
+  suivait `ech` sans plafond et poussait les pastilles puis la ligne d'aide
+  hors du bas de page. Sa hauteur est plafonnée à 150 px ; avec une bande
+  héros, le bloc (cover, textes, pastilles) est posé **en bas** à 8 px de
+  marge, l'aide restant la dernière ligne ; sans héros il reste centré (collé
+  en bas d'un écran vide, il faisait pauvre, retour 18/11).
+- **Le menu de choix d'image défile avec la sélection** : la grille
+  (`PICKER_COLUMNS` = 5) a un `scrollable` identifié (`PICKER_SCROLL`) et
+  `PickerNav` demande `operation::snap_to` avec un décalage relatif calculé sur
+  la rangée sélectionnée. Sans ça, la manette descendait la sélection sous le
+  panneau : les dernières rangées étaient inatteignables (signalé le
+  23/11/2026).
+
 - **Mode console ou bureau, jamais une option** : `src/mode.rs` lit
   `XDG_SESSION_DESKTOP` (nom posé par `DesktopNames` de
   `files/system/all/usr/share/wayland-sessions/gablue-gaming.desktop`, session

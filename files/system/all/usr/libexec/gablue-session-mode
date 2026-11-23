@@ -31,7 +31,11 @@ set -uo pipefail   # jamais -e : une étape ratée ne doit pas laisser la machin
 CONF=/etc/plasmalogin.conf.d/zz-gablue-session.conf
 SESSION_CONSOLE=gablue-gaming.desktop
 SESSION_BUREAU=plasma.desktop
-DEMANDEUR_UID=${PKEXEC_UID:-$(id -u)}
+# L'utilisateur à basculer est celui qui DEMANDE, jamais root : pkexec expose
+# PKEXEC_UID, sudo expose SUDO_UID. Sans cette source, le script prenait root
+# et écrivait un autologin pour root — deux sessions graphiques sur le même
+# siège (constaté le 23/11/2026 au banc).
+DEMANDEUR_UID=${PKEXEC_UID:-${SUDO_UID:-$(id -u)}}
 
 log() { printf 'gablue-session-mode: %s\n' "$*" >&2; }
 
@@ -47,13 +51,22 @@ console|bureau|greeter|status) ;;
     ;;
 esac
 
+if [ "$DEMANDEUR_UID" = 0 ]; then
+    log "utilisateur demandeur inconnu (uid 0) : lancer par pkexec, ou par sudo (SUDO_UID)"
+    exit 1
+fi
+
 utilisateur() { getent passwd "$DEMANDEUR_UID" | cut -d: -f1; }
 UTILISATEUR=$(utilisateur)
 if [ -z "$UTILISATEUR" ]; then
     log "utilisateur introuvable (uid $DEMANDEUR_UID)"
     exit 1
 fi
-UID_NUM=10#$(id -u "$UTILISATEUR")
+# PAS de préfixe arithmétique : `UID_NUM=10#$(…)` donne la chaîne « 10#1000 »,
+# donc /run/user/10#1000 — et TOUTES les commandes `systemctl --user` du
+# script échouaient en silence (constaté le 23/11/2026 : compositeur jamais
+# arrêté, KWin empilés, bascule lente).
+UID_NUM=$(id -u "$UTILISATEUR")
 RUNTIME=/run/user/$UID_NUM
 
 if [ "$mode" = status ]; then
@@ -123,13 +136,53 @@ sessions_siege() {
         awk -v u="$UTILISATEUR" '$3 == u && $4 == "seat0" { print $1 }'
 }
 
-attendre_inactif() {   # unité  secondes
-    local unite=$1 delai=$(( $2 * 4 ))
-    for _ in $(seq 1 "$delai"); do
-        [ "$(userctl is-active "$unite" 2>/dev/null)" != active ] && return 0
-        sleep 0.25
+# L'arrêt se juge sur le CGROUP de l'unité, jamais sur son MainPID ni sur son
+# état : `MainPID` ne désigne que `kwin_wayland_wrapper` (le vrai compositeur
+# est son enfant), et systemd passe l'unité en « deactivating » alors que le
+# processus vit toujours. Un KWin survivant garde `org.kde.KWin`, le siège DRM
+# et le grab de la manette — les scripts KWin (plein écran du jeu) partent au
+# mauvais compositeur (constaté le 23/11/2026 : trois KWin empilés).
+# L'arrêt du compositeur se juge sur les PROCESSUS et leur cgroup, jamais sur
+# l'état de l'unité ni sur `systemctl --user` : les unités Plasma vivent dans
+# le gestionnaire UTILISATEUR, et un KWin qui survit garde `org.kde.KWin`, le
+# siège DRM et le grab de la manette — les scripts KWin de la session suivante
+# partent au mauvais compositeur (constaté le 23/11/2026 : trois KWin empilés,
+# et `systemctl --user is-active` interrogé depuis l'unité transitoire
+# répondait « inactive » alors que le compositeur tournait).
+compositeur_vivant() {
+    local pid
+    for pid in $(pgrep -x kwin_wayland; pgrep -x kwin_wayland_wrapper; \
+                 pgrep -x plasmashell); do
+        grep -q "user@$UID_NUM.service/session.slice" "/proc/$pid/cgroup" 2>/dev/null &&
+            return 0
     done
     return 1
+}
+
+arret_compositeur() {
+    local i pid
+    # arrêt poli d'abord : les applications se ferment proprement. L'overlay
+    # manette est arrêté AUSSI : en session console il n'est rattaché à aucun
+    # `graphical-session.target`, donc il survit avec un WAYLAND_DISPLAY mort et
+    # garde la manette grabée — la session suivante n'a plus d'entrées
+    # (constaté le 23/11/2026). La nouvelle session le relance.
+    userctl stop --no-block plasma-plasmashell.service plasma-kwin_wayland.service \
+        gablue-pad.service graphical-session.target >/dev/null 2>&1 || true
+    for i in $(seq 1 20); do
+        compositeur_vivant || return 0
+        sleep 0.25
+    done
+    log "compositeur survivant : SIGKILL des processus de la session"
+    for pid in $(pgrep -x kwin_wayland; pgrep -x kwin_wayland_wrapper; \
+                 pgrep -x plasmashell); do
+        grep -q "user@$UID_NUM.service/session.slice" "/proc/$pid/cgroup" 2>/dev/null &&
+            kill -9 "$pid" 2>/dev/null
+    done
+    for i in $(seq 1 20); do
+        compositeur_vivant || return 0
+        sleep 0.25
+    done
+    log "compositeur encore vivant : le redémarrage du gestionnaire tranchera"
 }
 
 ecrire_autologin() {   # session .desktop
@@ -156,15 +209,7 @@ fi
 
 # 2. Le compositeur et la coquille sont arrêtés explicitement : c'est EUX qui
 #    bloquent la session suivante, pas la session logind.
-userctl stop --no-block plasma-plasmashell.service plasma-kwin_wayland.service \
-    graphical-session.target >/dev/null 2>&1
-if ! attendre_inactif plasma-kwin_wayland.service 10; then
-    log "KWin ignore SIGTERM (par conception) : SIGKILL"
-    userctl kill -s SIGKILL plasma-kwin_wayland.service \
-        plasma-plasmashell.service >/dev/null 2>&1
-    attendre_inactif plasma-kwin_wayland.service 5 ||
-        log "KWin encore actif : le redémarrage du gestionnaire de connexion tranche"
-fi
+arret_compositeur
 
 # 3. Sessions logind restantes du siège (un autologin en mémoire peut en avoir
 #    recréé une) : elles doivent partir avant que le gestionnaire redémarre.
@@ -172,6 +217,27 @@ for id in $(sessions_siege); do
     /usr/bin/loginctl terminate-session "$id" >/dev/null 2>&1 &&
         log "session $id terminée"
 done
+# La session doit avoir VRAIMENT disparu avant que le gestionnaire redémarre :
+# deux sessions du même siège se disputeraient le DRM.
+for i in $(seq 1 40); do
+    [ -z "$(sessions_siege)" ] && break
+    sleep 0.25
+done
+# `terminate-session` (SIGTERM) laisse parfois la session en « closing » avec
+# un leader déjà mort : elle occupe encore le siège (constaté le 23/11 — la
+# session console est restée listée alors que son compositeur était terminé).
+if [ -n "$(sessions_siege)" ]; then
+    log "session du siège encore présente : SIGKILL"
+    for id in $(sessions_siege); do
+        /usr/bin/loginctl kill-session "$id" -s SIGKILL >/dev/null 2>&1
+    done
+    for i in $(seq 1 20); do
+        [ -z "$(sessions_siege)" ] && break
+        sleep 0.25
+    done
+fi
+[ -z "$(sessions_siege)" ] ||
+    log "session du siège encore là : poursuite quand même"
 
 # 4. Configuration d'autologin, puis redémarrage du gestionnaire de connexion,
 #    seul moyen d'appliquer `Session=` (cf. en-tête).
