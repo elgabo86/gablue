@@ -82,10 +82,11 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             fullscreen: true,
-            // 6 colonnes par défaut : la grille respire, le fond (poussière
-            // d'étoiles) reste visible entre les boîtes (demandé le 22/11 —
-            // à 5, les covers mangeaient l'écran).
-            columns: 6,
+            // 7 colonnes par défaut : les covers sont ~20 % plus petites
+            // qu'à 6 (250 → 205 px de large en 1080p), une de plus par rangée
+            // (demandé le 23/11). La grille respire toujours : le fond
+            // (poussière d'étoiles) reste visible entre les boîtes.
+            columns: 7,
             cell_size: 220,
             view: ViewMode::default(),
             // Aucun dossier par défaut : le launcher ne scanne QUE ce que
@@ -580,7 +581,7 @@ pub fn resolve(opts: &Options) -> (Config, Option<String>) {
         config.covers = false;
     }
     if config.columns == 0 {
-        config.columns = 6;
+        config.columns = 7;
     }
     config.cell_size = config.cell_size.clamp(80, 640);
     let notice = opts

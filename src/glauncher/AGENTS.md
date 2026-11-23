@@ -394,9 +394,12 @@ grille : un fond noir opaque l'aurait effacée.
 - **Remplissage** : la grille occupe toute la largeur de la fenêtre.
   `columns` = nombre MAXIMAL de colonnes, `cell_size` = largeur MINIMALE d'une
   vignette ; le reste est étalé (agrandir la fenêtre ne laisse pas de bande
-  noire). **6 colonnes par défaut** (5 avant le 22/11 : les covers mangeaient
-  l'écran et le fond ne se voyait plus) — sur 1920 px, une cover passe de 312 à
-  250 px de large. En mosaïque, `columns` ne s'applique pas : `cell_size × 0.55`
+  noire). **7 colonnes par défaut** (6 jusqu'au 23/11 : covers ~20 % plus
+  petites demandées, 250 → 205 px de large sur 1920 px, une de plus par
+  rangée ; 5 avant le 22/11, les covers mangeaient l'écran et le fond ne se
+  voyait plus). Le nombre de colonnes est ENTIER : 7 donne −18 % de largeur
+  (8 donnerait −31 %), c'est le cran le plus proche de la demande.
+  En mosaïque, `columns` ne s'applique pas : `cell_size × 0.55`
   règle la densité. `+`/`−` (ou L2/R2) : en mosaïque ils changent `cell_size`
   en direct (bornes 120 à 520 px), ailleurs ils changent le **nombre de
   colonnes** (un cran = une colonne, bornes 3 à 12) et `cell_size` est
