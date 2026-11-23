@@ -129,13 +129,34 @@ impl Rest {
 /// contenu) qui cache le pointeur après [`IDLE`].
 pub struct Idle<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
+    /// Message publié au premier **vrai** geste de souris (mouvement réel,
+    /// clic, molette) : l'enveloppe est le seul endroit qui sait distinguer un
+    /// mouvement du pointeur d'un `CursorMoved` synthétique du compositeur.
+    on_geste: Option<Message>,
+    /// Ne rien publier : la barre de défilement est déjà à l'écran, un message
+    /// par mouvement ne servirait qu'à reconstruire la vue.
+    muet: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Idle<'a, Message, Theme, Renderer> {
     pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
         Self {
             content: content.into(),
+            on_geste: None,
+            muet: false,
         }
+    }
+
+    /// Message envoyé au premier geste de souris.
+    pub fn on_geste(mut self, message: Message) -> Self {
+        self.on_geste = Some(message);
+        self
+    }
+
+    /// Taire les gestes (l'appelant n'en a plus besoin pour l'instant).
+    pub fn muet(mut self, muet: bool) -> Self {
+        self.muet = muet;
+        self
     }
 }
 
@@ -213,6 +234,13 @@ where
                     ));
                     rest.position = Some(*position);
                     rest.awake();
+                    // la vue est reconstruite dès que l'appelant réagit : le
+                    // message ne part donc qu'une fois
+                    if !self.muet
+                        && let Some(message) = self.on_geste.take()
+                    {
+                        shell.publish(message);
+                    }
                 }
                 Some(_) => {}
             },
@@ -229,6 +257,11 @@ where
             ) => {
                 trace(format_args!("geste {event:?} → réveil"));
                 rest.awake();
+                if !self.muet
+                    && let Some(message) = self.on_geste.take()
+                {
+                    shell.publish(message);
+                }
             }
             // sortie de la fenêtre : la prochaine entrée vaudra mouvement
             Event::Mouse(mouse::Event::CursorLeft) => {

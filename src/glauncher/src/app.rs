@@ -392,6 +392,8 @@ pub enum Message {
     Resized(iced::Size),
     Key(keyboard::Event),
     Pad(PadEvent),
+    /// Clic ou molette : la barre de défilement revient (voir `barre`).
+    Souris,
     CardClicked(usize),
     /// Visuel SteamGridDB (grid, héros, logo, icône) ; `bytes: None` = introuvable.
     Art {
@@ -1240,6 +1242,10 @@ pub struct App {
     search_open: bool,
     /// taille des lignes de la vue LISTE (0 compact, 1 normal, 2 grand)
     list_size: u8,
+    /// Barre de défilement visible : seulement quand on se sert de la souris
+    /// ou du clavier. À la manette, on ne peut pas la saisir et elle ne dit
+    /// rien de plus que la position dans la liste — c'est du bruit.
+    barre: bool,
     /// Tous les jeux ; `games` n'en est que la vue filtrée (favoris).
     all_games: Vec<Game>,
     /// La fenêtre a le focus. La manette est lue sur `/dev/input` directement,
@@ -1454,6 +1460,7 @@ impl App {
             recent,
             search: String::new(),
             search_open: false,
+            barre: false,
             all_games,
             active: true,
             input: Input::Keyboard,
@@ -2125,6 +2132,10 @@ impl App {
             Message::Tick => self.tick(),
             Message::Key(event) => self.on_key(event),
             Message::Pad(event) => self.on_pad(event),
+            Message::Souris => {
+                self.barre = true;
+                Task::none()
+            }
             Message::Play(index) => {
                 self.selected = index.min(self.games.len().saturating_sub(1));
                 self.update_scroll_target();
@@ -5174,6 +5185,7 @@ impl App {
         // compris (le pied de page du menu d'image suit aussi)
         if matches!(event, keyboard::Event::KeyPressed { .. }) {
             self.input = Input::Keyboard;
+            self.barre = true;
         }
 
         // aperçu d'une capture : plein écran, seules les images se suivent
@@ -5556,6 +5568,9 @@ impl App {
                 Task::none()
             }
             PadEvent::Button(button) => {
+                // la manette reprend la main : la barre de défilement
+                // s'efface (elle ne se saisit pas à la manette)
+                self.barre = false;
                 // Lecture vidéo : mpv a le focus, donc la garde de focus
                 // ci-dessous ne doit pas s'appliquer — la manette est lue en
                 // direct sur evdev et c'est elle qui pilote le film.
@@ -6004,7 +6019,13 @@ impl App {
         // pointeur immobile quelle que soit la couche affichée, et n'a aucune
         // influence sur la mise en page.
         let view = mouse_area(view).on_right_press(Message::Back);
-        cursor::Idle::new(view).into()
+        // Un vrai geste de souris (mouvement, clic, molette) rallume la barre
+        // de défilement. `muet` quand elle est déjà là : sinon chaque
+        // mouvement du pointeur reconstruirait la vue pour rien.
+        cursor::Idle::new(view)
+            .on_geste(Message::Souris)
+            .muet(self.barre)
+            .into()
     }
 
     /// Liste des jeux (grille, liste ou mosaïque) avec en-tête et pied.
@@ -6023,6 +6044,7 @@ impl App {
             match self.config.view {
                 ViewMode::Grid | ViewMode::Mosaic => scrollable(self.grid())
                     .id(self.scroll_id.clone())
+                    .style(barre_style(self.barre))
                     .height(Fill)
                     .on_scroll(|viewport| Message::Scrolled {
                         offset: viewport.absolute_offset().y,
@@ -6032,6 +6054,7 @@ impl App {
                 ViewMode::List => row![
                     scrollable(self.list())
                         .id(self.scroll_id.clone())
+                        .style(barre_style(self.barre))
                         .height(Fill)
                         .width(Length::FillPortion(3))
                         .on_scroll(|viewport| Message::Scrolled {
@@ -6610,7 +6633,10 @@ impl App {
 
                 rows = rows.push(mouse_area(line).on_press(Message::IdentifyChoose(index)));
             }
-            scrollable(rows).height(Length::Fixed(320.0)).into()
+            scrollable(rows)
+                .style(barre_style(self.barre))
+                .height(Length::Fixed(320.0))
+                .into()
         };
 
         let help: Element<'_, Message> = if self.pad_hints() {
@@ -8042,7 +8068,9 @@ impl App {
                 text("Le jeu garde son nom et ses options ; seuls ses visuels changent.")
                     .size(13)
                     .color(MUTED),
-                scrollable(rows).height(Length::Fixed(340.0)),
+                scrollable(rows)
+                    .style(barre_style(self.barre))
+                    .height(Length::Fixed(340.0)),
                 help,
             ]
             .spacing(12),
@@ -8133,6 +8161,7 @@ impl App {
 
             scrollable(rows)
                 .id(Id::new(PICKER_SCROLL))
+                .style(barre_style(self.barre))
                 .height(Fill)
                 .into()
         };
@@ -9508,6 +9537,31 @@ fn picker_panel_style() -> container::Style {
 }
 
 /// Ligne de liste : aucun cadre, fond teinté seulement pour la sélection.
+/// Style de la barre de défilement : celle d'iced quand la souris ou le
+/// clavier pilote, parfaitement invisible quand c'est la manette (rail et
+/// curseur transparents). Les marges sont conservées : la faire disparaître ne
+/// doit pas décaler le contenu.
+fn barre_style(
+    visible: bool,
+) -> impl Fn(&Theme, scrollable::Status) -> scrollable::Style {
+    move |theme, status| {
+        let mut style = scrollable::default(theme, status);
+        if !visible {
+            let invisible = scrollable::Rail {
+                background: None,
+                border: Border::default(),
+                scroller: scrollable::Scroller {
+                    background: Color::TRANSPARENT.into(),
+                    border: Border::default(),
+                },
+            };
+            style.vertical_rail = invisible;
+            style.horizontal_rail = invisible;
+        }
+        style
+    }
+}
+
 fn list_style(selected: bool) -> container::Style {
     // Toutes les lignes ont un fond (très discret) et un liseré : sans ça la
     // liste flottait dans le vide noir, et la sélection ne se voyait que par

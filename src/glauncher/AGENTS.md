@@ -337,6 +337,17 @@ grille : un fond noir opaque l'aurait effacée.
   survit aux sessions (état `tri=derniers`). Le menu Tri porte une ligne
   **« Effacer les derniers lancés »**, présente seulement si l'historique
   n'est pas vide ; elle vide l'historique, **jamais** `playtime.txt`.
+- **Barre de défilement pilotée par le périphérique** : `barre` démarre
+  **éteinte** — un launcher ouvert à la manette n'a pas de barre à montrer
+  (signalé le 23/11 : elle était là sans qu'on ait touché à la souris). Elle
+  s'allume sur un **vrai** geste de souris (mouvement réel, clic, molette) ou
+  une touche, et s'éteint au premier bouton de manette. Le geste est publié par
+  l'enveloppe `cursor::Idle` (`.on_geste(Message::Souris)`), la seule à savoir
+  distinguer un mouvement du `CursorMoved` synthétique que KWin envoie quand
+  une surface apparaît sous le pointeur ; `.muet(self.barre)` coupe le message
+  quand la barre est déjà là (sinon chaque mouvement du pointeur
+  reconstruirait la vue). Style `barre_style` = rail et curseur transparents,
+  marges conservées : la disparition ne décale pas le contenu d'un pixel.
 - **La vue LISTE a sa propre présentation** : lignes en cartes (pochette,
   titre, année et temps de jeu alignés à droite, étoile), filet d'accent sur la
   ligne choisie, et **trois crans de taille** (`liste_taille` dans
