@@ -815,6 +815,9 @@ enum Entree {
     // --- capture (réglages de `gpad-rec`, fichier recorder.conf) ---
     Codec,
     Qualite,
+    /// format et qualité des captures d'écran (lus par `gpad-shot`)
+    ShotFormat,
+    ShotQualite,
     Reso,
     FpsRec,
     Curseur,
@@ -823,9 +826,15 @@ enum Entree {
 }
 
 /// L'accueil : les catégories, dans l'ordre du quotidien (le jeu d'abord, le
-/// système en dernier — c'est le coin des actions irréversibles).
-fn accueil_items() -> Vec<Entree> {
-    vec![
+/// système en dernier — c'est le coin des actions irréversibles). En **tête**,
+/// la bascule jeu ⇄ app quand elle est possible : c'est le geste du quotidien
+/// et il ne doit pas se chercher dans une catégorie (demandé le 23/11/2026).
+fn accueil_items(bascule: bool) -> Vec<Entree> {
+    let mut items = Vec::with_capacity(9);
+    if bascule {
+        items.push(Entree::Basculer);
+    }
+    items.extend(vec![
         Entree::SousMenu("JEU", Cat::Jeu),
         Entree::SousMenu("FENETRES", Cat::Fenetres),
         Entree::SousMenu("PERF", Cat::Perf),
@@ -834,7 +843,8 @@ fn accueil_items() -> Vec<Entree> {
         Entree::SousMenu("AFFICHAGE", Cat::Affichage),
         Entree::SousMenu("MANETTE", Cat::Manette),
         Entree::SousMenu("SYSTEME", Cat::Systeme),
-    ]
+    ]);
+    items
 }
 
 /// Catégories de l'accueil : un sous-menu par domaine. Le contenu est le même
@@ -948,6 +958,8 @@ impl Cat {
                     Entree::AutoReplay,
                     Entree::Qualite,
                     Entree::Codec,
+                    Entree::ShotFormat,
+                    Entree::ShotQualite,
                     Entree::Reso,
                     Entree::FpsRec,
                     Entree::Curseur,
@@ -1044,6 +1056,8 @@ impl Entree {
             Entree::Booster => "PRIORITE ACTIVE",
             Entree::Codec => "CODEC",
             Entree::Qualite => "QUALITE",
+            Entree::ShotFormat => "FORMAT PHOTO",
+            Entree::ShotQualite => "QUALITE PHOTO",
             Entree::Reso => "RESOLUTION",
             Entree::FpsRec => "FPS",
             Entree::Curseur => "CURSEUR",
@@ -1062,6 +1076,8 @@ impl Entree {
                 | Entree::Duree
                 | Entree::Codec
                 | Entree::Qualite
+                | Entree::ShotFormat
+                | Entree::ShotQualite
                 | Entree::Reso
                 | Entree::FpsRec
                 | Entree::Curseur
@@ -1083,6 +1099,8 @@ impl Entree {
             | Entree::Duree
             | Entree::Qualite
             | Entree::Codec
+            | Entree::ShotFormat
+            | Entree::ShotQualite
             | Entree::Reso
             | Entree::FpsRec => 86,
             _ => 46,
@@ -1760,7 +1778,7 @@ impl App {
             // ACCUEIL : un sous-menu par domaine (le détail vit dans la
             // catégorie, plus de page à rallonge) ; l'en-tête de fenêtre est
             // dans chaque catégorie, hauteur nulle.
-            accueil: accueil_items(),
+            accueil: accueil_items(false),
             cat_items: Vec::new(),
             cap: capture::Conf::lire(),
             reg_top: 0,
@@ -2318,7 +2336,7 @@ impl App {
     /// `replay_active` ; le curseur est ramené dans les bornes si la ligne
     /// qu'il visait a disparu.
     fn maj_accueil(&mut self) {
-        self.accueil = accueil_items();
+        self.accueil = accueil_items(self.bascule_app.is_some());
         if let Page::Categorie(cat) = self.page {
             self.cat_items = cat.entrees(self.dispo());
         }
@@ -2908,6 +2926,12 @@ impl App {
             }
             Entree::Codec => self.cap_cycle("codec", &capture::CODECS, sens),
             Entree::Qualite => self.cap_cycle("qualite", &capture::QUALITES, sens),
+            Entree::ShotFormat => {
+                self.cap_cycle("shot_format", &capture::SHOT_FORMATS, sens)
+            }
+            Entree::ShotQualite => {
+                self.cap_cycle("shot_qualite", &capture::SHOT_QUALITES, sens)
+            }
             Entree::Reso => self.cap_cycle("resolution", &capture::RESOS, sens),
             Entree::FpsRec => self.cap_cycle("fps", &capture::FPS, sens),
             Entree::Curseur => self.cap_cycle("curseur", &capture::CURSEURS, sens),
@@ -3967,6 +3991,8 @@ impl App {
             Entree::Duree => self.status = "DUREE REPLAY: GAUCHE/DROITE".to_string(),
             Entree::Codec
             | Entree::Qualite
+            | Entree::ShotFormat
+            | Entree::ShotQualite
             | Entree::Reso
             | Entree::FpsRec
             | Entree::Curseur
@@ -5299,6 +5325,16 @@ impl App {
                     capture::libelle(&self.cap, "codec", &capture::CODECS),
                     capture::CODECS.len(),
                     capture::idx(&self.cap, "codec", &capture::CODECS), sel),
+                Entree::ShotFormat => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "FORMAT PHOTO", color,
+                    capture::libelle(&self.cap, "shot_format", &capture::SHOT_FORMATS),
+                    capture::SHOT_FORMATS.len(),
+                    capture::idx(&self.cap, "shot_format", &capture::SHOT_FORMATS), sel),
+                Entree::ShotQualite => self.ligne_gradee(
+                    &mut cv, px0, pad, inner, y, "QUALITE PHOTO", color,
+                    capture::libelle(&self.cap, "shot_qualite", &capture::SHOT_QUALITES),
+                    capture::SHOT_QUALITES.len(),
+                    capture::idx(&self.cap, "shot_qualite", &capture::SHOT_QUALITES), sel),
                 Entree::Reso => self.ligne_gradee(
                     &mut cv, px0, pad, inner, y, "RESOLUTION", color,
                     capture::libelle(&self.cap, "resolution", &capture::RESOS),
@@ -8146,6 +8182,11 @@ fn main() {
             app.refresh_volume();
             app.refresh_vrr();
             app.refresh_booster();
+            // jeu et application compagne ouverts : la bascule apparaît en tête
+            // de l'accueil. Relu après la première image, comme le reste
+            // (`lister.js` prend jusqu'à 400 ms).
+            app.refresh_bascule();
+            app.maj_accueil();
             app.dirty = true;
         }
     }
@@ -8654,7 +8695,12 @@ mod tests {
     /// actions de la fenêtre active).
     #[test]
     fn accueil_est_le_menu_des_categories() {
-        let accueil = accueil_items();
+        let accueil = accueil_items(false);
+        // la bascule jeu ⇄ app n'apparaît qu'avec un jeu ET une app compagne :
+        // en tête, et elle ne prend pas la place d'une catégorie
+        let avec_bascule = accueil_items(true);
+        assert_eq!(avec_bascule.first(), Some(&Entree::Basculer));
+        assert_eq!(avec_bascule.len(), accueil.len() + 1);
         let cats: Vec<Cat> = accueil
             .iter()
             .map(|e| match e {

@@ -193,6 +193,21 @@ publiés (`running.txt`), pas via `jeu_actif()` qui ne désigne que le jeu de la
 fenêtre active — app au premier plan = aucun jeu reconnu, et la bascule cyclait
 les fenêtres au lieu de passer à l'app.
 
+**Bascule en tête de l'accueil** : quand un jeu tourne **et** qu'une app
+compagne est ouverte, `BASCULER JEU / APP` est la première ligne de l'accueil
+du panneau, pas seulement celle des pages JEU et FENETRES — la ligne vit dans
+`accueil_items(bascule)` et `refresh_bascule` est relu après la première image
+(à l'ouverture), jamais avant : `lister.js` prend jusqu'à 400 ms.
+
+**Captures d'écran : format et qualité** (page CAPTURE, `FORMAT PHOTO` /
+`QUALITE PHOTO`) sont écrits dans `~/.config/gablue/recorder.conf`
+(`shot_format` = `jpeg|png`, `shot_qualite` = `basse|moyenne|haute`) et lus par
+`gpad-shot` (C) : `jpeg` → 92/82/72 avec sous-échantillonnage 4:2:0, `png` →
+compression 9/6/3. Défaut **JPEG / haute** : une capture PNG 1440p pesait
+plusieurs Mo (signalé le 23/11/2026), le JPEG la ramène à quelques centaines de
+Ko sans perte visible. Le même fichier alimente le dialogue de Gablue Manager,
+aucune seconde source.
+
 **Réveil par Home** : une manette Bluetooth éteinte avec la machine en veille
 la rallume. C'est du système, pas de l'overlay — clé Bluetooth en réveil USB
 plus `WakeAllowed` posé sur les manettes appariées par

@@ -21,6 +21,17 @@ pub const QUALITES: [(&str, &str); 5] = [
     ("TRES HAUTE", "4"),
     ("MAX", "5"),
 ];
+/// Captures d'écran : format et qualité, lus par `gpad-shot` (C) dans ce même
+/// fichier. PNG est sans perte (la qualité y règle la **compression**) ; JPEG
+/// est ce qui fait tomber une capture 1440p de plusieurs Mo à quelques
+/// centaines de Ko. Une seule échelle de trois crans pour les deux : HAUTE
+/// reste sans perte visible en JPEG (92) comme en PNG (niveau 9).
+pub const SHOT_FORMATS: [(&str, &str); 2] = [("JPEG", "jpeg"), ("PNG", "png")];
+pub const SHOT_QUALITES: [(&str, &str); 3] = [
+    ("BASSE", "basse"),
+    ("MOYENNE", "moyenne"),
+    ("HAUTE", "haute"),
+];
 pub const RESOS: [(&str, &str); 4] = [
     ("720P", "1280x720"),
     ("1080P", "1920x1080"),
@@ -42,6 +53,10 @@ fn defauts() -> Vec<(String, String)> {
         ("curseur", "masque"),
         ("replay_sec", "30"),
         ("auto_replay", "0"),
+        // JPEG par défaut : une capture PNG 1440p pesait plusieurs Mo, et c'est
+        // le poids qui a été signalé (23/11/2026). Le PNG reste à un cran.
+        ("shot_format", "jpeg"),
+        ("shot_qualite", "haute"),
     ]
     .iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))

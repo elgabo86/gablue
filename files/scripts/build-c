@@ -24,7 +24,11 @@ set -eoux pipefail
 # (« conflicting requests », build du 21/11/2026 : 5 images, gpad-shot ne
 # compilait plus). Le nom explicite résout toujours vers fedora, terra ou pas ;
 # l'exclusion `zlib-devel*` est aussi posée côté dépôts (files/scripts/copr).
-dnf5 -y install gcc dbus-devel hidapi-devel zlib-ng-compat-devel pkgconf-pkg-config
+# libjpeg-turbo-devel : `gpad-shot` encode les captures en JPEG nativement
+# (qualité réglable depuis l'overlay et Gablue Manager). La bibliothèque
+# d'exécution est déjà dans l'image (dépendance de ffmpeg/Qt) ; seul l'en-tête
+# manquait. Un convertisseur externe aurait coûté un processus par capture.
+dnf5 -y install gcc dbus-devel hidapi-devel zlib-ng-compat-devel libjpeg-turbo-devel pkgconf-pkg-config
 
 # Fonction de build securisee : compile et verifie le binaire final
 build_and_verify() {

@@ -24,6 +24,11 @@
  *    en erreur sans fenêtre active : repli sur `CaptureWorkspace`.
  */
 #include <dbus/dbus.h>
+/* stdio avant jpeglib.h : l'en-tête déclare `jpeg_stdio_dest(FILE *)` et ne
+ * tire pas <stdio.h> lui-même (constaté avec libjpeg 9 sur cette machine). */
+#include <stdio.h>
+#include <jpeglib.h>
+#include <setjmp.h>
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
@@ -307,7 +312,8 @@ static int ecrire_itxt(FILE *f, const char *cle, const char *texte)
 }
 
 static int ecrire_png(const char *chemin, const capture_t *c,
-                      const unsigned char *raw, size_t len, const char *titre)
+                      const unsigned char *raw, size_t len, const char *titre,
+                      int niveau)
 {
     const int bpp = (c->format == 13) ? 3 : 4;
     /* QImage::Format 16/17/18 = octets R,V,B(,A) ; 4/5 et 13 = B,V,R */
@@ -338,7 +344,7 @@ static int ecrire_png(const char *chemin, const capture_t *c,
 
     uLongf zlen = compressBound(total);
     z = malloc(zlen);
-    if (!z || compress2(z, &zlen, rgb, total, 1) != Z_OK) {
+    if (!z || compress2(z, &zlen, rgb, total, niveau) != Z_OK) {
         free(rgb);
         free(z);
         return -1;
@@ -374,6 +380,147 @@ static int ecrire_png(const char *chemin, const capture_t *c,
     return 0;
 }
 
+/* --- réglages de capture (recorder.conf) ---------------------------------- */
+/* Le MÊME fichier que l'overlay (page CAPTURE) et Gablue Manager : une seule
+ * source de vérité, aucun réglage recopié ailleurs. Fichier absent ou clé
+ * inconnue = défaut, jamais une erreur (une capture qui échoue pour un réglage
+ * manquant serait pire que le réglage ignoré). */
+static void conf_lire(const char *cle, char *sortie, size_t taille,
+                      const char *defaut)
+{
+    snprintf(sortie, taille, "%s", defaut);
+    const char *home = getenv("HOME");
+    if (!home || !*home)
+        return;
+    char chemin[4096];
+    snprintf(chemin, sizeof chemin, "%s/.config/gablue/recorder.conf", home);
+    FILE *f = fopen(chemin, "r");
+    if (!f)
+        return;
+    char ligne[512];
+    while (fgets(ligne, sizeof ligne, f)) {
+        char *p = ligne;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p == '#' || *p == '\n' || *p == 0)
+            continue;
+        size_t n = strlen(cle);
+        if (strncmp(p, cle, n) != 0)
+            continue;
+        p += n;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p != '=')
+            continue;
+        p++;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        char *fin = p + strlen(p);
+        while (fin > p && (fin[-1] == '\n' || fin[-1] == '\r' || fin[-1] == ' ' ||
+                           fin[-1] == '\t'))
+            fin--;
+        size_t len = (size_t)(fin - p);
+        if (len >= taille)
+            len = taille - 1;
+        memcpy(sortie, p, len);
+        sortie[len] = 0;
+    }
+    fclose(f);
+}
+
+/* --- écriture JPEG (libjpeg-turbo) --------------------------------------- */
+/* Sans gestionnaire d'erreur, libjpeg appelle exit() à la moindre erreur : un
+ * disque plein tuerait la capture ET la session qui l'attend. `longjmp` rend
+ * la main proprement. */
+struct jpeg_erreur {
+    struct jpeg_error_mgr mgr;
+    jmp_buf saut;
+};
+
+static void jpeg_abandon(j_common_ptr cinfo)
+{
+    struct jpeg_erreur *e = (struct jpeg_erreur *)cinfo->err;
+    char msg[JMSG_LENGTH_MAX];
+    (*cinfo->err->format_message)(cinfo, msg);
+    fprintf(stderr, "gpad-shot: jpeg: %s\n", msg);
+    longjmp(e->saut, 1);
+}
+
+static int ecrire_jpeg(const char *chemin, const capture_t *c,
+                       const unsigned char *raw, size_t len, const char *titre,
+                       int qualite)
+{
+    /* `volatile` : ces trois valeurs sont lues après un `longjmp` (erreur
+     * libjpeg), et le compilateur a le droit de les garder en registre sans
+     * ça (-Wclobbered). */
+    const volatile int bpp = (c->format == 13) ? 3 : 4;
+    const volatile int i0 = (c->format >= 16) ? 0 : 2;
+    const volatile int i2 = (c->format >= 16) ? 2 : 0;
+    if ((size_t)c->stride * c->h > len || c->stride < (size_t)c->w * bpp) {
+        fprintf(stderr, "gpad-shot: frame incohérente\n");
+        return -1;
+    }
+    unsigned char *ligne = malloc((size_t)c->w * 3);
+    if (!ligne)
+        return -1;
+
+    FILE *f = fopen(chemin, "wb");
+    if (!f) {
+        fprintf(stderr, "gpad-shot: %s: %s\n", chemin, strerror(errno));
+        free(ligne);
+        return -1;
+    }
+
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_erreur jerr;
+    cinfo.err = jpeg_std_error(&jerr.mgr);
+    jerr.mgr.error_exit = jpeg_abandon;
+    if (setjmp(jerr.saut)) {
+        jpeg_destroy_compress(&cinfo);
+        fclose(f);
+        remove(chemin); /* fichier tronqué : ne pas le laisser passer pour une capture */
+        free(ligne);
+        return -1;
+    }
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, f);
+    cinfo.image_width = c->w;
+    cinfo.image_height = c->h;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, qualite, TRUE);
+    /* 4:2:0 suffit pour une capture de jeu et allège nettement ; le 4:4:4 de
+     * libjpeg par défaut gardait 1,5× le poids pour un gain invisible. */
+    cinfo.comp_info[0].h_samp_factor = 2;
+    cinfo.comp_info[0].v_samp_factor = 2;
+    jpeg_start_compress(&cinfo, TRUE);
+    if (titre && *titre)
+        jpeg_write_marker(&cinfo, JPEG_COM, (const JOCTET *)titre,
+                          (unsigned int)strlen(titre));
+    while (cinfo.next_scanline < cinfo.image_height) {
+        const unsigned char *s =
+            raw + (size_t)cinfo.next_scanline * c->stride;
+        unsigned char *d = ligne;
+        for (uint32_t x = 0; x < c->w; x++, s += bpp) {
+            d[0] = s[i0];
+            d[1] = s[1];
+            d[2] = s[i2];
+            d += 3;
+        }
+        JSAMPROW rangees[1] = {ligne};
+        jpeg_write_scanlines(&cinfo, rangees, 1);
+    }
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+    free(ligne);
+    if (fclose(f) != 0) {
+        fprintf(stderr, "gpad-shot: écriture de %s échouée\n", chemin);
+        return -1;
+    }
+    return 0;
+}
+
 /* mkdir -p minimal (screenshot.sh le fait aussi, on ne dépend de personne) */
 static void mkdir_p(const char *chemin)
 {
@@ -389,7 +536,7 @@ static void mkdir_p(const char *chemin)
     mkdir(tmp, 0755);
 }
 
-static char *chemin_defaut(void)
+static char *chemin_defaut(const char *ext)
 {
     const char *home = getenv("HOME");
     const char *dir = getenv("SCREENSHOT_DIR");
@@ -411,7 +558,7 @@ static char *chemin_defaut(void)
     localtime_r(&now, &tm);
     char date[32];
     strftime(date, sizeof date, "%Y%m%d_%H%M%S", &tm);
-    snprintf(c, sizeof dossier + 64, "%s/screenshot_%s.png", dossier, date);
+    snprintf(c, sizeof dossier + 64, "%s/screenshot_%s.%s", dossier, date, ext);
     return c;
 }
 
@@ -431,7 +578,28 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    char *chemin = fichier ? strdup(fichier) : chemin_defaut();
+    /* format et qualité : recorder.conf, écrits par l'overlay (page CAPTURE)
+     * et par Gablue Manager. JPEG par défaut — une capture PNG 1440p pesait
+     * plusieurs Mo (signalé le 23/11/2026). */
+    char format[16];
+    char qualite[16];
+    conf_lire("shot_format", format, sizeof format, "jpeg");
+    conf_lire("shot_qualite", qualite, sizeof qualite, "haute");
+    const int jpeg = strcmp(format, "png") != 0;
+    int niveau = 6;
+    int q = 92;
+    if (strcmp(qualite, "basse") == 0) {
+        niveau = 3;
+        q = 72;
+    } else if (strcmp(qualite, "moyenne") == 0) {
+        niveau = 6;
+        q = 82;
+    } else {
+        niveau = 9;
+        q = 92;
+    }
+
+    char *chemin = fichier ? strdup(fichier) : chemin_defaut(jpeg ? "jpg" : "png");
     if (!chemin) {
         fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [fichier.png]\n");
         return 2;
@@ -461,7 +629,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int rc = ecrire_png(chemin, &c, buf, len, titre);
+    int rc = jpeg ? ecrire_jpeg(chemin, &c, buf, len, titre, q)
+                  : ecrire_png(chemin, &c, buf, len, titre, niveau);
+    fprintf(stderr, "gpad-shot: %s (%s, qualite %s)\n", chemin,
+            jpeg ? "jpeg" : "png", qualite);
     free(buf);
     dbus_connection_unref(conn);
     free(chemin);

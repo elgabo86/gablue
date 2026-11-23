@@ -34,7 +34,7 @@ gpad-rumble: rumble/gpad-rumble.c
 # Capture d'écran : appel direct à org.kde.KWin.ScreenShot2 + écriture PNG
 # (libdbus comme gpad-inhibit, zlib pour le deflate ; pas de Qt).
 gpad-shot: shot/gpad-shot.c
-	$(CC) $(CFLAGS) -o $@ $< $(shell pkg-config --cflags --libs dbus-1 zlib) -lpthread
+	$(CC) $(CFLAGS) -o $@ $< $(shell pkg-config --cflags --libs dbus-1 zlib libjpeg) -lpthread
 
 # Écran de connexion : pointeur manette (même courbe que gpad-mouse, les deux
 # sticks, X/R1 = clic, Carré = retour arrière, Start = Entrée).
