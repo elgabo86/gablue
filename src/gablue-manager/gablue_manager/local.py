@@ -1883,6 +1883,9 @@ GLAUNCHER_DEFAULTS = {
     # Aucun dossier par défaut (miroir de `Config::default()`) : rien n'est
     # scanné tant que l'utilisateur n'en a pas choisi un.
     "game_dirs": [],
+    # Disques externes montés (`/run/media/<utilisateur>/…`) : décoché, seuls
+    # les `game_dirs` comptent (miroir de `Config::default()`).
+    "scan_disks": False,
 }
 
 def parse_glauncher_config(text: str) -> dict:

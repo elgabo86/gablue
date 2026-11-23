@@ -207,7 +207,7 @@ pub fn walk_packs(config: &Config, snapshot: &Snapshot) -> Walk {
     let dirs = Mutex::new(Vec::new());
     let visited = Mutex::new(HashSet::new());
 
-    for root in config.game_dirs() {
+    for root in config.scan_dirs() {
         if root.is_dir() {
             push_job(&state, &signal, (root, None, 0));
         }
@@ -388,7 +388,7 @@ pub fn apply_changes(
     index: &mut Index,
     changed: &[PathBuf],
 ) -> Result<Vec<PackRow>, String> {
-    let roots: Vec<PathBuf> = config.game_dirs();
+    let roots: Vec<PathBuf> = config.scan_dirs();
 
     for path in changed {
         // hors des dossiers suivis (ex. cache d'icônes) : rien à indexer

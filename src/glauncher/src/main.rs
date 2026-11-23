@@ -20,6 +20,7 @@ mod music;
 mod pergame;
 mod play;
 mod playtime;
+mod disks;
 mod recent;
 mod pose;
 mod recorder;
@@ -56,8 +57,19 @@ fn reindex(config: &config::Config) -> iced::Result {
             std::process::exit(1);
         }
     };
+    // mêmes racines que le launcher : les disques montés si l'option est là
+    let mut config = config.clone();
+    if config.scan_disks {
+        config.extra_dirs = disks::racines(&config.cache_dir(), disks::PROFONDEUR);
+        if !config.extra_dirs.is_empty() {
+            eprintln!(
+                "glauncher : {} dossier(s) de jeux sur disque externe",
+                config.extra_dirs.len()
+            );
+        }
+    }
     let snapshot = index.snapshot().unwrap_or_default();
-    let walk = library::walk_packs(config, &snapshot);
+    let walk = library::walk_packs(&config, &snapshot);
     if let Err(err) = index.replace_all(&walk) {
         eprintln!("glauncher : {err}");
         std::process::exit(1);

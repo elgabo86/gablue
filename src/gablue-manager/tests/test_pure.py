@@ -3355,6 +3355,17 @@ class GlauncherConfigTest(unittest.TestCase):
         self.assertIn("music_volume = 0", out)
         self.assertEqual(local.parse_glauncher_config(out)["music_volume"], 0)
 
+    def test_disques_externes_desactives_par_defaut(self):
+        # miroir de `Config::default()` : décoché, seuls `game_dirs` comptent
+        self.assertFalse(local.parse_glauncher_config("")["scan_disks"])
+        self.assertTrue(
+            local.parse_glauncher_config("scan_disks = true\n")["scan_disks"]
+        )
+        out = local.write_glauncher_config("columns = 6\n", {"scan_disks": True})
+        self.assertIn("scan_disks = true", out)
+        self.assertIn("columns = 6", out, "le reste du fichier est conservé")
+        self.assertTrue(local.parse_glauncher_config(out)["scan_disks"])
+
     def test_fichier_illisible_donne_les_defauts(self):
         # le launcher ignore une config invalide ; le manager lit la même chose
         state = local.parse_glauncher_config("fullscreen = oui\n")

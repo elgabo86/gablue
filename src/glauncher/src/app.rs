@@ -334,10 +334,28 @@ fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf, slug: Str
 
 /// Réindexe en arrière-plan (scan complet ou rafale de chemins) et poste le
 /// résultat : le thread UI ne touche jamais le disque ni SQLite.
-fn spawn_refresh(config: Config, index: Arc<Mutex<Option<Index>>>, changed: Vec<PathBuf>) {
+fn spawn_refresh(
+    config: Config,
+    index: Arc<Mutex<Option<Index>>>,
+    changed: Vec<PathBuf>,
+    decouvrir: bool,
+) {
     let _ = std::thread::Builder::new()
         .name("glauncher-index".into())
         .spawn(move || {
+            let mut config = config;
+            // Disques externes : la découverte (bornée, mémorisée) vit ici, dans
+            // le fil d'index. Un disque jamais vu coûte un parcours borné ; un
+            // disque déjà vu ne coûte que des `stat` sur les racines mémorisées.
+            let racines = if config.scan_disks {
+                crate::disks::racines(&config.cache_dir(), crate::disks::PROFONDEUR)
+            } else {
+                Vec::new()
+            };
+            if racines != config.extra_dirs {
+                config.extra_dirs = racines.clone();
+                post(Message::Discovered(racines));
+            }
             let started = std::time::Instant::now();
             let result = (|| -> Result<Refresh, String> {
                 let mut guard = index.lock().map_err(|_| "index verrouillé".to_string())?;
@@ -357,6 +375,25 @@ fn spawn_refresh(config: Config, index: Arc<Mutex<Option<Index>>>, changed: Vec<
             })();
             eprintln!("glauncher : index en {} ms", started.elapsed().as_millis());
             post(Message::Refreshed(result));
+
+            // Phase 2, seulement au branchement (jamais à chaque rafale) : un
+            // dossier de jeux créé depuis le dernier branchement n'est pas dans
+            // la mémoire des racines. Le parcours borné tourne APRÈS le
+            // rafraîchissement, donc les jeux des dossiers connus sont déjà à
+            // l'écran quand il commence.
+            if !decouvrir || !config.scan_disks {
+                return;
+            }
+            let ajouts = crate::disks::nouveaux(&config.extra_dirs, crate::disks::PROFONDEUR);
+            if ajouts.is_empty() {
+                return;
+            }
+            let mut racines = config.extra_dirs.clone();
+            racines.extend(ajouts.iter().cloned());
+            racines.sort();
+            crate::disks::memoriser(&config.cache_dir(), &racines);
+            post(Message::Discovered(racines));
+            post(Message::Changed(ajouts));
         });
 }
 
@@ -444,6 +481,12 @@ pub enum Message {
     ReplaceNav(i32),
     ReplaceChoose(usize),
     ReplacePick,
+    /// Le scan des disques externes a été basculé dans les Réglages.
+    SettingsDisques,
+    /// Racines de jeux trouvées sur les disques montés (ou liste vide).
+    Discovered(Vec<PathBuf>),
+    /// L'ensemble des disques montés a changé (branchement, retrait).
+    Disks,
     /// « Oublier les jeux disparus » : ouvre le dialogue de confirmation.
     OublierOpen,
     OublierNav(i32),
@@ -771,6 +814,9 @@ enum Swap {
     View(ViewMode),
     Sort(SortBy),
     Year(Option<u32>),
+    /// Résultat d'une réindexation : la liste change (disque branché, paquet
+    /// ajouté ou retiré). Rien à décider, juste à poser au sommet du fondu.
+    Reload,
 }
 
 /// Ordre du menu « Options » de la page : les quatre types de visuels,
@@ -977,8 +1023,10 @@ struct Settings {
     musique: bool,
     /// Volume de la musique en pourcentage (`music_volume`), par pas de 5.
     volume: u8,
-    /// Écran du jeu (index dans `ECRANS`), dernière ligne de la liste.
+    /// Écran du jeu (index dans `ECRANS`).
     ecran: usize,
+    /// Scanne les disques externes montés (`scan_disks`).
+    disques: bool,
 }
 
 /// Ce que le navigateur de dossiers choisit : un dossier de jeux (ajout à la
@@ -1014,6 +1062,7 @@ impl Settings {
             musique: config.music,
             volume: config.music_volume.min(100),
             ecran: ecran_lu(),
+            disques: config.scan_disks,
         }
     }
 
@@ -1049,8 +1098,13 @@ impl Settings {
 
     /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
     /// dossiers de sortie, la musique et son volume, l'écran, l'entretien).
-    fn lignes(&self) -> usize {
+    /// Ligne « Scanner les disques externes » (entretien).
+    fn ligne_disques(&self) -> usize {
         self.dossiers.len() + 7
+    }
+
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 8
     }
 
     /// Clé de `recorder.conf` d'une ligne de sortie, si c'en est une.
@@ -1141,6 +1195,11 @@ pub struct App {
     /// Un rafraîchissement tourne déjà ; les chemins suivants sont mis en attente.
     refreshing: bool,
     pending: Vec<PathBuf>,
+    /// Une réindexation en attente doit aussi relancer la découverte des
+    /// disques (branchement survenu pendant un scan).
+    pending_disques: bool,
+    /// Résultat mis de côté le temps du fondu (`Swap::Reload`).
+    pending_reload: Option<Refresh>,
     /// Slugs dont la cover a échoué (réseau) : on ne réessaie pas en boucle.
     cover_failed: HashSet<String>,
     /// (slug, type) actuellement dans la voie de fond : évite de renvoyer sans
@@ -1324,7 +1383,11 @@ impl App {
 
         // surveillance des seuls dossiers de jeux (jamais le cache : boucle)
         let veille =
-            crate::watch::spawn(config.game_dirs(), |paths| post(Message::Changed(paths)));
+            crate::watch::spawn(config.scan_dirs(), |paths| post(Message::Changed(paths)));
+        // Un disque branché n'ajoute pas de dossier à la liste surveillée tant
+        // que la découverte n'a pas tourné : un petit guetteur signale les
+        // changements de l'ensemble des disques montés (branchement, retrait).
+        crate::disks::surveiller(|| post(Message::Disks));
 
         let emit_cover = |event| post(cover_message(event));
         let covers = config.covers.then(|| {
@@ -1383,6 +1446,8 @@ impl App {
         if let Some(view) = saved.view {
             config.view = view;
         }
+        // capturé AVANT que `config` n'entre dans `App` (le Task part après)
+        let scan_disks = config.scan_disks;
         let mut app = Self {
             config,
             config_path,
@@ -1408,6 +1473,8 @@ impl App {
             index,
             refreshing: false,
             pending: Vec::new(),
+            pending_disques: false,
+            pending_reload: None,
             cover_failed: HashSet::new(),
             visible_covers: Vec::new(),
             icon_requests: HashSet::new(),
@@ -1578,6 +1645,13 @@ impl App {
             tasks.push(Task::done(Message::UpdateApply));
         }
 
+        // Disques externes : la découverte tourne tout de suite (le veilleur
+        // inotify, lui, met 5 s à se poser). Opt-in : sans `scan_disks`, aucun
+        // accès aux disques avant la première image.
+        if scan_disks {
+            tasks.push(Task::done(Message::Disks));
+        }
+
         crate::stamp("préparation");
         (app, Task::batch(tasks))
     }
@@ -1652,6 +1726,7 @@ impl App {
             || self.apercu.as_ref().is_some_and(|apercu| apercu.entree > 0.0)
             || self.title_scrolls()
             || self.loading()
+            || self.scanning()
             // respiration de la vignette sélectionnée : continue, donc à la
             // cadence de la fenêtre (voir `subscription`)
             || self.breath_pulses()
@@ -1669,6 +1744,12 @@ impl App {
     /// aucune image ne serait demandée au moteur et la roue resterait figée.
     fn loading(&self) -> bool {
         covers::busy()
+    }
+
+    /// Réindexation en cours (scan des dossiers ou d'un disque branché) : la
+    /// seconde roue, libellée « Scan », tourne à côté de celle des visuels.
+    fn scanning(&self) -> bool {
+        self.refreshing
     }
 
     /// Le titre de la vignette sélectionnée défile-t-il ? (nom plus long que ce
@@ -3540,21 +3621,67 @@ impl App {
                 self.refresh(paths);
                 Task::none()
             }
+            Message::SettingsDisques => {
+                let actif = self.settings.as_ref().is_some_and(|s| s.disques);
+                match crate::config::save_scan_disks(&self.config_path, actif) {
+                    Ok(()) => {
+                        self.config.scan_disks = actif;
+                        // L'index NE DOIT contenir que ce que l'option autorise :
+                        // décochée, seuls les dossiers choisis comptent, les
+                        // jeux des disques externes quittent la liste et leurs
+                        // racines ne sont plus surveillées.
+                        self.config.extra_dirs.clear();
+                        if let Some(veille) = self.watch.as_ref() {
+                            veille.definir(self.config.scan_dirs());
+                        }
+                        self.refresh_disques(Vec::new());
+                    }
+                    Err(err) => {
+                        self.status = Some((format!("écriture impossible ({err})"), true))
+                    }
+                }
+                Task::none()
+            }
+            Message::Discovered(dirs) => {
+                if dirs != self.config.extra_dirs {
+                    self.config.extra_dirs = dirs;
+                    if let Some(veille) = self.watch.as_ref() {
+                        veille.definir(self.config.scan_dirs());
+                    }
+                }
+                Task::none()
+            }
+            Message::Disks => {
+                // seuls les montages de /run/media et /media changent : un scan
+                // complet par snapshot ne relit que les dossiers dont la mtime
+                // a bougé, c'est le prix pour voir arriver un disque inconnu
+                if self.config.scan_disks {
+                    self.refresh_disques(Vec::new());
+                }
+                Task::none()
+            }
             Message::Refreshed(result) => {
                 self.refreshing = false;
                 match result {
                     Ok(refresh) => {
-                        let before = self.games.len();
-                        self.apply(&refresh);
-                        if self.games.len() != before {
-                            self.status = Some((plural(self.games.len()), false));
+                        // La liste change (paquet ajouté, disque branché ou
+                        // retiré) : le contenu se réordonne au sommet du même
+                        // voile que les bascules de vue, jamais sous les yeux.
+                        // Un fondu déjà en cours : on applique sans en empiler
+                        // un second.
+                        if !self.meme_liste(&refresh) && self.pending_swap.is_none() {
+                            self.pending_reload = Some(refresh);
+                            self.begin_swap(Swap::Reload);
+                        } else {
+                            self.apply(&refresh);
                         }
                     }
                     Err(error) => self.status = Some((error, true)),
                 }
-                if !self.pending.is_empty() {
+                if !self.pending.is_empty() || self.pending_disques {
                     let paths = std::mem::take(&mut self.pending);
-                    self.refresh(paths);
+                    let decouvrir = std::mem::take(&mut self.pending_disques);
+                    self.refresh_avec(paths, decouvrir);
                 }
                 Task::none()
             }
@@ -3819,6 +3946,11 @@ impl App {
                 // ligne écran : elle ne réagit qu'à gauche/droite
                 if settings.selected == settings.ligne_ecran() {
                     return Task::none();
+                }
+                // entretien : bascule le scan des disques externes
+                if settings.selected == settings.ligne_disques() {
+                    settings.disques = !settings.disques;
+                    return Task::done(Message::SettingsDisques);
                 }
                 // entretien : ouvre le dialogue de confirmation
                 if settings.selected == settings.ligne_oublier() {
@@ -4139,7 +4271,7 @@ impl App {
 
         // roue de chargement : elle tourne tant qu'un téléchargement court ou
         // vient de finir
-        if self.loading() {
+        if self.loading() || self.scanning() {
             self.spin = (self.spin + dt * SPIN_SPEED) % std::f32::consts::TAU;
         }
 
@@ -4645,15 +4777,50 @@ impl App {
     }
 
     fn refresh(&mut self, changed: Vec<PathBuf>) {
+        self.refresh_avec(changed, false);
+    }
+
+    /// Réindexation qui relance aussi la découverte des disques montés
+    /// (branchement, retrait, option activée) — jamais à chaque rafale inotify.
+    fn refresh_disques(&mut self, changed: Vec<PathBuf>) {
+        self.refresh_avec(changed, true);
+    }
+
+    fn refresh_avec(&mut self, changed: Vec<PathBuf>, decouvrir: bool) {
         if self.refreshing {
             self.pending.extend(changed);
+            self.pending_disques |= decouvrir;
             return;
         }
         self.refreshing = true;
-        spawn_refresh(self.config.clone(), self.index.clone(), changed);
+        let decouvrir = decouvrir || std::mem::take(&mut self.pending_disques);
+        spawn_refresh(
+            self.config.clone(),
+            self.index.clone(),
+            changed,
+            decouvrir,
+        );
     }
 
     /// Remplace la liste par le résultat d'une réindexation.
+    /// La réindexation donne-t-elle la même liste que celle à l'écran ?
+    /// Comparaison sur les chemins : c'est le seul identifiant stable d'un
+    /// paquet (un renommage change le slug, la taille et la date).
+    fn meme_liste(&self, refresh: &Refresh) -> bool {
+        if refresh.rows.len() != self.all_games.len() {
+            return false;
+        }
+        let mut ecran: Vec<&Path> = self
+            .all_games
+            .iter()
+            .map(|game| game.path.as_path())
+            .collect();
+        let mut disque: Vec<&Path> = refresh.rows.iter().map(|row| row.path.as_path()).collect();
+        ecran.sort_unstable();
+        disque.sort_unstable();
+        ecran == disque
+    }
+
     fn apply(&mut self, refresh: &Refresh) {
         let previous = self.games.get(self.selected).map(|game| game.path.clone());
         self.all_games = library::from_rows(
@@ -4763,10 +4930,10 @@ impl App {
             Ok(()) => {
                 self.config.game_dirs = dossiers;
                 if let Some(veille) = self.watch.as_ref() {
-                    veille.definir(self.config.game_dirs());
+                    veille.definir(self.config.scan_dirs());
                 }
                 self.status = Some((message, false));
-                self.refresh(self.config.game_dirs());
+                self.refresh(self.config.scan_dirs());
             }
             Err(err) => self.status = Some((format!("écriture impossible : {err}"), true)),
         }
@@ -5267,6 +5434,18 @@ impl App {
                 self.year_filter = year;
                 self.remember();
                 self.apply_filter();
+            }
+            // réindexation : la sélection et le défilement ne bougent pas, on
+            // ne fait que remplacer le contenu
+            Swap::Reload => {
+                if let Some(refresh) = self.pending_reload.take() {
+                    let before = self.games.len();
+                    self.apply(&refresh);
+                    if self.games.len() != before {
+                        self.status = Some((plural(self.games.len()), false));
+                    }
+                }
+                return Task::none();
             }
         }
         self.selected = 0;
@@ -6151,11 +6330,14 @@ impl App {
         // 20/11). Le canvas ne dessine rien hors téléchargement.
         view = stack![
             view,
-            container(spinner::view::<Message>(
-                self.spin,
-                SPIN_SIZE,
-                self.loading()
-            ))
+            container(
+                row![
+                    self.indicateur(self.spin + 1.7, "Scan", self.scanning()),
+                    self.indicateur(self.spin, "Visuels", self.loading()),
+                ]
+                .spacing(16)
+                .align_y(Alignment::Center),
+            )
             .width(Fill)
             .height(Fill)
             .align_x(Alignment::End)
@@ -6182,6 +6364,19 @@ impl App {
             .on_geste(Message::Souris)
             .muet(self.barre)
             .into()
+    }
+
+    /// Indicateur d'activité du coin haut droit : la roue et son libellé à
+    /// gauche. Éteint, il ne dessine rien (la place reste réservée : la forme
+    /// de l'arbre ne doit pas changer d'un rendu à l'autre).
+    fn indicateur(&self, angle: f32, libelle: &'static str, actif: bool) -> Element<'_, Message> {
+        row![
+            spinner::view::<Message>(angle, SPIN_SIZE, actif),
+            text(if actif { libelle } else { "" }).size(12).color(MUTED),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into()
     }
 
     /// Liste des jeux (grille, liste ou mosaïque) avec en-tête et pied.
@@ -7194,6 +7389,39 @@ impl App {
                 continue;
             }
 
+            // entretien : scanner les disques externes branchés
+            if index == settings.ligne_disques() {
+                let ligne = container(
+                    row![
+                        text("Scanner les disques externes")
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(if settings.disques { "activé" } else { "coupé" })
+                            .size(14)
+                            .color(if selected {
+                                Color::BLACK
+                            } else if settings.disques {
+                                ACCENT
+                            } else {
+                                MUTED
+                            }),
+                        interrupteur(settings.disques, selected),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(mouse_area(ligne).on_press(if selected {
+                    Message::SettingsAct
+                } else {
+                    Message::Nothing
+                }));
+                continue;
+            }
+
             // entretien : oublier les fiches des jeux qui ne sont plus là
             if index == settings.ligne_oublier() {
                 let ligne = container(
@@ -7291,6 +7519,8 @@ impl App {
             "Gauche/droite = volume de la musique, par pas de 5 % — 0 % la rend silencieuse sans la couper.".to_string()
         } else if settings.selected == settings.ligne_ecran() {
             "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
+        } else if settings.selected == settings.ligne_disques() {
+            "Croix = activer ou couper le scan des disques externes branchés. Activé, un disque monté apporte ses jeux à la bibliothèque et son retrait les retire. La découverte est mémorisée : un disque déjà vu est reconnu instantanément.".to_string()
         } else if settings.selected == settings.ligne_oublier() {
             "Oublie les jeux qui ne sont plus dans la liste (disque débranché, dossier retiré) : favoris, historique, temps de jeu, réglages de lancement. Les images sont conservées — un jeu rebranché retrouve ses visuels.".to_string()
         } else if settings.dossiers.is_empty() {
@@ -7325,6 +7555,14 @@ impl App {
         } else if settings.selected == 0 {
             vec![
                 (&self.glyphs.confirm, "Ajouter"),
+                (&self.glyphs.back, "Fermer"),
+            ]
+        } else if settings.selected == settings.ligne_disques() {
+            vec![
+                (
+                    &self.glyphs.confirm,
+                    if settings.disques { "Couper" } else { "Activer" },
+                ),
                 (&self.glyphs.back, "Fermer"),
             ]
         } else if settings.selected == settings.ligne_oublier() {

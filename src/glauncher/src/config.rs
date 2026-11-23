@@ -47,6 +47,17 @@ pub struct Config {
     pub game_dirs: Vec<String>,
     /// Profondeur maximale du parcours (0 = illimitée).
     pub scan_depth: usize,
+    /// Scanne aussi les **disques externes** montés (`/run/media/<utilisateur>/…`,
+    /// `/media/<utilisateur>/…`), à la volée : un disque branché apporte ses
+    /// jeux, un disque retiré les retire. Jamais écrit par le launcher : c'est
+    /// un réglage du poste, posé ici et par Gablue Manager.
+    pub scan_disks: bool,
+    /// Racines trouvées sur les disques montés (`scan_disks`), remplies à
+    /// chaud par la découverte : **jamais** dans `config.toml`, et surtout pas
+    /// dans la clé de l'index (sinon chaque branchement créerait une base
+    /// neuve et le scan repartirait de zéro).
+    #[serde(skip)]
+    pub extra_dirs: Vec<PathBuf>,
     /// Dossiers ignorés par leur nom exact (données de jeu, préfixes Wine…).
     pub scan_skip: Vec<String>,
     /// Dossiers où chercher l'icône d'un jeu (fichier `<slug>.png`).
@@ -87,6 +98,8 @@ impl Default for Config {
             // (demandé le 23/11). La grille respire toujours : le fond
             // (poussière d'étoiles) reste visible entre les boîtes.
             columns: 7,
+            scan_disks: false,
+            extra_dirs: Vec::new(),
             cell_size: 220,
             view: ViewMode::default(),
             // Aucun dossier par défaut : le launcher ne scanne QUE ce que
@@ -176,6 +189,19 @@ impl Config {
 
     pub fn game_dirs(&self) -> Vec<PathBuf> {
         self.game_dirs.iter().map(|dir| expand(dir)).collect()
+    }
+
+    /// Racines réellement scannées : les dossiers de `config.toml` **plus** les
+    /// disques externes montés quand `scan_disks` est actif. L'index, lui, se
+    /// garde sur `game_dirs()` : sa clé ne doit pas changer au branchement.
+    pub fn scan_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = self.game_dirs();
+        // l'option fait foi : une racine de disque restée en mémoire ne doit
+        // jamais survivre à la découpe de `scan_disks`
+        if self.scan_disks {
+            dirs.extend(self.extra_dirs.iter().cloned());
+        }
+        dirs
     }
 
     pub fn icon_dirs(&self) -> Vec<PathBuf> {
@@ -613,6 +639,36 @@ pub fn save_music(path: &Path, music: bool, volume: u8) -> Result<(), String> {
     write_atomic(path, &rewrite_music(&text, music, volume))
 }
 
+/// Écrit `scan_disks` seul dans `config.toml` (les autres clés ne bougent pas).
+pub fn save_scan_disks(path: &Path, actif: bool) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    write_atomic(path, &rewrite_bool(&text, "scan_disks", actif))
+}
+
+/// Remplace (ou ajoute) une clé booléenne, sans toucher au reste du fichier.
+fn rewrite_bool(text: &str, cle: &str, valeur: bool) -> String {
+    let ligne = format!("{cle} = {}", if valeur { "true" } else { "false" });
+    let mut out: Vec<String> = Vec::new();
+    let mut vu = false;
+    for line in text.lines() {
+        match assignment_key(line) {
+            Some(k) if k == cle => {
+                if !vu {
+                    out.push(ligne.clone());
+                    vu = true;
+                }
+            }
+            _ => out.push(line.to_string()),
+        }
+    }
+    if !vu {
+        out.push(ligne);
+    }
+    let mut texte = out.join("\n");
+    texte.push('\n');
+    texte
+}
+
 /// Temporaire + renommage : le manager lit ce fichier, il ne doit jamais voir
 /// un état à moitié écrit.
 fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
@@ -771,6 +827,28 @@ mod tests {
 
     fn dirs(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
+    }
+
+    #[test]
+    fn disques_externes_seulement_si_l_option_est_cochee() {
+        let mut config = Config {
+            game_dirs: dirs(&["/jeux"]),
+            ..Config::default()
+        };
+        config.extra_dirs = vec![PathBuf::from("/run/media/gab/t5/Games")];
+        assert_eq!(
+            config.scan_dirs(),
+            vec![PathBuf::from("/jeux")],
+            "décochée : seuls les dossiers choisis comptent"
+        );
+        config.scan_disks = true;
+        assert_eq!(
+            config.scan_dirs(),
+            vec![
+                PathBuf::from("/jeux"),
+                PathBuf::from("/run/media/gab/t5/Games")
+            ]
+        );
     }
 
     #[test]

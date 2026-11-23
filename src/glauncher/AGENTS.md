@@ -85,6 +85,10 @@ leurs icônes, pour l'interface.
   puis `sweep`), invalidation par `.settings` et mtime
 - `src/updates.rs` — mise à jour de l'image : commande en tâche de fond, lue
   sur le protocole `::gablue:` (le même que les dialogues de Gablue Manager)
+- `src/disks.rs` — disques externes : points de montage lus dans
+  `/proc/self/mountinfo`, découverte **bornée** des dossiers porteurs de
+  paquets, mémoire des racines trouvées (`<cache>/disks.txt`) et guetteur des
+  branchements
 - `src/watch.rs` — surveillance inotify : rafale → chemins touchés ; sa
   `Veille` accepte une **nouvelle liste de dossiers à chaud**
 - `src/folders.rs` — choix des dossiers de jeux : listage trié (dossiers
@@ -138,9 +142,10 @@ leurs icônes, pour l'interface.
 
 Le launcher porte ses propres réglages, **hors partie** (les réglages qu'on
 veut pendant une partie vivent dans `gpad`). Aujourd'hui : les **dossiers de
-jeux**, les **dossiers de sortie** (enregistrements, captures d'écran) et
-l'**écran du jeu**. Trois sections titrées (Dossiers de jeux / Sortie /
-Affichage), les en-têtes n'étant pas sélectionnables ; le compteur
+jeux**, les **dossiers de sortie** (enregistrements, captures d'écran),
+l'**écran du jeu** et l'**entretien** (scan des disques externes, oubli des
+jeux disparus). Quatre sections titrées (Dossiers de jeux / Sortie /
+Affichage / Entretien), les en-têtes n'étant pas sélectionnables ; le compteur
 « position / total » et l'aide contextuelle suivent la ligne. Ouverture : `F2`
 au clavier, ou le menu des vues (triangle) → « Réglages… » — aucun bouton
 manette n'était libre.
@@ -518,6 +523,35 @@ grille : un fond noir opaque l'aurait effacée.
 - **Écriture atomique** : `covers::save` écrit `<fichier>.part` puis renomme
   (`write_atomic`), et les marqueurs aussi. Un dossier `assets/` synchronisé
   ne doit jamais propager une image à moitié écrite.
+- **Disques externes (`scan_disks`, décoché par défaut)** : coché, les
+  **points de montage** sous `/run/media/<utilisateur>/` et
+  `/media/<utilisateur>/` sont ajoutés aux dossiers scannés —
+  `disks::racines` lit `/proc/self/mountinfo` (aucune commande externe) puis
+  cherche, par disque, les dossiers porteurs de `.lgp`/`.wgp` : profondeur 4,
+  [`disks::BUDGET`] = 4000 dossiers visités au plus, `node_modules`, `.git`,
+  `lost+found`, `$RECYCLE.BIN`… sautés. **La découverte est mémorisée**
+  (`<cache>/disks.txt`, `<montage>	<racine>`) y compris pour les disques
+  débranchés : un rebranchement ne coûte qu'un `stat` par racine connue, pas un
+  parcours. Un dossier de jeux **créé depuis le dernier branchement** est
+  trouvé par un second passage borné (`disks::nouveaux`), lancé **après** le
+  rafraîchissement (`spawn_refresh`, phase 2, seulement au branchement) —
+  les jeux connus sont déjà à l'écran quand il commence.
+  **Décochée, seuls les `game_dirs` comptent** : l'option vidée, un scan
+  complet (`replace_all`) retire de l'index les paquets des disques externes,
+  et les racines ne sont plus surveillées — c'est la clé de l'index
+  (`game_dirs` seulement, `Config::index_path`) qui reste stable, elle ne
+  bouge pas au branchement (sinon chaque disque créerait une base neuve).
+  Deux dynamismes : le **guetteur** `disks::surveiller` (lecture de
+  `mountinfo` toutes les 2 s, rien à entretenir) envoie `Message::Disks` quand
+  l'ensemble des montages change → `refresh_disques` (découverte + scan), et
+  la surveillance inotify couvre `scan_dirs()` (dossiers choisis **et** racines
+  trouvées) donc un paquet ajouté sur un disque déjà vu arrive tout seul.
+  `--reindex` (CLI) fait la même découverte, pour mesurer sans fenêtre
+  (banc : 68 ms la première fois, 2 ms ensuite sur le T5, 646 paquets).
+  La découverte tourne dans le fil d'index, jamais sur le fil de l'interface ;
+  au démarrage elle est lancée tout de suite seulement si l'option est
+  cochée (`Message::Disks` au boot), sinon aucun accès aux disques avant la
+  première image.
 - **Aucun dossier de jeux par défaut** : `Config::default()` laisse
   `game_dirs` **vide** (idem `GLAUNCHER_DEFAULTS` côté Gablue Manager) — le
   launcher ne scanne que les chemins écrits dans `config.toml`, jamais
@@ -728,7 +762,14 @@ grille : un fond noir opaque l'aurait effacée.
   le même. Tri et filtre remettent la sélection et le défilement au début
   (`apply_swap`), la vue conserve la vignette courante. Tout passe par lui —
   `V`, menu « Type de liste », menu « Tri », menu « Année » —, sinon le
-  changement apparaîtrait d'un coup.
+  changement apparaîtrait d'un coup. **La réindexation aussi** :
+  `Message::Refreshed` compare les chemins de la nouvelle liste à ceux à
+  l'écran (`meme_liste`) ; si elle change (paquet ajouté, disque branché ou
+  retiré), le résultat attend le sommet du même voile (`Swap::Reload`,
+  `pending_reload`) au lieu de se réordonner sous les yeux. La sélection et le
+  défilement ne bougent pas (on ne remonte pas en haut parce qu'un disque est
+  apparu), et un fondu déjà en cours n'en reçoit pas un second (le résultat
+  est appliqué directement).
 - **Fondu de la page d'un jeu** : fondu **enchaîné par le fond**, pas un
   passage au noir (jugé « trop agressif » le 20/11 — ça sautait au noir puis
   ressortait, sans montée). Deux rampes : montée `PAGE_FADE_RISE` (0,12 s),
@@ -1049,10 +1090,15 @@ grille : un fond noir opaque l'aurait effacée.
   `App::tick` et repart à zéro quand la sélection change ; elle ne tourne que si
   le nom dépasse le budget de caractères de la vignette (`App::title_budget`,
   volontairement pessimiste), donc aucune image demandée au repos.
-- **Roue de chargement** : `src/spinner.rs`, neuf points sur un cercle dans le
-  coin **haut droit** (aucun contrôle n'y vit, grille comme page), visible
-  seulement pendant un téléchargement de visuels. Trois pièges, tous
-  constatés le 20/11 :
+- **Deux roues de chargement libellées** : `src/spinner.rs`, neuf points sur
+  un cercle dans le coin **haut droit** (aucun contrôle n'y vit, grille comme
+  page). Deux indicateurs côte à côte, chacun avec son libellé à droite de sa
+  roue : **« Visuels »** pendant un téléchargement SteamGridDB
+  (`covers::busy()`), **« Scan »** pendant une réindexation (`refreshing`,
+  scan des dossiers ou d'un disque branché). Éteint, un indicateur ne dessine
+  rien mais garde sa place (forme d'arbre constante) ; les deux tournent sur
+  la même horloge (`App::spin`, un demi-tour de décalage pour la seconde).
+  Trois pièges, tous constatés le 20/11 :
   - **emplacement permanent** dans la pile racine de `view` : un enfant
     conditionnel y recrée le sous-arbre, donc la zone défilante, et la liste
     remonte en haut à chaque téléchargement. Le canvas est toujours là,

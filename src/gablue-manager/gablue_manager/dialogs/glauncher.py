@@ -105,10 +105,21 @@ class GlauncherDialog(QDialog):
         dirs_buttons.addStretch(1)
         dirs_layout.addLayout(dirs_buttons)
 
+        self.disks_check = QCheckBox(
+            "Parcourir aussi les disques externes branchés", dirs_frame
+        )
+        self.disks_check.setCursor(Qt.PointingHandCursor)
+        self.disks_check.toggled.connect(self._update_apply)
+        dirs_layout.addWidget(self.disks_check)
+
         dirs_detail = QLabel(
             "Ces dossiers sont parcourus à la recherche des paquets, sur "
             "3 niveaux. Un dossier absent (disque externe débranché) est ignoré "
-            "au lancement et revient dès qu'il est remonté.",
+            "au lancement et revient dès qu'il est remonté. Cochée, l'option "
+            "ajoute les disques montés (/run/media/<utilisateur>/…) : un disque "
+            "branché apporte ses jeux, son retrait les enlève ; les dossiers "
+            "déjà trouvés sur un disque sont reconnus aussitôt. Décochée, seuls "
+            "les dossiers ci-dessus comptent.",
             dirs_frame,
         )
         dirs_detail.setObjectName("hostDetail")
@@ -237,6 +248,7 @@ class GlauncherDialog(QDialog):
         key = str(state["steamgriddb_key"])
         self.initial = {
             "game_dirs": list(state["game_dirs"]),
+            "scan_disks": bool(state["scan_disks"]),
             "fullscreen": bool(state["fullscreen"]),
             "music": bool(state["music"]),
             "music_volume": int(state["music_volume"]),
@@ -250,11 +262,12 @@ class GlauncherDialog(QDialog):
 
         widgets = (
             self.fullscreen_check, self.music_check, self.volume_slider,
-            self.key_check, self.key_edit,
+            self.key_check, self.key_edit, self.disks_check,
         )
         for widget in widgets:
             widget.blockSignals(True)
         self.fullscreen_check.setChecked(self.initial["fullscreen"])
+        self.disks_check.setChecked(self.initial["scan_disks"])
         self.music_check.setChecked(self.initial["music"])
         self.volume_slider.setValue(max(0, min(100, self.initial["music_volume"])))
         self.volume_label.setText(f"{self.volume_slider.value()} %")
@@ -283,6 +296,7 @@ class GlauncherDialog(QDialog):
         use_key = self.key_check.isChecked()
         return {
             "game_dirs": self.directories(),
+            "scan_disks": self.disks_check.isChecked(),
             "fullscreen": self.fullscreen_check.isChecked(),
             "music": self.music_check.isChecked(),
             "music_volume": self.volume_slider.value(),
