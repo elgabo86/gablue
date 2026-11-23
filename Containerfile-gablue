@@ -30,7 +30,7 @@ COPY files/system/nvidia-common /
 # NOTE : le tarball ne contient PAS node/npm — npm est installé à la demande via
 # `brew install node` (opencode2-install), ou présent si l'utilisateur l'a ajouté
 # Digest épinglé, à bumper ponctuellement vers le dernier build de :latest
-FROM ghcr.io/ublue-os/brew:latest@sha256:9e0492dbc471258657564c94dae18b58dd96ddb998a06f2b15e8209efb48042b AS brew
+FROM ghcr.io/ublue-os/brew:latest@sha256:9c51c948d48de69b0fadfb3d97dc1a7eaa91a4e5a2af7b2b6626fdd8fca362b1 AS brew
 
 # Étape intermédiaire : compilation du démon Gablue Share (Rust).
 # La toolchain (rust + cargo, ~300 Mo) reste ici ; l'étape finale ne reçoit que
