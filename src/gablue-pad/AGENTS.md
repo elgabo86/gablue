@@ -118,6 +118,17 @@ Le démon ne garde aucune cible périmée : l'overlay envoie `clear` puis `targe
 pour chaque node js/hidraw à chaque ouverture (les `dev_t` changent à la
 reconnexion d'une manette, et un démon de session épuiserait ses 8 emplacements).
 
+## Ordre des manettes : NON (décision utilisateur, 23/11/2026)
+
+Attribuer un **numéro de joueur** (manette 1, 2…) n'est pas fait et ne sera pas
+fait : il faudrait soit réécrire les événements vers des manettes **virtuelles**
+(uinput), soit s'appuyer sur l'ordre d'énumération du noyau, qui n'est pas
+stable d'un démarrage ni d'une reconnexion à l'autre. Les essais menés n'ont
+rien donné de fiable et l'utilisateur refuse explicitement les manettes
+virtuelles. Les manettes sont donc prises **telles que le noyau les présente**
+(`nf` nodes evdev), sans tri : ne pas reproposer ce réglage sans un moyen
+matériel ou noyau qui le rende déterministe.
+
 ## Options utilisateur (Gablue Manager)
 
 `/usr/bin/gablue-pad` écrit `~/.config/gablue/gpad-options` (`clé=valeur`,
