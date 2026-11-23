@@ -37,6 +37,7 @@ from .dialogs.host import CandidateDialog, HostDialog
 from .dialogs.kernel import LocalSettingsDialog, RemoteSettingsDialog
 from .dialogs.key import KeyInstallDialog
 from .dialogs.login_screen import LoginScreenDialog
+from .dialogs.session import SessionModeDialog
 from .dialogs.prefs import PrefsDialog
 from .dialogs.ryzen import RyzenDialog
 from .dialogs.secureboot import SecureBootDialog
@@ -383,6 +384,9 @@ class MainWindow(QMainWindow):
         )
         self.local_config.login_screen_requested.connect(
             self.open_local_login_screen
+        )
+        self.local_config.session_mode_requested.connect(
+            self.open_local_session_mode
         )
         self.local_config.tailscale_requested.connect(
             self.open_local_tailscale
@@ -2797,6 +2801,9 @@ class MainWindow(QMainWindow):
 
     def open_local_login_screen(self) -> None:
         LoginScreenDialog(self).exec()
+
+    def open_local_session_mode(self) -> None:
+        SessionModeDialog(self).exec()
 
     def open_local_tailscale(self) -> None:
         TailscaleDialog(self).exec()

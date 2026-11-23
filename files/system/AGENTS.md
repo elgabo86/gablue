@@ -110,7 +110,8 @@
 - **gablue-session-mode** : bascule de session demandée depuis le menu Home
   de `gpad` — `console` (session Gablue Gaming), `bureau` (Plasma), `greeter`
   (aucune session : écran de connexion), `status` (autologin en place, sans
-  privilège). Root via pkexec, autorisé sans mot de passe par
+  privilège), `etat` (`session=console|bureau|greeter`, sortie stable lue par
+  le dialogue « Session graphique » de Gablue Manager, sans privilège). Root via pkexec, autorisé sans mot de passe par
   `60-gablue-session-mode.rules` (groupe wheel, session locale, programme
   exact). Trois précautions, toutes mesurées le 23/11/2026 :
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit

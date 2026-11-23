@@ -1279,6 +1279,7 @@ class LocalConfigMenu(QMenu):
     glauncher_requested = Signal()
     booster_requested = Signal()
     login_screen_requested = Signal()
+    session_mode_requested = Signal()
     tailscale_requested = Signal()
     share_requested = Signal()
     wifi_powersave_requested = Signal()
@@ -1300,6 +1301,9 @@ class LocalConfigMenu(QMenu):
         )
         settings_menu.addAction(
             "Variante de l'image…", self.variant_requested.emit
+        )
+        settings_menu.addAction(
+            "Session graphique…", self.session_mode_requested.emit
         )
         settings_menu.addAction(
             "Écran de connexion…", self.login_screen_requested.emit

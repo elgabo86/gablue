@@ -6,6 +6,9 @@
 #   gablue-session-mode bureau    session Plasma
 #   gablue-session-mode greeter   aucune session : écran de connexion
 #   gablue-session-mode status    autologin en place, sans privilège
+#   gablue-session-mode etat      `session=console|bureau|greeter`, lisible
+#                                 par un programme (Gablue Manager), sans
+#                                 privilège
 #
 # Lancé en root par pkexec (menu Home de gpad) : la règle polkit livrée avec
 # l'image autorise le groupe wheel sans mot de passe, donc aucun dialogue en
@@ -44,7 +47,7 @@ controle_seulement=0
 [ "${2:-}" = "--check" ] && controle_seulement=1
 
 case "$mode" in
-console|bureau|greeter|status) ;;
+console|bureau|greeter|status|etat) ;;
 *)
     echo "usage : $0 console|bureau|greeter|status [--check]" >&2
     exit 2
@@ -68,6 +71,21 @@ fi
 # arrêté, KWin empilés, bascule lente).
 UID_NUM=$(id -u "$UTILISATEUR")
 RUNTIME=/run/user/$UID_NUM
+
+if [ "$mode" = etat ]; then
+    # Sortie STABLE pour Gablue Manager : une ligne, une clé. `status` reste
+    # lisible par un humain (contenu du fichier) et n'est pas parsé ailleurs.
+    if [ ! -f "$CONF" ]; then
+        echo "session=greeter"
+    else
+        case "$(sed -n 's/^[[:space:]]*Session=//p' "$CONF" | head -1)" in
+        "$SESSION_CONSOLE") echo "session=console" ;;
+        "$SESSION_BUREAU") echo "session=bureau" ;;
+        *) echo "session=greeter" ;;
+        esac
+    fi
+    exit 0
+fi
 
 if [ "$mode" = status ]; then
     if [ -f "$CONF" ]; then

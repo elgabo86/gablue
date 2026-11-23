@@ -51,6 +51,16 @@ FPS = (
 )
 DUREES = (("15 s", "15"), ("30 s (défaut)", "30"), ("60 s", "60"), ("2 min", "120"), ("5 min", "300"))
 CURSEURS = (("Masqué (défaut)", "masque"), ("Affiché (v2, non fait)", "affiche"))
+# Captures d'écran : lues par `gpad-shot` dans le même fichier.
+SHOT_FORMATS = (
+    ("JPEG — quelques centaines de Ko (défaut)", "jpeg"),
+    ("PNG — sans perte, plusieurs Mo", "png"),
+)
+SHOT_QUALITES = (
+    ("Économique", "basse"),
+    ("Normale", "moyenne"),
+    ("Haute (défaut)", "haute"),
+)
 
 
 class CaptureDialog(QDialog):
@@ -115,6 +125,22 @@ class CaptureDialog(QDialog):
         auto_detail.setWordWrap(True)
         replay.addWidget(auto_detail)
 
+        # -- captures d'écran ------------------------------------------------
+        photos = self._card(root, "Captures d'écran")
+        self.shot_format = self._combo(photos, "Format", SHOT_FORMATS)
+        self.shot_qualite = self._combo(photos, "Qualité", SHOT_QUALITES)
+        photos_detail = QLabel(
+            "JPEG divise le poids par 4 à 10 (une capture 1440p passe de "
+            "plusieurs Mo à quelques centaines de Ko) ; PNG reste sans perte, "
+            "avec une qualité qui règle la compression, pas l'image. "
+            "S'applique à la capture suivante, prise par Home+droite ou par "
+            "la ligne CAPTURE ÉCRAN de l'overlay.",
+            self,
+        )
+        photos_detail.setObjectName("hostDetail")
+        photos_detail.setWordWrap(True)
+        photos.addWidget(photos_detail)
+
         # -- sortie ---------------------------------------------------------
         sortie = self._card(root, "Sortie")
         self.dossier, _ = self._folder_row(sortie, "Enregistrements", "~/Vidéos/Captures")
@@ -125,7 +151,8 @@ class CaptureDialog(QDialog):
             "Enregistrements (Video_<date>.mp4) et replays sauvegardés "
             "(Replay_<date>.mp4). Le buffer de replay vit en RAM, rien n'est "
             "écrit tant qu'on ne sauvegarde pas. Les captures d'écran "
-            "(screenshot_<date>.png) suivent le même fichier : c'est aussi ce "
+            "(screenshot_<date>.jpg ou .png selon le format) suivent le même "
+            "fichier : c'est aussi ce "
             "que règlent les Réglages du launcher, hors jeu. Un champ vide "
             "revient au défaut affiché.",
             self,
@@ -212,6 +239,7 @@ class CaptureDialog(QDialog):
             (self.codec, "codec"), (self.qualite, "qualite"),
             (self.reso, "resolution"), (self.fps, "fps"),
             (self.curseur, "curseur"),
+            (self.shot_format, "shot_format"), (self.shot_qualite, "shot_qualite"),
         ):
             index = combo.findData(values.get(cle))
             combo.setCurrentIndex(index if index >= 0 else 0)
@@ -233,6 +261,8 @@ class CaptureDialog(QDialog):
             "resolution": self.reso.currentData(),
             "fps": self.fps.currentData(),
             "curseur": self.curseur.currentData(),
+            "shot_format": self.shot_format.currentData(),
+            "shot_qualite": self.shot_qualite.currentData(),
             "replay_sec": self.duree.currentData(),
             "auto_replay": "1" if self.auto_replay.isChecked() else "0",
             "dossier": self.dossier.text().strip(),

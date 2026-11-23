@@ -2442,6 +2442,49 @@ def login_screen_apply_script(pad: bool, dark: bool) -> str:
     )
 
 
+SESSION_MODE_HELPER = "/usr/libexec/gablue-session-mode"
+
+
+def session_mode_available() -> bool:
+    """Le helper de session est-il installé (image à jour) ?"""
+    return Path(SESSION_MODE_HELPER).is_file()
+
+
+def session_mode_state() -> str:
+    """`console`, `bureau` ou `greeter` — la session que plasmalogin ouvrira.
+
+    Lecture SEULE, sans privilège (`gablue-session-mode etat` sort une ligne
+    `session=…`). Chaîne vide = helper absent ou réponse incompréhensible : le
+    dialogue ne doit rien inventer.
+    """
+    if not session_mode_available():
+        return ""
+    try:
+        result = subprocess.run(
+            [SESSION_MODE_HELPER, "etat"], capture_output=True, text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if key.strip() == "session" and value in ("console", "bureau", "greeter"):
+            return value
+    return ""
+
+
+def session_mode_command(mode: str) -> list[str]:
+    """Commande root du changement de session (règle polkit, groupe wheel).
+
+    Le helper se détache dans une unité systemd avant d'agir : c'est lui qui
+    tue la session en cours, donc la commande rend la main tout de suite.
+    """
+    return ["pkexec", SESSION_MODE_HELPER, mode]
+
+
 def services_helpers_available() -> bool:
     """Les helpers du dialogue « Services et pilotes » sont-ils installés ?"""
     return all(
