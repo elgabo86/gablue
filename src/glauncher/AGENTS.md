@@ -356,6 +356,14 @@ grille : un fond noir opaque l'aurait effacée.
   23/11/2026). Le panneau de droite montre la **bannière héros** (repli :
   pochette plafonnée) dans une carte qui prend sa hauteur et se centre :
   la cover pleine hauteur écrasait la liste.
+- **Aides au clavier en pastilles de touche** (`key_hint`) : « Entrée »,
+  « Échap », « F », « ←↑→↓ »… sont dessinées comme de petits capuchons
+  arrondis, suivis de l'action — le pendant exact des glyphes de manette
+  (`hint`). Avant, le clavier avait de longues phrases en texte nu à côté des
+  icônes de boutons : deux langages visuels pour le même écran (signalé le
+  23/11). Partout où `pad_hints()` choisit les glyphes, la branche clavier
+  passe par `key_hint` : pied de page, page d'un jeu, dialogues (remplacer,
+  identifier, date, alias, choix d'image) et prompts de saisie.
 - **Le menu de choix d'image défile avec la sélection** : la grille
   (`PICKER_COLUMNS` = 5) a un `scrollable` identifié (`PICKER_SCROLL`) et
   `PickerNav` demande `operation::snap_to` avec un décalage relatif calculé sur

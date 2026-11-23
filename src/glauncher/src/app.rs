@@ -6292,10 +6292,15 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("Entrée valider   ·   Échap retour   ·   J jouer   ·   F favori")
-                .size(14.0 * ech)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["Entrée"], "valider"),
+                key_hint(&["Échap"], "retour"),
+                key_hint(&["J"], "jouer"),
+                key_hint(&["F"], "favori"),
+            ]
+            .spacing(18.0 * ech)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         // Le bloc (cover, textes, pastilles) se centre dans la place laissée
@@ -6477,9 +6482,12 @@ impl App {
                     .padding(10)
                     .size(18)
                     .style(input_style),
-                text("Entrée : chercher   ·   Échap : annuler")
-                    .size(14)
-                    .color(MUTED),
+                row![
+                    key_hint(&["Entrée"], "chercher"),
+                    key_hint(&["Échap"], "annuler"),
+                ]
+                .spacing(18)
+                .align_y(Alignment::Center),
             ]
             .spacing(12),
         )
@@ -6541,10 +6549,14 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("← → choisir   ·   Entrée : valider   ·   Échap : garder")
-                .size(14)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["←", "→"], "choisir"),
+                key_hint(&["Entrée"], "valider"),
+                key_hint(&["Échap"], "garder"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let panel = container(
@@ -6648,10 +6660,14 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("Entrée : identifier ce jeu   ·   R : corriger le nom   ·   Échap : annuler")
-                .size(14)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["Entrée"], "identifier ce jeu"),
+                key_hint(&["R"], "corriger le nom"),
+                key_hint(&["Échap"], "annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let panel = container(
@@ -6716,10 +6732,15 @@ impl App {
                     .size(18)
                     .style(input_style),
                 row![
-                    text("Entrée : enregistrer   ·   Échap : annuler")
-                        .size(14)
-                        .color(MUTED)
-                        .width(Fill),
+                    container(
+                        row![
+                            key_hint(&["Entrée"], "enregistrer"),
+                            key_hint(&["Échap"], "annuler"),
+                        ]
+                        .spacing(18)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Fill),
                     refresh,
                 ]
                 .align_y(Alignment::Center),
@@ -8054,10 +8075,13 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            text("Entrée : reprendre ces visuels   ·   Échap : annuler")
-                .size(14)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["Entrée"], "reprendre ces visuels"),
+                key_hint(&["Échap"], "annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         let panel = container(
@@ -8179,15 +8203,22 @@ impl App {
         } else if self.mode.is_console() {
             // session console : aucun sélecteur de fichiers (pas de kdialog
             // ni de zenity), donc aucune touche à proposer pour ça
-            text("Entrée : utiliser cette image   ·   Échap : annuler")
-                .size(14)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["Entrée"], "utiliser cette image"),
+                key_hint(&["Échap"], "annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
         } else {
-            text("Entrée : utiliser cette image   ·   F : choisir un fichier   ·   Échap : annuler")
-                .size(14)
-                .color(MUTED)
-                .into()
+            row![
+                key_hint(&["Entrée"], "utiliser cette image"),
+                key_hint(&["F"], "choisir un fichier"),
+                key_hint(&["Échap"], "annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
         };
 
         // le jeu peut être mal reconnu côté SteamGridDB : on l'identifie (nom
@@ -8912,16 +8943,31 @@ impl App {
             .spacing(16)
             .align_y(Alignment::Center)
             .into(),
-            (false, false) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   / rechercher   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
-                .size(15)
-                .font(HELP_FONT)
-                .color(MUTED)
-                .into(),
-            (false, true) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   / rechercher   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran")
-                .size(15)
-                .font(HELP_FONT)
-                .color(MUTED)
-                .into(),
+            (false, false) => row![
+                key_hint(&["←↑→↓"], "naviguer"),
+                key_hint(&["Entrée"], "ouvrir"),
+                key_hint(&["/"], "rechercher"),
+                key_hint(&["V"], "vue"),
+                key_hint(&["−", "+"], "taille"),
+                key_hint(&["T"], "tri"),
+                key_hint(&["F"], "plein écran"),
+                key_hint(&["Échap"], "quitter"),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into(),
+            (false, true) => row![
+                key_hint(&["←↑→↓"], "naviguer"),
+                key_hint(&["Entrée"], "ouvrir"),
+                key_hint(&["/"], "rechercher"),
+                key_hint(&["V"], "vue"),
+                key_hint(&["−", "+"], "taille"),
+                key_hint(&["T"], "tri"),
+                key_hint(&["F"], "plein écran"),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into(),
         };
 
         let status: Element<'_, Message> = if self.quit_hint {
@@ -9357,6 +9403,39 @@ fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32) {
 const GALERIE_CHROME: f32 = 173.0;
 /// Durée du fondu d'apparition des menus et de la galerie (secondes).
 const FONDU_MENUS: f32 = 0.18;
+
+/// Pastille de touche, l'équivalent clavier de [`hint`] : un capuchon arrondi
+/// portant le nom de la touche, puis l'action. Les aides au clavier étaient de
+/// longues phrases en texte nu, à côté des glyphes de manette — même langage
+/// visuel pour les deux périphériques (demandé le 23/11).
+fn key_hint(keys: &'static [&'static str], label: &'static str) -> Element<'static, Message> {
+    let mut caps = Row::new().spacing(4).align_y(Alignment::Center);
+    for key in keys {
+        caps = caps.push(
+            container(text(*key).size(12).font(HELP_FONT).color(TEXT))
+                .padding(Padding {
+                    top: 2.0,
+                    right: 7.0,
+                    bottom: 3.0,
+                    left: 7.0,
+                })
+                .style(|_| container::Style {
+                    background: Some(Background::Color(CELL_BG)),
+                    border: Border {
+                        color: CELL_BORDER,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                }),
+        );
+    }
+
+    row![caps, text(label).size(15).font(HELP_FONT).color(MUTED)]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into()
+}
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {
     row![
