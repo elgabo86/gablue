@@ -6119,40 +6119,43 @@ impl App {
                 .into()
         };
 
-        let bloc = container(
-            column![
-                row![
-                    cover,
-                    column![details, actions]
-                        .spacing(20.0 * ech)
-                        .align_x(Alignment::Center)
-                ]
-                .spacing(30.0 * ech)
-                .align_y(Alignment::Center),
-                help,
+        // Le bloc (cover, textes, pastilles) se centre dans la place laissée
+        // libre **au-dessus** de l'aide de commande. Posé en bas (23/11), il
+        // descendait trop : avec une bande héros, tout l'espace gagné partait
+        // sous lui. L'aide, elle, reste la dernière ligne, collée au bas de la
+        // page (demandé le 23/11).
+        let milieu = container(
+            row![
+                cover,
+                column![details, actions]
+                    .spacing(20.0 * ech)
+                    .align_x(Alignment::Center)
             ]
-            .spacing(16.0 * ech)
-            .align_x(Alignment::Center),
+            .spacing(30.0 * ech)
+            .align_y(Alignment::Center),
         )
         .width(Fill)
         .height(Fill)
-        .padding(20.0 * ech);
-        // Avec une bande héros, le bloc est POSÉ EN BAS (8 px de marge) :
-        // centré, il laissait une grande bande vide sous la ligne d'aide, qui
-        // paraissait remontée (signalé deux fois le 23/11). Sans héros, il
-        // reste centré sur la page — collé en bas d'un écran vide, il faisait
-        // pauvre (retour 18/11).
-        let body = if game.hero.is_some() {
-            bloc.align_y(Alignment::End).padding(Padding {
+        .center_x(Fill)
+        .center_y(Fill);
+        let pied = container(help)
+            .width(Fill)
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 8.0,
+                left: 0.0,
+            })
+            .center_x(Fill);
+        let body = column![milieu, pied]
+            .width(Fill)
+            .height(Fill)
+            .padding(Padding {
                 top: 20.0 * ech,
                 right: 20.0 * ech,
-                bottom: 8.0,
+                bottom: 0.0,
                 left: 20.0 * ech,
-            })
-        } else {
-            bloc.center_y(Fill)
-        }
-        .center_x(Fill);
+            });
 
         let mut page_body = Column::new().spacing(0);
         if let Some(band) = band {

@@ -315,12 +315,15 @@ grille : un fond noir opaque l'aurait effacée.
   pointeur du jeu) basculait l'état d'entrée en « clavier » et les pages de jeu
   affichaient des aides en texte, sans glyphes (signalé le 23/11/2026). Le
   critère `pad_hints()` accepte donc l'état souris quand `mode.is_console()`.
-- **Page de jeu : le logo est borné et l'aide est posée en bas** : le logo
-  suivait `ech` sans plafond et poussait les pastilles puis la ligne d'aide
-  hors du bas de page. Sa hauteur est plafonnée à 150 px ; avec une bande
-  héros, le bloc (cover, textes, pastilles) est posé **en bas** à 8 px de
-  marge, l'aide restant la dernière ligne ; sans héros il reste centré (collé
-  en bas d'un écran vide, il faisait pauvre, retour 18/11).
+- **Page de jeu : logo borné, bloc centré, aide en bas** : le logo suivait
+  `ech` sans plafond et poussait les pastilles puis la ligne d'aide hors du bas
+  de page — sa hauteur est plafonnée à 150 px. Le bloc (cover, textes,
+  pastilles) est **centré dans la place libre au-dessus de l'aide**, bande
+  héros comprise : posé en bas (23/11), il descendait trop et tout l'espace
+  gagné avec une bannière partait sous lui. L'aide de commande reste la
+  dernière ligne, à 8 px du bord (demandé le 23/11). Implémentation : une
+  colonne `[milieu (Fill, center_y), pied]`, et non plus un `align_y(End)`
+  conditionnel.
 - **Le menu de choix d'image défile avec la sélection** : la grille
   (`PICKER_COLUMNS` = 5) a un `scrollable` identifié (`PICKER_SCROLL`) et
   `PickerNav` demande `operation::snap_to` avec un décalage relatif calculé sur
