@@ -1,0 +1,14 @@
+[Unit]
+Description=Gablue Pad — manettes Bluetooth déclarées sources de réveil
+After=bluetooth.service
+Wants=bluetooth.target
+
+[Service]
+Type=oneshot
+# Rejouable : une manette qui se connecte (règle udev) relance l'unité pour
+# couvrir un appairage fait depuis la session. Sans `RemainAfterExit`, l'état
+# reste « dead » et la relance suivante repart bien.
+ExecStart=/usr/libexec/gablue-pad-wake
+
+[Install]
+WantedBy=multi-user.target

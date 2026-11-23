@@ -154,6 +154,29 @@ Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité pl
 - **gablue-share.service** : démon de partage en **mode permanent** (opt-in, livré désactivé ; réglé depuis Gablue Share ou gablue-manager). Démarre avec la session : pour un poste sans session graphique, `loginctl enable-linger` serait nécessaire — hors périmètre. Contrat → `src/gablue-share/AGENTS.md`
 - **gablue-pad-gate.service** (système) : démon du **gate BPF** de l'overlay manette, lancé en root au boot (`/usr/libexec/gablue-pad/gpad-gate --socket /run/gablue-pad/gate.sock --timeout 0`, `RuntimeDirectory=gablue-pad`). Le programme BPF est chargé une fois et **attaché seulement entre `open` et `close`** : hors menu, aucun hook dans le noyau. Les cibles (`target`/`clear`) sont posées par l'utilisateur à chaque ouverture, donc un démon qui vit depuis le boot ne garde aucun `dev_t` périmé après une reconnexion. Contrat → `src/gablue-pad/gate/AGENTS.md`
 - **gablue-pad.service** : overlay manette de la session (`ExecStart=/usr/bin/gpad-trigger /usr/bin/gpad`, `Restart=always`/`RestartSec=1`, `After=` + `PartOf=graphical-session.target`, `StartLimitIntervalSec=0`) ; l'unité exporte tous les chemins (`RECORDER`, `SCRIPTS`, `KWIN_SCRIPTS`, `GPAD_GATE`…), le banc les déduit du binaire. **Activée pour tous les comptes** (`systemctl --global enable` dans `files/scripts/systemd`) ; `gablue-pad off` la neutralise par **masque utilisateur** et les trois options (`menu`, `shortcuts`, `inhibit`) se coupent séparément, à chaud (SIGHUP). Contrat → `src/gablue-pad/AGENTS.md`
+- **gablue-pad-wake.service** (système, oneshot) : déclare les manettes
+  Bluetooth appariées comme sources de réveil (`bluetoothctl wake <mac> on`),
+  filtrées sur `Icon: input-gaming` — un téléphone ou un casque apparié ne doit
+  pas sortir la machine de veille. Jouée au boot **et** relancée par la règle
+  udev à chaque manette qui se connecte (`ENV{ID_INPUT_JOYSTICK}=="1"`, donc
+  toutes les manettes : DualShock/DualSense, Xbox, Switch Pro), ce qui couvre
+  un appairage fait en session. BlueZ garde `WakeAllowed=true` dans l'info de
+  l'appareil, donc le réglage survit au redémarrage mais pas à un nouvel
+  appairage, d'où les deux points de passage.
+- **Réveil par Home** (`/usr/lib/udev/rules.d/99-bt-wake.rules`) : deux moitiés,
+  mesurées le 23/11/2026 sur un ASUS USB-BT500 (`0bda:b85b`).
+  (1) `ATTR{power/wakeup}="enabled"` sur la clé (classe USB `e0`, donc toute
+  clé Bluetooth) : sans ça la connexion entrante de la manette s'arrête au
+  contrôleur et la machine ne bouge pas, même avec `WakeAllowed` posé ;
+  (2) la règle `input` qui déclenche l'unité. Vérifié : DS4 appariée, réveil
+  **6 s** après `rtcwake` avec le récepteur Logitech mis hors réveil — seule la
+  manette pouvait réveiller, et elle se reconnecte ensuite toute seule (plus
+  besoin de la rallumer après une veille). Contrepartie assumée : tout appareil
+  Bluetooth apparié qui se reconnecte peut réveiller la machine (le réveil USB
+  part avant le filtrage de BlueZ), donc retirer de BlueZ les appareils non
+  voulus. BlueZ journalise `Controller resume with wake event 0x0` (« source
+  non Bluetooth ») **même quand c'est la manette** — le dongle ne remonte pas
+  d'événement HCI de réveil, ne pas s'y fier pour diagnostiquer.
 - **gablue-login-theme.service** et **gablue-login-greeter.service** (utilisateur, greeter seulement) : l'écran de connexion — `login-bridge.sh theme` écrit le `kdeglobals` du compte `plasmalogin` **avant** `plasma-login-kwin_wayland.service` (qui le lit à son démarrage), puis `login-bridge.sh pad` ouvre le pointeur manette et le clavier visuel **au premier mouvement** d'une manette (jamais au simple branchement). Les deux sont `WantedBy=plasma-login-wayland.target` (cible qui n'existe que dans la session de `plasmalogin`), réglées par `/etc/gablue/login.conf` (`pad`, `dark`), écrites par `/usr/libexec/gablue-login` et exposées par le dialogue « Écran de connexion… » de Gablue Manager. Contrat → `src/gablue-pad/AGENTS.md`
 - **plasma-foreground-booster.service.d/10-after-plasmashell.conf** : `After=plasma-plasmashell.service`, correctif upstream kcgroups 0.2 absent du paquet Terra 0.1-3. Sans lui le booster démarre en parallèle du compositeur, Wayland n'existe pas encore, Qt ne trouve aucun plugin de plateforme et **abort** (coredump à chaque login, service relancé ensuite par `Restart=on-failure`). Après le bump Terra vers 0.2 le fichier devient un doublon inoffensif, à retirer. `plasmashell` plutôt que `plasma-kwin_wayland` : en `Type=dbus`, son « started » prouve un démarrage réel, alors que KWin en `Type=simple` peut être lancé sans avoir créé le socket
 

@@ -1,0 +1,46 @@
+#!/usr/bin/bash
+# Gablue — déclare les manettes Bluetooth appariées comme sources de réveil.
+#
+# BlueZ garde `WakeAllowed` dans l'info de l'appareil : une fois posé, il
+# survit au redémarrage. Ce script le pose pour toute manette déjà appariée
+# (paire existante, ou manette que l'on vient d'apparier et qui se connecte),
+# sinon le noyau n'arme pas le lien pendant la veille et Home ne réveille
+# rien — même avec le réveil USB du dongle activé (constaté le 23/11/2026).
+#
+# Seules les manettes sont concernées (`Icon: input-gaming`) : un téléphone ou
+# un casque apparié ne doit pas sortir la machine de veille.
+set -eoux pipefail
+
+if ! command -v bluetoothctl >/dev/null 2>&1; then
+    echo "bluetoothctl absent : rien à faire"
+    exit 0
+fi
+
+# `bluetoothctl wake` attend un D-Bus vivant ; au boot, il peut être en cours
+# de démarrage malgré `After=bluetooth.service`.
+for _ in $(seq 1 10); do
+    if bluetoothctl show >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+posees=0
+while read -r mac nom; do
+    if [ -z "${mac}" ]; then
+        continue
+    fi
+    info="$(bluetoothctl info "${mac}" 2>/dev/null || true)"
+    case "${info}" in
+        *"Icon: input-gaming"*) ;;
+        *) continue ;;
+    esac
+    if bluetoothctl wake "${mac}" on >/dev/null 2>&1; then
+        echo "réveil autorisé : ${nom} (${mac})"
+        posees=$((posees + 1))
+    else
+        echo "réveil impossible : ${nom} (${mac})"
+    fi
+done < <(bluetoothctl devices Paired 2>/dev/null | sed -E 's/^Device ([0-9A-F:]+) (.*)$/\1 \2/')
+
+echo "manettes sources de réveil : ${posees}"

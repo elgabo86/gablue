@@ -86,6 +86,9 @@ systemctl --global enable dmemcg-booster-user.service
 #    options (menu / raccourcis / veille) se coupent séparément.
 systemctl enable gablue-pad-gate.service
 systemctl --global enable gablue-pad.service
+# Réveil par Home : les manettes Bluetooth sont déclarées sources de réveil
+# (BlueZ `WakeAllowed`), la clé Bluetooth accepte le réveil USB (règle udev).
+systemctl enable gablue-pad-wake.service
 # Enregistreur / replay d'écran : service de SESSION (il lit le monitor audio
 # du compte et sert sa socket). Actif en permanence, mais sans coût au repos —
 # c'est lui qui démarre le replay automatique quand un .lgp/.wgp se lance.

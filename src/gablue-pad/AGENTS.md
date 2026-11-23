@@ -170,6 +170,13 @@ l'activation part dans le **même** script KWin (deux chargements se
 marcheraient dessus). Un seul jeu à la fois : c'est le modèle du launcher
 (`running: Option<String>`), il n'y a donc jamais de choix entre deux jeux.
 
+**Réveil par Home** : une manette Bluetooth éteinte avec la machine en veille
+la rallume. C'est du système, pas de l'overlay — clé Bluetooth en réveil USB
+plus `WakeAllowed` posé sur les manettes appariées par
+`gablue-pad-wake.service` (détail et mesures → `files/system/AGENTS.md`). La
+manette se reconnecte ensuite seule, sans redémarrage : l'overlay retrouve son
+événement evdev au même titre qu'une manette rebranchée.
+
 Le changement de session fait aussi **redémarrer** `gablue-pad.service` côté
 console : l'unité vit dans le gestionnaire utilisateur, partagée entre
 sessions ; un `start` sur une unité déjà `active` ne rafraîchit pas son

@@ -1,0 +1,20 @@
+# Réveil par manette Bluetooth.
+#
+# Le dongle doit accepter le réveil USB, sinon une connexion entrante de la
+# manette reste au niveau du contrôleur et ne sort jamais la machine de veille
+# (constaté le 23/11/2026 : DS4 appariée, `wakeup=disabled` par défaut sur un
+# ASUS USB-BT500, appui sur Home sans effet).
+#
+# Classe e0 = « wireless controller » : toute clé Bluetooth, pas seulement ce
+# modèle. Contrepartie assumée : n'importe quel appareil apparié qui se
+# reconnecte peut réveiller la machine (le réveil USB part avant que BlueZ ne
+# filtre), donc les appareils non désirés doivent être retirés de BlueZ.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="e0", ATTR{power/wakeup}="enabled"
+
+# Une manette qui se connecte (ou qui vient d'être appariée) est déclarée source
+# de réveil par `gablue-pad-wake` — sans quoi BlueZ ne réarme pas le lien après
+# une veille. Le critère est `ID_INPUT_JOYSTICK`, pas un nom : les manettes
+# n'ont pas toutes le même (`Wireless Controller` pour DualShock/DualSense,
+# `Xbox Wireless Controller`, `Pro Controller` pour une Switch), et la règle
+# `60-input-id.rules` de systemd a déjà posé la propriété avant ce fichier.
+ACTION=="add", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_JOYSTICK}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="gablue-pad-wake.service"
