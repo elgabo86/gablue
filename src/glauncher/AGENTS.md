@@ -125,7 +125,15 @@ leurs icônes, pour l'interface.
 - `src/app.rs` — état, messages, bus interne, vue iced (grille + écran noir)
 - `src/mode.rs` — mode de session : console (session nue) ou bureau, déduit de
   `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP` (`GLAUNCHER_MODE` pour le banc)
-- `src/state.rs` — type de vue et tri retenus (`<cache>/state.txt`)
+- `src/state.rs` — type de vue, tri **et portée** (tous / dossiers choisis /
+  disques scannés) retenus (`<cache>/state.txt`)
+- `src/copy.rs` — copie d'un paquet vers un autre dossier, en tâche de fond :
+  destination (téléchargements XDG ou dossier de jeux), place libre
+  (`statvfs`), règle de date, écriture `.part` + renommage, progression par
+  morceaux de 8 Mio
+- `src/status.rs` — indicateurs du coin haut gauche : manettes connectées
+  (icône par famille, dessinée au canvas) et état du réseau lu dans
+  `/sys/class/net`
 - `assets/glyphs/{xbox,playstation}/*.png` — glyphes Xelu (CC0), embarqués
   avec `include_bytes!`
 - `assets/glauncher.svg` + `.png` (512) — icône de l'application, à la charte
@@ -523,6 +531,57 @@ grille : un fond noir opaque l'aurait effacée.
 - **Écriture atomique** : `covers::save` écrit `<fichier>.part` puis renomme
   (`write_atomic`), et les marqueurs aussi. Un dossier `assets/` synchronisé
   ne doit jamais propager une image à moitié écrite.
+- **Copier un paquet** (`C` sur la page, ou `Options ▸ Copier le jeu…`) :
+  panneau des destinations — **Téléchargements** (`XDG_DOWNLOAD_DIR` de
+  `~/.config/user-dirs.dirs`, repli `~/Téléchargements` puis `~/Downloads`,
+  jamais `xdg-user-dir` qui n'existe pas en session console) puis chaque
+  dossier de `game_dirs` — avec la **place libre** de chacun (`statvfs`,
+  `f_bavail` : ce que l'utilisateur peut réellement écrire) et la taille du
+  paquet en titre. L'original n'est **jamais** déplacé ni modifié.
+  - **Règle de date** : destination vide → copie ; fichier présent et **plus
+    ancien** que la source → question « Mettre à jour ? » (« Annuler » par
+    défaut) ; fichier présent à jour (même date ou plus récent) → « déjà
+    présent, rien à copier », aucune écriture.
+  - **Place insuffisante** dite sur la ligne (rouge) et au moment de valider,
+    en comptant ce qui reste à écrire des copies déjà en file : deux jeux
+    lancés d'affilée ne doivent pas dépasser ensemble l'espace libre.
+  - **Écriture en `.part` puis renommage** : un fichier à moitié copié porte
+    le nom d'un paquet qu'il n'est pas (la bibliothèque l'indexerait et le
+    launcher tenterait de le lancer) ; la taille est vérifiée avant le
+    renommage, un `.part` de mauvaise taille est retiré.
+  - **File et progression cumulée** : une seule bande de **20 px** tout en haut
+    de la fenêtre (`copies`, `BANDE_COPIE`), « copie de <jeu> · 42 % ·
+    2,9 Gio sur 6,0 Gio ». Le pourcentage porte sur **toutes** les copies
+    demandées (total = somme des tailles, `fait` avance à chaque copie
+    terminée), d'où une barre qui va de 0 à 100 % au lieu de trois barres
+    successives. Deux demandes vers la **même destination** ne se doublent pas
+    (`en_cours`), sinon deux fils écriraient le même `.part`. Une copie
+    cassée arrête la file et le dit ; une file vide termine par « N jeux
+    copiés · poids ».
+  - La bande existe **toujours** dans la pile racine (transparente au repos) et
+    son enveloppe est en `Fill` + `align_y(Start)` : un enfant de hauteur fixe
+    posé directement dans une `stack` n'est pas collé au bord.
+  - Un paquet copié dans un `game_dirs` apparaît tout seul (le veilleur le
+    voit, le fondu de réindexation le pose).
+  - **Banc** : `GLAUNCHER_COPY_DEMO=1` ouvre le panneau, `=go` copie le jeu
+    sélectionné vers la première destination, `=file` en fait deux (deux jeux,
+    pour la progression cumulée).
+- **Indicateurs d'état, coin haut gauche** (`src/status.rs`) : l'icône du
+  **réseau** puis une **icône par manette** connectée (quatre au plus, un
+  `+N` au-delà). Aucune image embarquée : tout est dessiné au canvas (arcs du
+  Wi-Fi, prise du filaire, arcs barrés hors ligne ; corps + poignées + croix
+  et boutons pour la manette), teinté par famille (`gamepad::PadKind` : vert
+  Xbox, bleu PlayStation, gris pour une manette non reconnue).
+  - Réseau lu dans `/sys/class/net` : une interface **physique** (dossier
+    `device`) et `operstate == up` — les interfaces virtuelles (`docker0`,
+    `virbr0`, `tailscale0`, `veth…`) sont actives sans câble et feraient
+    croire à un réseau en ligne. Un guetteur relève l'état toutes les 3 s et
+    n'envoie un message qu'au changement (`status::surveiller`) : `/sys` est
+    gratuit, aucune sonde réseau, aucun NetworkManager par DBus.
+  - Les manettes viennent des évènements `evdev` existants (`pads`), donc rien
+    à sonder ; bleuté/grisé selon la famille, `MUTED` quand tout va bien côté
+    réseau n'était pas lisible — l'icône passe en `ACCENT` dès qu'un lien est
+    actif.
 - **Disques externes (`scan_disks`, décoché par défaut)** : coché, les
   **points de montage** sous `/run/media/<utilisateur>/` et
   `/media/<utilisateur>/` sont ajoutés aux dossiers scannés —
@@ -899,6 +958,22 @@ grille : un fond noir opaque l'aurait effacée.
   dans la pastille de tri (« TRI A→Z · 1998 »). Il ne peut porter que sur les
   jeux dont l'année est connue : leur nombre grandit avec les pages ouvertes et
   les `--update`.
+- **Portée de la bibliothèque** (ligne « Bibliothèque » du même menu « Tri ») :
+  `Tous les jeux` → `Dossiers choisis` → `Disques scannés` → retour, à chaque
+  `Croix` **sans refermer le menu** (on voit la valeur changer). Le filtre
+  porte sur le **chemin** du paquet : `Dossiers choisis` = sous un
+  `game_dirs`, `Disques scannés` = sous une racine de `extra_dirs` **et pas**
+  sous un dossier choisi (un dossier de `config.toml` posé sur un disque
+  externe reste « choisi »). Répond à « où est ce jeu ? » quand un disque
+  branché ajoute 600 paquets à trois. Se retient dans `state.txt`
+  (`portee=disques`) et se lit dans la pastille (« TRI A→Z · disques »).
+  Couper `scan_disks` ramène la portée à `Tous` : « disques scannés » sans
+  disque scanné n'a plus de sens.
+- **Menu « Tri » construit sur une liste de lignes** (`SortMenuEntry` :
+  `Sort`, `Year`, `Scope`, `Clear`, `sort_menu_entries`) et non sur des indices
+  calculés : l'ancienne arithmétique (`SortBy::ALL.len()` + 1 pour
+  « Effacer les derniers lancés ») se décalait dès qu'une ligne conditionnelle
+  apparaissait.
 - **Page d'un jeu : moitié basse dimensionnée par l'écran.** La cover prend
   **72 % de la hauteur restante** sous la bande héros (bornée 300 à 520 px), et
   tout le bloc (logo, nom, temps de jeu, pastilles, marges, aide) suit
@@ -952,12 +1027,12 @@ grille : un fond noir opaque l'aurait effacée.
   réservée** : le bloc du bas se centre sur la page (une bande grise vide
   faisait pauvre, retour 18/11). La page vient **par-dessus la liste** dans une
   couche de profondeur **constante** (voir « Couche d'affichage »).
-- **Options réunies** : `Options ▸` ouvre un menu de **sept lignes de
-  visuels** — Grid, Héros, Logo, Icône (`✓` = déjà là),
-  `Identifier le jeu…` (ou `Revérifier sur SteamGridDB` quand la marque
-  « introuvable » est fraîche), `Reprendre les visuels d'un jeu…` et `Date de
-  sortie…` (année connue en bout de ligne) — **suivies des options de lancement
-  du jeu** (voir ci-dessous). Une ligne mène au menu d'images du
+- **Options réunies** : `Options ▸` ouvre un menu de **huit lignes** — Grid,
+  Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` (ou `Revérifier sur
+  SteamGridDB` quand la marque « introuvable » est fraîche), `Reprendre les
+  visuels d'un jeu…`, `Date de sortie…` (année connue en bout de ligne) et
+  `Copier le jeu…` (voir *Copier un paquet*) — **suivies des options de
+  lancement du jeu** (voir ci-dessous). Une ligne mène au menu d'images du
   type choisi. **Aucun raccourci** n'ouvre ce menu depuis la liste, ni depuis la
   page (retiré le 20/11 : `C` sur la liste, puis `I`/`G`/`H`/`L`/`C`/`R`/`D` et
   les boutons manette Y/X sur la page) : le bouton de la page est le seul

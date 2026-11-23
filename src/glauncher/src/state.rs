@@ -89,6 +89,67 @@ impl ViewMode {
     }
 }
 
+/// D'où viennent les jeux affichés : l'ensemble de la bibliothèque, les seuls
+/// dossiers choisis dans `config.toml`, ou les seuls dossiers trouvés sur les
+/// disques externes montés (`scan_disks`). Répond à « où est ce jeu ? » quand
+/// un disque branché ajoute 600 paquets à trois.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Scope {
+    #[default]
+    Tous,
+    /// Uniquement les dossiers de `game_dirs`.
+    Dossiers,
+    /// Uniquement les racines trouvées sur un disque monté.
+    Disques,
+}
+
+impl Scope {
+    fn key(self) -> &'static str {
+        match self {
+            Scope::Tous => "tous",
+            Scope::Dossiers => "dossiers",
+            Scope::Disques => "disques",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "tous" => Some(Scope::Tous),
+            "dossiers" => Some(Scope::Dossiers),
+            "disques" => Some(Scope::Disques),
+            _ => None,
+        }
+    }
+
+    /// Libellé du menu « Tri » : la valeur courante doit se lire sans ouvrir.
+    pub fn label(self) -> &'static str {
+        match self {
+            Scope::Tous => "Tous les jeux",
+            Scope::Dossiers => "Dossiers choisis",
+            Scope::Disques => "Disques scannés",
+        }
+    }
+
+    /// Suffixe de la pastille de tri, vide quand tout est affiché.
+    pub fn short(self) -> &'static str {
+        match self {
+            Scope::Tous => "",
+            Scope::Dossiers => "dossiers",
+            Scope::Disques => "disques",
+        }
+    }
+
+    /// Cran suivant (la ligne du menu cycle : trois valeurs, du plus large au
+    /// plus étroit, puis retour).
+    pub fn next(self) -> Self {
+        match self {
+            Scope::Tous => Scope::Dossiers,
+            Scope::Dossiers => Scope::Disques,
+            Scope::Disques => Scope::Tous,
+        }
+    }
+}
+
 /// Ce que le launcher retient. `view` absent = garder `config.toml`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct State {
@@ -96,6 +157,8 @@ pub struct State {
     pub sort: SortBy,
     /// Filtre d'année actif (`None` = toutes).
     pub year: Option<u32>,
+    /// Portée de la bibliothèque (tous / dossiers choisis / disques scannés).
+    pub scope: Scope,
     /// Taille des lignes de la vue LISTE (0 compact, 1 normal, 2 grand). La
     /// grille a ses propres crans (colonnes) : une seule valeur ne pouvait pas
     /// servir les deux, et la liste n'avait aucun réglage (signalé 23/11/2026).
@@ -121,6 +184,11 @@ pub fn load(path: &Path) -> State {
                 }
             }
             "annee" => state.year = value.trim().parse().ok(),
+            "portee" => {
+                if let Some(scope) = Scope::parse(value) {
+                    state.scope = scope;
+                }
+            }
             "liste_taille" => {
                 state.list_size = value.trim().parse::<u8>().unwrap_or(1).min(2)
             }
@@ -144,6 +212,9 @@ pub fn save(path: &Path, state: State) {
         text.push_str(&format!("annee={year}\n"));
     }
     text.push_str(&format!("liste_taille={}\n", state.list_size.min(2)));
+    if state.scope != Scope::Tous {
+        text.push_str(&format!("portee={}\n", state.scope.key()));
+    }
 
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".part");
@@ -176,6 +247,7 @@ mod tests {
             view: Some(ViewMode::Mosaic),
             sort: SortBy::Modified,
             year: Some(1994),
+            scope: Scope::Disques,
             list_size: 2,
         };
         save(&path, state);
@@ -192,6 +264,7 @@ mod tests {
                 view: Some(ViewMode::Grid),
                 sort: SortBy::Favorites,
                 year: None,
+                scope: Scope::Tous,
                 list_size: 1,
             },
         );

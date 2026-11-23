@@ -22,6 +22,7 @@ use iced::{
 
 use crate::assets;
 use crate::config::{Config, ViewMode};
+use crate::copy;
 use crate::covers;
 use crate::cursor;
 use crate::dialog;
@@ -43,7 +44,8 @@ use crate::pose::Pose;
 use crate::recorder;
 use crate::sparkles;
 use crate::spinner;
-use crate::state::{self, SortBy};
+use crate::state::{self, Scope, SortBy};
+use crate::status::{self, Reseau};
 use crate::thumbs;
 use crate::updates;
 
@@ -147,6 +149,11 @@ const COLUMNS_MAX: usize = 12;
 const FADE_SECONDS: f32 = 0.9;
 /// Roue de chargement : taille (px) et vitesse de rotation (rad/s).
 const SPIN_SIZE: f32 = 22.0;
+
+/// Hauteur de la bande de progression des copies, tout en haut de la fenêtre.
+/// Présente même au repos (transparente) : la forme de la pile racine ne doit
+/// pas changer d'un rendu à l'autre.
+const BANDE_COPIE: f32 = 20.0;
 const SPIN_SPEED: f32 = 6.0;
 /// Durée du fondu de la page : montée vers le fond, bascule, descente. Deux
 /// rampes, parce que sauter au noir d'un coup puis en ressortir se lit comme un
@@ -483,10 +490,25 @@ pub enum Message {
     ReplacePick,
     /// Le scan des disques externes a été basculé dans les Réglages.
     SettingsDisques,
+    /// « Copier le jeu… » : ouvre le choix de la destination.
+    CopyOpen,
+    CopyNav(i32),
+    CopyChoose(usize),
+    CopyPick,
+    /// « ce fichier existe en plus ancien : le mettre à jour ? »
+    CopyReplaceNav(i32),
+    CopyReplaceChoose(usize),
+    CopyReplacePick,
+    /// Avancement de la copie en cours (octets écrits pour ce jeu).
+    CopyStep { fait: u64 },
+    CopyDone { size: u64 },
+    CopyFailed { nom: String, erreur: String },
     /// Racines de jeux trouvées sur les disques montés (ou liste vide).
     Discovered(Vec<PathBuf>),
     /// L'ensemble des disques montés a changé (branchement, retrait).
     Disks,
+    /// Le lien réseau a changé (Wi-Fi ↔ filaire ↔ hors ligne).
+    Reseau(Reseau),
     /// « Oublier les jeux disparus » : ouvre le dialogue de confirmation.
     OublierOpen,
     OublierNav(i32),
@@ -739,6 +761,48 @@ struct Replace {
     index: usize,
 }
 
+/// Destinations proposées pour copier un paquet : le dossier de
+/// téléchargements de l'utilisateur, puis chaque dossier de jeux choisi, avec
+/// la place libre de chacun (mesurée à l'ouverture, `statvfs`).
+struct CopyMenu {
+    dests: Vec<CopyDest>,
+    index: usize,
+    /// Taille du paquet à copier (affichée dans le titre).
+    size: u64,
+}
+
+struct CopyDest {
+    label: String,
+    dir: PathBuf,
+    libre: Option<u64>,
+}
+
+/// Question posée quand la destination contient déjà le même fichier, **plus
+/// ancien** que la source : « le mettre à jour ? ». Rien n'est écrasé sans un
+/// accord explicite, et « Annuler » est le choix par défaut.
+struct CopyReplace {
+    job: copy::Job,
+    index: usize,
+}
+
+/// File de copies en cours : `total` et `fait` sont en octets et couvrent
+/// **toutes** les copies demandées, d'où une seule barre qui avance d'un jeu au
+/// suivant sans repartir de zéro.
+#[derive(Default)]
+struct Copies {
+    total: u64,
+    /// Octets des copies déjà terminées.
+    fait: u64,
+    /// Octets écrits pour la copie en cours.
+    courant: u64,
+    /// Jeu en cours (nom affiché) ; `None` entre deux copies.
+    nom: String,
+    /// Destination de la copie en cours, pour refuser un doublon.
+    en_cours: Option<PathBuf>,
+    attente: std::collections::VecDeque<copy::Job>,
+    nombre: usize,
+}
+
 /// Dialogue « Oublier les jeux disparus » : nombre de fiches concernées et
 /// bouton choisi (0 = annuler, 1 = oublier).
 struct Oublier {
@@ -834,6 +898,9 @@ enum ArtMenuEntry {
     /// un jeu absent de SteamGridDB, un fangame qui reprend l'art de sa série.
     Alias,
     Date,
+    /// Copier le paquet vers le dossier de téléchargements ou un dossier de
+    /// jeux (l'original n'est jamais touché).
+    Copier,
     Gamescope,
     Resolution,
     Xbox,
@@ -848,11 +915,37 @@ fn art_menu_entries(kind: Kind) -> Vec<ArtMenuEntry> {
         ArtMenuEntry::Identify,
         ArtMenuEntry::Alias,
         ArtMenuEntry::Date,
+        ArtMenuEntry::Copier,
         ArtMenuEntry::Gamescope,
         ArtMenuEntry::Resolution,
     ];
     if kind == Kind::Wgp {
         entries.push(ArtMenuEntry::Xbox);
+    }
+    entries
+}
+
+/// Une ligne du menu « Tri » : les ordres, le filtre d'année, la portée de la
+/// bibliothèque, et l'effacement de l'historique quand il n'est pas vide.
+/// Construire la liste des lignes (au lieu de calculer les indices) évite les
+/// décalages quand une ligne conditionnelle apparaît.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortMenuEntry {
+    Sort(SortBy),
+    Year,
+    Scope,
+    Clear,
+}
+
+fn sort_menu_entries(historique_vide: bool) -> Vec<SortMenuEntry> {
+    let mut entries: Vec<SortMenuEntry> = SortBy::ALL
+        .iter()
+        .map(|&sort| SortMenuEntry::Sort(sort))
+        .collect();
+    entries.push(SortMenuEntry::Year);
+    entries.push(SortMenuEntry::Scope);
+    if !historique_vide {
+        entries.push(SortMenuEntry::Clear);
     }
     entries
 }
@@ -1200,6 +1293,16 @@ pub struct App {
     pending_disques: bool,
     /// Résultat mis de côté le temps du fondu (`Swap::Reload`).
     pending_reload: Option<Refresh>,
+    /// Choix de la destination d'une copie (page d'un jeu).
+    copy_menu: Option<CopyMenu>,
+    /// « le fichier existe en plus ancien : le mettre à jour ? »
+    copy_replace: Option<CopyReplace>,
+    /// Copies en cours (file + progression cumulée) : la barre du haut.
+    copies: Option<Copies>,
+    /// Portée de la bibliothèque : tous, dossiers choisis, disques scannés.
+    scope: Scope,
+    /// État du lien réseau, affiché en icône (coin haut gauche).
+    reseau: Reseau,
     /// Slugs dont la cover a échoué (réseau) : on ne réessaie pas en boucle.
     cover_failed: HashSet<String>,
     /// (slug, type) actuellement dans la voie de fond : évite de renvoyer sans
@@ -1388,6 +1491,8 @@ impl App {
         // que la découverte n'a pas tourné : un petit guetteur signale les
         // changements de l'ensemble des disques montés (branchement, retrait).
         crate::disks::surveiller(|| post(Message::Disks));
+        // réseau : relève de /sys toutes les 3 s, message au changement
+        status::surveiller(|etat| post(Message::Reseau(etat)));
 
         let emit_cover = |event| post(cover_message(event));
         let covers = config.covers.then(|| {
@@ -1475,6 +1580,11 @@ impl App {
             pending: Vec::new(),
             pending_disques: false,
             pending_reload: None,
+            copy_menu: None,
+            copy_replace: None,
+            copies: None,
+            scope: saved.scope,
+            reseau: status::reseau(),
             cover_failed: HashSet::new(),
             visible_covers: Vec::new(),
             icon_requests: HashSet::new(),
@@ -1645,6 +1755,28 @@ impl App {
             tasks.push(Task::done(Message::UpdateApply));
         }
 
+        // crochet de banc : choix de la destination d'une copie (avec
+        // `GLAUNCHER_PAGE_DEMO` pour avoir une page ouverte), et `=go` pour
+        // lancer la copie vers la première destination (téléchargements)
+        match std::env::var("GLAUNCHER_COPY_DEMO").as_deref() {
+            // `=go` : une copie vers la première destination (téléchargements)
+            Ok("go") => {
+                tasks.push(Task::done(Message::CopyOpen));
+                tasks.push(Task::done(Message::CopyChoose(0)));
+            }
+            // `=file` : deux copies d'affilée (deux jeux différents), pour voir
+            // la progression cumulée de la file
+            Ok("file") => {
+                tasks.push(Task::done(Message::CopyOpen));
+                tasks.push(Task::done(Message::CopyChoose(0)));
+                tasks.push(Task::done(Message::CardClicked(1)));
+                tasks.push(Task::done(Message::CopyOpen));
+                tasks.push(Task::done(Message::CopyChoose(0)));
+            }
+            Ok(_) => tasks.push(Task::done(Message::CopyOpen)),
+            Err(_) => {}
+        }
+
         // Disques externes : la découverte tourne tout de suite (le veilleur
         // inotify, lui, met 5 s à se poser). Opt-in : sans `scan_disks`, aucun
         // accès aux disques avant la première image.
@@ -1788,6 +1920,13 @@ impl App {
     }
 
     /// Le jeu de la page ouverte, s'il y en a une.
+    /// Jeu dont on parle : celui de la page ouverte, sinon celui qui est
+    /// sélectionné dans la liste (le crochet de banc `GLAUNCHER_COPY_DEMO`
+    /// travaille sans page).
+    fn jeu_courant(&self) -> Option<&Game> {
+        self.page_game().or_else(|| self.games.get(self.selected))
+    }
+
     fn page_game(&self) -> Option<&Game> {
         self.page
             .as_ref()
@@ -3257,6 +3396,115 @@ impl App {
                 }
                 Task::done(Message::OublierPick)
             }
+            Message::CopyOpen => {
+                let Some(game) = self.jeu_courant() else {
+                    return Task::none();
+                };
+                let source = game.path.clone();
+                let size = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+                let mut dests = vec![CopyDest {
+                    label: "Téléchargements".to_string(),
+                    dir: copy::telechargements(),
+                    libre: None,
+                }];
+                for dir in self.config.game_dirs() {
+                    dests.push(CopyDest {
+                        label: folders::affiche(&dir),
+                        dir,
+                        libre: None,
+                    });
+                }
+                // place libre lue une fois, à l'ouverture : un `statvfs` par
+                // destination, jamais par image
+                for dest in dests.iter_mut() {
+                    dest.libre = copy::libre(&dest.dir);
+                }
+                self.art_menu = None;
+                self.copy_menu = Some(CopyMenu {
+                    dests,
+                    index: 0,
+                    size,
+                });
+                Task::none()
+            }
+            Message::CopyNav(delta) => {
+                if let Some(menu) = self.copy_menu.as_mut() {
+                    let last = menu.dests.len().saturating_sub(1) as i32;
+                    menu.index = (menu.index as i32 + delta).clamp(0, last) as usize;
+                }
+                Task::none()
+            }
+            // un clic vaut la décision tout de suite (même règle que le menu
+            // d'images) : pas de message intermédiaire, donc pas de risque
+            // qu'un autre menu soit pris pour celui qu'on vient de choisir
+            Message::CopyChoose(index) => {
+                if let Some(menu) = self.copy_menu.as_mut() {
+                    menu.index = index.min(menu.dests.len().saturating_sub(1));
+                }
+                self.copy_pick()
+            }
+            Message::CopyPick => self.copy_pick(),
+            Message::CopyReplaceNav(delta) => {
+                if let Some(replace) = self.copy_replace.as_mut() {
+                    replace.index = (replace.index as i32 + delta).clamp(0, 1) as usize;
+                }
+                Task::none()
+            }
+            Message::CopyReplaceChoose(index) => {
+                if let Some(replace) = self.copy_replace.as_mut() {
+                    replace.index = index.min(1);
+                }
+                Task::done(Message::CopyReplacePick)
+            }
+            Message::CopyReplacePick => {
+                let Some(replace) = self.copy_replace.take() else {
+                    return Task::none();
+                };
+                if replace.index == 0 {
+                    return Task::none();
+                }
+                self.enqueue_copy(replace.job);
+                Task::none()
+            }
+            Message::CopyStep { fait, .. } => {
+                if let Some(copies) = self.copies.as_mut() {
+                    copies.courant = fait;
+                }
+                Task::none()
+            }
+            Message::CopyDone { size, .. } => {
+                let Some(copies) = self.copies.as_mut() else {
+                    return Task::none();
+                };
+                copies.fait += size;
+                copies.courant = 0;
+                copies.en_cours = None;
+                if copies.attente.is_empty() {
+                    let total = copies.total;
+                    let nombre = copies.nombre;
+                    self.copies = None;
+                    self.status = Some((
+                        format!(
+                            "{} copié{} · {}",
+                            plural(nombre),
+                            if nombre > 1 { "s" } else { "" },
+                            copy::poids(total)
+                        ),
+                        false,
+                    ));
+                    return Task::none();
+                }
+                self.demarrer_copie();
+                Task::none()
+            }
+            Message::CopyFailed { nom, erreur } => {
+                // une copie cassée arrête la file : mieux vaut le dire que
+                // remplir un disque plein en silence
+                eprintln!("glauncher : copie de {nom} impossible : {erreur}");
+                self.copies = None;
+                self.status = Some((format!("copie de {nom} impossible : {erreur}"), true));
+                Task::none()
+            }
             Message::OublierPick => {
                 let Some(oublier) = self.oublier.take() else {
                     return Task::none();
@@ -3507,6 +3755,10 @@ impl App {
                         self.art_menu = None;
                         Task::done(Message::AliasOpen)
                     }
+                    ArtMenuEntry::Copier => {
+                        self.art_menu = None;
+                        Task::done(Message::CopyOpen)
+                    }
                     ArtMenuEntry::Date => {
                         self.art_menu = None;
                         Task::done(Message::DateOpen)
@@ -3631,6 +3883,11 @@ impl App {
                         // jeux des disques externes quittent la liste et leurs
                         // racines ne sont plus surveillées.
                         self.config.extra_dirs.clear();
+                        // la portée « disques scannés » n'a plus de sens
+                        if self.scope == Scope::Disques {
+                            self.scope = Scope::Tous;
+                            self.remember();
+                        }
                         if let Some(veille) = self.watch.as_ref() {
                             veille.definir(self.config.scan_dirs());
                         }
@@ -3649,6 +3906,10 @@ impl App {
                         veille.definir(self.config.scan_dirs());
                     }
                 }
+                Task::none()
+            }
+            Message::Reseau(etat) => {
+                self.reseau = etat;
                 Task::none()
             }
             Message::Disks => {
@@ -3724,33 +3985,49 @@ impl App {
                 Task::none()
             }
             Message::SortMenuNav(delta) => {
+                let entries = self.sort_menu_entries();
                 if let Some(choice) = self.sort_menu.as_mut() {
-                    // `SortBy::ALL`, puis « Année », puis « Effacer les derniers
-                    // lancés » (cette dernière n'existe que si l'historique
-                    // n'est pas vide)
-                    let mut last = SortBy::ALL.len();
-                    if !self.recent.is_empty() {
-                        last += 1;
-                    }
+                    // les lignes réelles (`sort_menu_entries`), pas un calcul
+                    let last = entries.len().saturating_sub(1) as i32;
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::SortMenuChoose(index) => {
-                self.sort_menu = None;
-                if index > SortBy::ALL.len() && !self.recent.is_empty() {
-                    // ligne « Effacer les derniers lancés » (sous le filtre
-                    // d'année) : elle vide l'historique, pas les temps de jeu
-                    self.effacer_derniers();
-                    self.status = Some(("Derniers lancés effacés".to_string(), false));
-                    return Task::none();
-                }
-                let Some(&sort) = SortBy::ALL.get(index) else {
-                    // avant-dernière ligne du menu : le filtre d'année
-                    self.year_menu = Some(year_index(self.year_filter, self.known_years()));
+                let Some(entry) = self.sort_menu_entries().get(index).copied() else {
+                    self.sort_menu = None;
                     return Task::none();
                 };
-                self.begin_swap(Swap::Sort(sort));
+                match entry {
+                    // « Effacer les derniers lancés » : vide l'historique, pas
+                    // les temps de jeu
+                    SortMenuEntry::Clear => {
+                        self.sort_menu = None;
+                        self.effacer_derniers();
+                        self.status = Some(("Derniers lancés effacés".to_string(), false));
+                    }
+                    // le filtre d'année ouvre son propre menu
+                    SortMenuEntry::Year => {
+                        self.sort_menu = None;
+                        self.year_menu = Some(year_index(self.year_filter, self.known_years()));
+                    }
+                    // la portée cycle sur place : le menu reste ouvert pour
+                    // qu'on voie la valeur changer, et la liste suit tout de
+                    // suite (sans annoncer la ligne vide, la pastille de tri
+                    // dit déjà la portée)
+                    SortMenuEntry::Scope => {
+                        self.scope = self.scope.next();
+                        self.remember();
+                        self.apply_filter();
+                        self.selected = self.selected.min(self.games.len().saturating_sub(1));
+                        self.update_scroll_target();
+                        self.request_visible_covers();
+                    }
+                    SortMenuEntry::Sort(sort) => {
+                        self.sort_menu = None;
+                        self.begin_swap(Swap::Sort(sort));
+                    }
+                }
                 Task::none()
             }
             Message::YearMenuNav(delta) => {
@@ -4776,6 +5053,132 @@ impl App {
         disparus.len()
     }
 
+    /// Destination choisie : on regarde ce qu'il y a sur place avant de
+    /// promettre quoi que ce soit. Rien n'est écrasé sans confirmation, et un
+    /// fichier déjà à jour ne déclenche aucune copie.
+    fn copy_pick(&mut self) -> Task<Message> {
+        let Some(menu) = self.copy_menu.take() else {
+            return Task::none();
+        };
+        let Some(dest) = menu.dests.get(menu.index) else {
+            return Task::none();
+        };
+        let Some(game) = self.jeu_courant() else {
+            return Task::none();
+        };
+        let source = game.path.clone();
+        match copy::prepare(&source, &dest.dir) {
+            Err(err) => self.status = Some((err, true)),
+            Ok(copy::Prepare::Existe(path)) => {
+                eprintln!("glauncher : copie inutile, déjà présent : {}", path.display());
+                self.status = Some((
+                    format!("déjà présent dans {} — rien à copier", folders::affiche(&path)),
+                    false,
+                ));
+            }
+            Ok(copy::Prepare::Copier(job)) => {
+                if self.place_pour(&dest.dir, job.size) {
+                    self.enqueue_copy(job);
+                }
+            }
+            Ok(copy::Prepare::Remplacer(job)) => {
+                if !self.place_pour(&dest.dir, job.size) {
+                    return Task::none();
+                }
+                self.copy_replace = Some(CopyReplace { job, index: 0 });
+            }
+        }
+        Task::none()
+    }
+
+    /// Y a-t-il la place pour `size` octets dans `dir`, une fois les copies déjà
+    /// en file comptées ? La réponse est dite à l'écran quand elle est non.
+    fn place_pour(&mut self, dir: &Path, size: u64) -> bool {
+        // ce qui reste à écrire pour les copies en attente compte : deux jeux
+        // lancés d'affilée ne doivent pas dépasser ensemble l'espace libre
+        let reserve = self
+            .copies
+            .as_ref()
+            .map(|copies| {
+                copies
+                    .total
+                    .saturating_sub(copies.fait + copies.courant)
+            })
+            .unwrap_or(0);
+        let Some(libre) = copy::libre(dir) else {
+            // place illisible : on ne bloque pas, l'échec arrivera au pire
+            return true;
+        };
+        if libre >= size + reserve {
+            return true;
+        }
+        self.status = Some((
+            format!(
+                "place insuffisante dans {} : {} libres, {} nécessaires",
+                folders::affiche(dir),
+                copy::poids(libre.saturating_sub(reserve)),
+                copy::poids(size)
+            ),
+            true,
+        ));
+        false
+    }
+
+    /// Met une copie dans la file (une seule barre pour toutes les copies
+    /// demandées), et démarre la première.
+    fn enqueue_copy(&mut self, job: copy::Job) {
+        // même destination déjà en cours ou en attente : une seule copie
+        // (deux appuis rapides sur Croix écriraient le même fichier en même
+        // temps, chacun dans son `.part`)
+        if let Some(copies) = self.copies.as_ref()
+            && (copies.en_cours.as_ref() == Some(&job.dest)
+                || copies.attente.iter().any(|autre| autre.dest == job.dest))
+        {
+            self.status = Some((
+                format!("{} est déjà en cours de copie", job.nom),
+                false,
+            ));
+            return;
+        }
+        let size = job.size;
+        let nom = job.nom.clone();
+        let copies = self.copies.get_or_insert_with(Copies::default);
+        copies.total += size;
+        copies.nombre += 1;
+        let demarre = !copies.attente.is_empty() || !copies.nom.is_empty();
+        copies.attente.push_back(job);
+        if !demarre {
+            self.demarrer_copie();
+        } else {
+            self.status = Some((format!("{nom} en file d'attente"), false));
+        }
+    }
+
+    fn demarrer_copie(&mut self) {
+        let Some(copies) = self.copies.as_mut() else {
+            return;
+        };
+        let Some(job) = copies.attente.pop_front() else {
+            return;
+        };
+        copies.courant = 0;
+        copies.nom = job.nom.clone();
+        copies.en_cours = Some(job.dest.clone());
+        eprintln!(
+            "glauncher : copie de {} vers {}",
+            job.nom,
+            job.dest.display()
+        );
+        self.status = Some((format!("copie de {}…", job.nom), false));
+        copy::spawn(job, 0, |event| {
+            post(match event {
+                copy::Event::Progress { fait, .. } => Message::CopyStep { fait },
+                copy::Event::Done { size, .. } => Message::CopyDone { size },
+                copy::Event::Failed { nom, erreur } => Message::CopyFailed { nom, erreur },
+            })
+        });
+    }
+
     fn refresh(&mut self, changed: Vec<PathBuf>) {
         self.refresh_avec(changed, false);
     }
@@ -5324,6 +5727,7 @@ impl App {
                 view: Some(self.config.view),
                 sort: self.sort,
                 year: self.year_filter,
+                scope: self.scope,
                 list_size: self.list_size,
             },
         );
@@ -5438,12 +5842,11 @@ impl App {
             // réindexation : la sélection et le défilement ne bougent pas, on
             // ne fait que remplacer le contenu
             Swap::Reload => {
+                // aucun message d'état : la liste et la pastille de total
+                // disent déjà ce qui a changé (un « 4 jeux » en double au
+                // démarrage était du bruit)
                 if let Some(refresh) = self.pending_reload.take() {
-                    let before = self.games.len();
                     self.apply(&refresh);
-                    if self.games.len() != before {
-                        self.status = Some((plural(self.games.len()), false));
-                    }
                 }
                 return Task::none();
             }
@@ -5462,10 +5865,24 @@ impl App {
         // recherche : sous-chaîne, minuscules et sans accents (« zelda »
         // trouve « The Legend of Zelda », « epee » trouve « Épée »)
         let requete = normalise(&self.search);
+        // portée : d'où vient le paquet. Les dossiers choisis priment sur les
+        // disques (un dossier de `config.toml` posé sur un disque externe est
+        // « choisi », pas « trouvé »).
+        let scope = self.scope;
+        let choisis = self.config.game_dirs();
+        let disques = self.config.extra_dirs.clone();
         self.games = self
             .all_games
             .iter()
             .filter(|game| requete.is_empty() || normalise(&game.name).contains(&requete))
+            .filter(|game| match scope {
+                Scope::Tous => true,
+                Scope::Dossiers => choisis.iter().any(|dir| game.path.starts_with(dir)),
+                Scope::Disques => {
+                    disques.iter().any(|dir| game.path.starts_with(dir))
+                        && !choisis.iter().any(|dir| game.path.starts_with(dir))
+                }
+            })
             .filter(|game| !favorites || self.favorites.contains(&game.slug))
             // filtre d'année : seuls les jeux dont la date est connue peuvent
             // y répondre (elle s'apprend page par page)
@@ -5803,6 +6220,39 @@ impl App {
             };
         }
 
+        // « copier vers… » : haut/bas puis Entrée
+        if self.copy_menu.is_some() {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.copy_menu = None;
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::CopyPick)
+                }
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::CopyNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::CopyNav(-1)),
+                _ => Task::none(),
+            };
+        }
+
+        // « mettre à jour la copie ? » : « Annuler » sélectionné, Entrée annule
+        if self.copy_replace.is_some() {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::CopyReplaceChoose(0)),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::CopyReplacePick)
+                }
+                keyboard::Key::Named(Named::ArrowLeft) | keyboard::Key::Named(Named::Tab) => {
+                    Task::done(Message::CopyReplaceNav(-1))
+                }
+                keyboard::Key::Named(Named::ArrowRight) => {
+                    Task::done(Message::CopyReplaceNav(1))
+                }
+                _ => Task::none(),
+            };
+        }
+
         // page d'un jeu : gauche/droite choisissent l'action, Entrée valide.
         // Aucun raccourci pour les visuels, l'identification ou la date : tout
         // passe par le bouton « Options ▸ » de la page (demandé le 20/11).
@@ -5817,6 +6267,8 @@ impl App {
                 keyboard::Key::Character(ch) => match ch.as_ref() {
                     "j" => Task::done(Message::PageChoose(0)),
                     "f" => Task::done(Message::PageChoose(1)),
+                    // « c » : copier le paquet (téléchargements ou dossier de jeux)
+                    "c" => Task::done(Message::CopyOpen),
                     _ => Task::none(),
                 },
                 _ => Task::none(),
@@ -6300,6 +6752,12 @@ impl App {
         if self.oublier.is_some() {
             menus = stack![menus, self.oublier_view()].into();
         }
+        if self.copy_menu.is_some() {
+            menus = stack![menus, self.copy_menu_view()].into();
+        }
+        if self.copy_replace.is_some() {
+            menus = stack![menus, self.copy_replace_view()].into();
+        }
         if self.galerie.is_some() {
             menus = stack![menus, self.gallery_view()].into();
         }
@@ -6328,6 +6786,7 @@ impl App {
         // conditionnel de la pile racine : un changement de forme recrée le
         // sous-arbre, donc la zone défilante, et la liste remonte — constaté
         // 20/11). Le canvas ne dessine rien hors téléchargement.
+        view = stack![view, self.copy_overlay(), self.etat_view()].into();
         view = stack![
             view,
             container(
@@ -6363,6 +6822,252 @@ impl App {
         cursor::Idle::new(view)
             .on_geste(Message::Souris)
             .muet(self.barre)
+            .into()
+    }
+
+    /// Barre de progression des copies, tout en haut de la fenêtre (les
+    /// indicateurs du coin restent dessinés par-dessus). Le pourcentage est
+    /// celui de la **file entière** : trois jeux demandés d'affilée donnent une
+    /// seule barre qui va de 0 à 100 %, pas trois barres successives.
+    fn copy_overlay(&self) -> Element<'_, Message> {
+        let Some(copies) = self.copies.as_ref().filter(|copies| copies.total > 0) else {
+            // forme d'arbre constante : la bande existe toujours, transparente
+            return container(Row::new())
+                .width(Fill)
+                .height(Fill)
+                .align_y(Alignment::Start)
+                .into();
+        };
+        let fait = copies.fait + copies.courant;
+        let percent = (fait as f32 / copies.total as f32 * 100.0).clamp(0.0, 100.0);
+        let libelle = format!(
+            "copie de {} · {:.0} % · {} sur {}",
+            short(&copies.nom, 28),
+            percent,
+            copy::poids(fait),
+            copy::poids(copies.total)
+        );
+        let rempli = (percent * 100.0).round() as u16;
+        let segment = |portion: u16, teinte: Color| {
+            container(Row::new())
+                .width(Length::FillPortion(portion.max(1)))
+                .height(Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(teinte)),
+                    border: Border {
+                        radius: 2.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                })
+        };
+        let track = row![
+            segment(rempli, ACCENT),
+            segment(100u16.saturating_sub(rempli), CELL_BG),
+        ];
+        let bande = container(
+            row![
+                text(libelle).size(12).font(HELP_FONT).color(TEXT),
+                container(track).width(Fill).height(Length::Fixed(3.0)),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .height(Length::Fixed(BANDE_COPIE))
+        .padding([0.0, 12.0])
+        .align_y(Alignment::Center)
+        .style(|_| container::Style {
+            background: Some(Background::Color(Color {
+                a: 0.62,
+                ..Color::BLACK
+            })),
+            ..container::Style::default()
+        });
+        // enveloppe pleine page alignée en haut : un enfant de hauteur fixe
+        // posé directement dans une `stack` n'est pas collé au bord
+        container(bande)
+            .width(Fill)
+            .height(Fill)
+            .align_y(Alignment::Start)
+            .into()
+    }
+
+    /// Choix de la destination d'une copie : le dossier de téléchargements puis
+    /// les dossiers de jeux, avec la place libre de chacun. La place manquante
+    /// se voit sur la ligne (rouge), pas seulement au moment de valider.
+    fn copy_menu_view(&self) -> Element<'_, Message> {
+        let Some(menu) = &self.copy_menu else {
+            return Row::new().into();
+        };
+        let nom = self
+            .jeu_courant()
+            .map(|game| game.name.clone())
+            .unwrap_or_default();
+        let mut rows = Column::new().spacing(6);
+        for (index, dest) in menu.dests.iter().enumerate() {
+            let selected = index == menu.index;
+            let assez = dest.libre.map(|libre| libre >= menu.size).unwrap_or(true);
+            let detail = match dest.libre {
+                Some(libre) if assez => format!("{} libres", copy::poids(libre)),
+                Some(libre) => format!("{} libres · insuffisant", copy::poids(libre)),
+                None => "place inconnue".to_string(),
+            };
+            let couleur = if selected { Color::BLACK } else { TEXT };
+            let ligne = container(
+                row![
+                    text(dest.label.clone()).size(17).width(Fill).color(couleur),
+                    text(detail).size(13).color(if selected {
+                        Color::BLACK
+                    } else if assez {
+                        MUTED
+                    } else {
+                        DANGER
+                    }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([9.0, 14.0])
+            .style(move |_| action_style(selected));
+            rows = rows.push(mouse_area(ligne).on_press(Message::CopyChoose(index)));
+        }
+
+        let glyphes: Vec<(&image::Handle, &'static str)> = vec![
+            (&self.glyphs.confirm, "Copier"),
+            (&self.glyphs.back, "Annuler"),
+        ];
+        let panel = container(
+            column![
+                text(format!("Copier « {} » vers…", short(&nom, 34)))
+                    .size(18)
+                    .color(TEXT),
+                text(format!(
+                    "{} · l'original reste en place",
+                    copy::poids(menu.size)
+                ))
+                .size(12)
+                .color(MUTED),
+                rows,
+                self.aide_menu(&glyphes, "Croix = copier · Rond = annuler", false),
+            ]
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::Fixed(560.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.6,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// Confirmation de mise à jour d'une copie existante mais plus ancienne.
+    fn copy_replace_view(&self) -> Element<'_, Message> {
+        let Some(replace) = &self.copy_replace else {
+            return Row::new().into();
+        };
+        let mut actions = Row::new().spacing(12).align_y(Alignment::Center);
+        for (index, label) in ["Annuler", "Mettre à jour"].into_iter().enumerate() {
+            let selected = index == replace.index;
+            let bouton = container(
+                text(label)
+                    .size(16)
+                    .color(if selected { Color::BLACK } else { TEXT }),
+            )
+            .padding([9.0, 18.0])
+            .style(move |_| action_style(selected));
+            actions = actions.push(mouse_area(bouton).on_press(Message::CopyReplaceChoose(index)));
+        }
+        let glyphes: Vec<(&image::Handle, &'static str)> = vec![
+            (&self.glyphs.confirm, "Valider"),
+            (&self.glyphs.back, "Annuler"),
+        ];
+        let panel = container(
+            column![
+                text("Une copie plus ancienne est déjà là").size(18).color(TEXT),
+                text(format!(
+                    "{} existe dans {} — la version d'origine est plus récente.                      La remplacer par la nouvelle ?",
+                    copy::poids(replace.job.size),
+                    folders::affiche(&replace.job.dest)
+                ))
+                .size(13)
+                .color(MUTED),
+                actions,
+                self.aide_menu(&glyphes, "Croix = valider · Rond = annuler", false),
+            ]
+            .spacing(14),
+        )
+        .padding(20)
+        .width(Length::Fixed(600.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.72,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// État du poste, coin **haut gauche** : le réseau puis chaque manette
+    /// connectée (une icône par manette, teintée par famille — quatre au plus,
+    /// un compteur au-delà). La couche existe toujours (forme d'arbre
+    /// constante) ; sans manette ni réseau elle ne dessine qu'une icône
+    /// « hors ligne ».
+    fn etat_view(&self) -> Element<'_, Message> {
+        let mut ligne = Row::new().spacing(10).align_y(Alignment::Center);
+        // réseau : en accent quand le lien est actif, sourdine sinon
+        let couleur = match self.reseau {
+            Reseau::Wifi | Reseau::Filaire => ACCENT,
+            Reseau::HorsLigne => MUTED,
+        };
+        ligne = ligne.push(status::vue_reseau(self.reseau, couleur));
+        let mut montrees = 0;
+        for (kind, _) in self.pads.iter() {
+            if montrees == 4 {
+                break;
+            }
+            ligne = ligne.push(status::vue_manette(*kind));
+            montrees += 1;
+        }
+        if self.pads.len() > montrees {
+            ligne = ligne.push(
+                text(format!("+{}", self.pads.len() - montrees))
+                    .size(12)
+                    .color(MUTED),
+            );
+        }
+        container(ligne)
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Start)
+            .align_y(Alignment::Start)
+            .padding(Padding {
+                top: 12.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: 12.0,
+            })
             .into()
     }
 
@@ -6723,6 +7428,11 @@ impl App {
 
     /// Entrées du menu « Options », selon le format du paquet ouvert (le mode
     /// manette Xbox ne s'adresse qu'aux `.wgp`).
+    /// Lignes du menu « Tri », dans l'ordre affiché.
+    fn sort_menu_entries(&self) -> Vec<SortMenuEntry> {
+        sort_menu_entries(self.recent.is_empty())
+    }
+
     fn art_entries(&self) -> Vec<ArtMenuEntry> {
         let kind = self.art_kind();
         art_menu_entries(kind)
@@ -8141,73 +8851,64 @@ impl App {
         let Some(choice) = self.sort_menu else {
             return Row::new().into();
         };
+        let entries = self.sort_menu_entries();
 
         let mut rows = Column::new().spacing(6);
-        for (index, sort) in SortBy::ALL.iter().enumerate() {
+        for (index, entry) in entries.iter().enumerate() {
             let selected = index == choice;
-            let current = *sort == self.sort;
-            let line = container(
-                row![
-                    text(sort.label()).size(18).width(Fill).color(if selected {
-                        Color::BLACK
-                    } else {
-                        TEXT
-                    }),
-                    text(if current { "✓" } else { "" })
+            let couleur = if selected { Color::BLACK } else { TEXT };
+            let ligne = match entry {
+                SortMenuEntry::Sort(sort) => {
+                    let current = *sort == self.sort;
+                    container(
+                        row![
+                            text(sort.label()).size(18).width(Fill).color(couleur),
+                            text(if current { "✓" } else { "" })
+                                .size(14)
+                                .color(if selected { Color::BLACK } else { MUTED }),
+                        ]
+                        .align_y(Alignment::Center),
+                    )
+                }
+                // filtre d'année : ouvre son propre menu
+                SortMenuEntry::Year => container(
+                    row![
+                        text("Année").size(18).width(Fill).color(couleur),
+                        text(match self.year_filter {
+                            Some(year) => format!("{year}  ▸"),
+                            None => "toutes  ▸".to_string(),
+                        })
                         .size(14)
                         .color(if selected { Color::BLACK } else { MUTED }),
-                ]
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .padding([9.0, 14.0])
-            .style(move |_| action_style(selected));
-
-            rows = rows.push(mouse_area(line).on_press(Message::SortMenuChoose(index)));
-        }
-
-        // dernière ligne : le filtre d'année, qui ouvre son propre menu
-        let year_selected = choice == SortBy::ALL.len();
-        let year_label = match self.year_filter {
-            Some(year) => format!("{year}  ▸"),
-            None => "toutes  ▸".to_string(),
-        };
-        let year_line = container(
-            row![
-                text("Année").size(18).width(Fill).color(if year_selected {
-                    Color::BLACK
-                } else {
-                    TEXT
-                }),
-                text(year_label)
-                    .size(14)
-                    .color(if year_selected { Color::BLACK } else { MUTED }),
-            ]
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .padding([9.0, 14.0])
-        .style(move |_| action_style(year_selected));
-        rows =
-            rows.push(mouse_area(year_line).on_press(Message::SortMenuChoose(SortBy::ALL.len())));
-
-        // sous le filtre d'année : effacer l'historique des derniers lancés.
-        // La ligne n'existe que si l'historique n'est pas vide — proposer
-        // d'effacer du vide n'apprend rien.
-        if !self.recent.is_empty() {
-            let clear_selected = choice == SortBy::ALL.len() + 1;
-            let clear_line = container(
-                text("Effacer les derniers lancés")
-                    .size(18)
-                    .color(if clear_selected { Color::BLACK } else { MUTED }),
-            )
-            .width(Fill)
-            .padding([9.0, 14.0])
-            .style(move |_| action_style(clear_selected));
-            rows = rows.push(
-                mouse_area(clear_line)
-                    .on_press(Message::SortMenuChoose(SortBy::ALL.len() + 1)),
-            );
+                    ]
+                    .align_y(Alignment::Center),
+                ),
+                // portée : cycle sur place (tous → dossiers → disques)
+                SortMenuEntry::Scope => container(
+                    row![
+                        text("Bibliothèque").size(18).width(Fill).color(couleur),
+                        text(self.scope.label()).size(14).color(if selected {
+                            Color::BLACK
+                        } else if self.scope == Scope::Tous {
+                            MUTED
+                        } else {
+                            ACCENT
+                        }),
+                    ]
+                    .align_y(Alignment::Center),
+                ),
+                // effacement de l'historique : jamais proposé sur du vide
+                SortMenuEntry::Clear => container(
+                    text("Effacer les derniers lancés")
+                        .size(18)
+                        .color(if selected { Color::BLACK } else { MUTED }),
+                ),
+            };
+            let ligne = ligne
+                .width(Fill)
+                .padding([9.0, 14.0])
+                .style(move |_| action_style(selected));
+            rows = rows.push(mouse_area(ligne).on_press(Message::SortMenuChoose(index)));
         }
 
         let panel = container(column![text("Tri").size(18).color(TEXT), rows].spacing(12))
@@ -8443,6 +9144,13 @@ impl App {
                         text(if game.cover.is_some() { "✓" } else { "" })
                             .size(14)
                             .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
+                ),
+                ArtMenuEntry::Copier => container(
+                    row![
+                        text("Copier le jeu…").size(18).width(Fill).color(couleur),
+                        text("▸").size(14).color(if selected { Color::BLACK } else { MUTED }),
                     ]
                     .align_y(Alignment::Center),
                 ),
@@ -9490,10 +10198,15 @@ impl App {
         // page (demandé le 20/11). Pas de compte de jeux ni de progression des
         // covers : le pied de page ne doit porter aucune statistique.
         // le tri ET le filtre d'année se lisent dans la même pastille
-        let tri = match self.year_filter {
+        let mut tri = match self.year_filter {
             Some(year) => format!("{} · {year}", self.sort.label()),
             None => self.sort.label().to_string(),
         };
+        // portée : « A→Z · disques » — la pastille suffit, aucun message
+        if self.scope != Scope::Tous {
+            tri.push_str(" · ");
+            tri.push_str(self.scope.short());
+        }
         let sort: Element<'_, Message> = container(
             row![
                 text("TRI").size(11).font(HELP_FONT).color(MUTED),
