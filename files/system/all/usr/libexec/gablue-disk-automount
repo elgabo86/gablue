@@ -1,0 +1,253 @@
+#!/usr/bin/bash
+
+# gablue-disk-automount — monte en LECTURE SEULE les disques externes de la
+# session « jeu », et les démonte en quittant cette session.
+#
+# En session console il n'y a pas de plasmashell : personne ne demande à
+# udisks de monter un disque qu'on branche, donc les jeux posés dessus
+# n'apparaissent jamais dans le launcher. Ce service fait ce que ferait le
+# monteur de Plasma — `udisksctl mount` exécuté PAR L'UTILISATEUR — donc même
+# point de montage que Plasma (/run/media/<utilisateur>/<libellé>), mêmes
+# droits, même création/nettoyage du dossier par udisks. Un disque déjà monté
+# (Plasma l'a fait avant une bascule de session) n'est pas touché.
+#
+# LECTURE SEULE (demandé le 23/11/2026) : un disque arraché ne peut pas être
+# corrompu, et les jeux n'écrivent rien à côté de leurs paquets — les
+# sauvegardes vivent sur le disque interne (lgp-saves, Windows/UserData).
+# Seuls les disques montés PAR NOUS sont démontés au départ : un disque monté
+# par Plasma en session bureau le reste, même si on bascule en session jeu.
+#
+# POINT DE MONTAGE STABLE : le chemin des dossiers de jeux est écrit dans
+# `config.toml` (/run/media/<utilisateur>/<libellé>/…). Si le dossier de
+# montage changeait de nom (libellé suffixé, montage mort resté en place),
+# tous les jeux du disque disparaîtraient. D'où deux garde-fous :
+#   - après un retrait, on vérifie que le montage a bien disparu de /run/media
+#     (udisks le démonte et retire le dossier ; un montage MORT est signalé) ;
+#   - après un montage, on vérifie que le chemin obtenu est bien celui que
+#     Plasma aurait pris, et on le journalise.
+#
+# DÉMONTAGE EN QUITTANT LA SESSION : des montages en lecture seule ne doivent
+# pas survivre au passage en session bureau, sinon le disque y resterait en
+# lecture seule. Deux déclencheurs : `gablue-session-mode` arrête le service
+# avant de tuer la session (arrêt poli), et le guetteur ci-dessous s'arrête de
+# lui-même si la session « jeu » disparaît (sortie du launcher, plantage).
+#
+# Lancé par gablue-gaming-session (`systemctl --user restart`), jamais activé
+# par défaut : en session bureau, c'est Plasma qui monte les disques.
+
+set -uo pipefail
+
+RUNTIME=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+ETAT="$RUNTIME/gablue/disques-montes"
+FIFO="$RUNTIME/gablue/uevents.$$"
+MONITEUR=""
+
+log() { printf 'gablue-disk-automount: %s\n' "$*" >&2; }
+
+# Session logind de la session « jeu » (celle qui vient de nous lancer).
+session_jeu() {
+    local id
+    for id in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+        if [ "$(loginctl show-session "$id" -p Desktop --value 2>/dev/null)" = "GablueGaming" ]; then
+            printf '%s\n' "$id"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Chemin que udisks (donc Plasma) utilise : libellé du système de fichiers,
+# sinon son UUID. Sert uniquement à vérifier, jamais à décider du montage.
+chemin_attendu() {
+    local props=$1 nom
+    nom=$(printf '%s\n' "$props" | sed -n 's/^ID_FS_LABEL=//p' | head -n 1)
+    [ -n "$nom" ] || nom=$(printf '%s\n' "$props" | sed -n 's/^ID_FS_UUID=//p' | head -n 1)
+    [ -n "$nom" ] || nom=disk
+    printf '/run/media/%s/%s\n' "${USER:-$(id -un)}" "$nom"
+}
+
+noter() {
+    local dev=$1
+    mkdir -p "$(dirname "$ETAT")" 2>/dev/null || true
+    grep -qxF -- "$dev" "$ETAT" 2>/dev/null || printf '%s\n' "$dev" >>"$ETAT"
+}
+
+# Monte un périphérique s'il porte un système de fichiers sur un bus externe.
+# Idempotent : appelé au démarrage de la session et à chaque branchement.
+monter() {
+    local dev=$1 props attendu monte
+
+    [ -b "$dev" ] || return 0
+
+    # déjà monté (Plasma, une session précédente) : ne rien faire, et surtout
+    # ne PAS le noter — il ne nous appartient pas, on ne le démontera pas
+    if findmnt -rno TARGET --source "$dev" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    props=$(udevadm info --query=property --name="$dev" 2>/dev/null) || return 0
+
+    case "$props" in
+        # pas de système de fichiers (disque nu, swap, LVM, LUKS) : rien à monter
+        *"ID_FS_USAGE=filesystem"*) ;;
+        *) return 0 ;;
+    esac
+    case "$props" in
+        # bus EXTERNE seulement : le NVMe interne, les boucles (ISO, .lgp) et
+        # les périphériques optiques ne sont jamais montés ici.
+        # `ID_BUS` ne suffit pas : un boîtier USB-SATA (le T5, constaté le
+        # 23/11) présente ses disques en `ata` — c'est `ID_USB_DRIVER` qui dit
+        # la vérité. `mmc` couvre les cartes SD.
+        *"ID_USB_DRIVER="* | *"ID_BUS=usb"* | *"ID_BUS=mmc"*) ;;
+        *) return 0 ;;
+    esac
+    case "$props" in
+        *"ID_CDROM=1"*) return 0 ;;
+    esac
+
+    attendu=$(chemin_attendu "$props")
+    udisksctl mount -o ro -b "$dev" --no-user-interaction >/dev/null 2>&1 \
+        || { log "montage impossible pour $dev"; return 0; }
+    noter "$dev"
+
+    monte=$(findmnt -rno TARGET --source "$dev" 2>/dev/null | head -n 1)
+    if [ "$monte" = "$attendu" ]; then
+        log "monté en lecture seule : $dev sur $monte"
+    else
+        # le dossier attendu était occupé (montage mort d'un disque arraché) :
+        # udisks a pris un autre nom — le chemin des jeux ne correspond plus
+        log "ATTENTION : $dev monté sur $monte au lieu de $attendu"
+    fi
+}
+
+# Un montage dont la source a disparu est MORT (disque arraché pendant qu'un
+# jeu lisait dessus). udisks le démonte normalement ; s'il reste, on le signale
+# et on retente le démontage (possible tant qu'udisks connaît le périphérique).
+# Un montage mort laissé en place ferait prendre un autre nom au même disque au
+# rebranchement — donc un autre chemin, donc plus de jeux.
+nettoyer_morts() {
+    local point source
+    for point in "/run/media/${USER:-$(id -un)}"/*; do
+        [ -e "$point" ] || continue
+        source=$(findmnt -rno SOURCE --mountpoint "$point" 2>/dev/null) || continue
+        [ -e "$source" ] && continue
+        log "montage mort détecté : $point ($source absent)"
+        udisksctl unmount -b "$source" --no-user-interaction >/dev/null 2>&1 || true
+    done
+}
+
+# Démonte ce que NOUS avons monté (jamais les montages de Plasma).
+demonter_tout() {
+    local dev
+    [ -f "$ETAT" ] || return 0
+    while IFS= read -r dev; do
+        [ -n "$dev" ] || continue
+        findmnt -rno TARGET --source "$dev" >/dev/null 2>&1 || continue
+        if udisksctl unmount -b "$dev" --no-user-interaction >/dev/null 2>&1; then
+            log "démonté en quittant la session : $dev"
+        else
+            log "démontage impossible en quittant la session : $dev"
+        fi
+    done <"$ETAT"
+    : >"$ETAT"
+}
+
+# Sortie propre : disques démontés, moniteur udev arrêté (sinon il survit au
+# script et garde le tube ouvert), tube retiré.
+arret() {
+    demonter_tout
+    [ -n "$MONITEUR" ] && kill "$MONITEUR" 2>/dev/null
+    rm -f "$FIFO"
+}
+trap 'arret; exit 0' TERM INT
+
+# Sans session « jeu », ce service n'a rien à faire : il ne doit jamais
+# s'installer en session bureau (Plasma monte, en lecture-écriture). logind
+# peut mettre une seconde à enregistrer la session : on insiste 10 s.
+SESSION=""
+for _ in $(seq 1 20); do
+    SESSION=$(session_jeu) && break
+    sleep 0.5
+done
+if [ -z "$SESSION" ]; then
+    log "aucune session « jeu » active : rien à faire"
+    exit 0
+fi
+log "session jeu : $SESSION"
+
+# 1) Ce qui est déjà branché quand la session démarre. `lsblk` ne liste que
+#    les partitions PORTANT un système de fichiers.
+while read -r nom type; do
+    [ -n "${type:-}" ] || continue
+    monter "/dev/$nom"
+done < <(lsblk -rno NAME,FSTYPE)
+
+# 2) Les disques branchés (ou arrachés) pendant la session. On écoute les
+#    évènements udev (pas les évènements noyau) : à ce stade la sonde du
+#    système de fichiers a déjà tourné, donc `ID_FS_USAGE` est fiable.
+#
+#    Le tube nommé (et non un `| while`) garde la boucle dans le shell
+#    principal : le trap, la session et le moniteur restent accessibles, et on
+#    peut tuer udevadm à la sortie.
+mkdir -p "$(dirname "$FIFO")" 2>/dev/null || true
+rm -f "$FIFO"
+mkfifo "$FIFO" || { log "tube de surveillance impossible"; exit 1; }
+udevadm monitor --udev --subsystem-match=block --property >"$FIFO" &
+MONITEUR=$!
+exec 3<"$FIFO"
+
+# Un évènement = un en-tête, des lignes `CLÉ=valeur`, puis une ligne vide.
+# La lecture est bornée à 5 s pour donner la parole au guetteur de session.
+action=""
+dev=""
+expire=0
+while :; do
+    if IFS= read -r -t 5 -u 3 ligne; then
+        expire=0
+    else
+        code=$?
+        # 1 = fin de flux (udevadm arrêté) ; au-delà de 128 = délai écoulé
+        [ "$code" -gt 128 ] || break
+        expire=1
+        ligne=""
+    fi
+
+    if [ "$expire" = 0 ]; then
+        if [ -n "$ligne" ]; then
+            case "$ligne" in
+                ACTION=*) action=${ligne#ACTION=} ;;
+                DEVNAME=*) dev=${ligne#DEVNAME=} ;;
+            esac
+        else
+            # ligne vide = fin de l'évènement
+            case "$action" in
+                add)
+                    [ -n "$dev" ] && monter "$dev"
+                    ;;
+                remove)
+                    # laisser udisks démonter, puis vérifier qu'il ne reste rien
+                    # qui puisse décaler le nom du prochain montage
+                    for _ in 1 2 3 4 5 6 7 8 9 10; do
+                        sleep 0.3
+                        nettoyer_morts
+                    done
+                    ;;
+            esac
+            action=""
+            dev=""
+        fi
+    fi
+
+    # la session « jeu » est-elle toujours là ?
+    if [ -z "$(loginctl show-session "$SESSION" -p Id --value 2>/dev/null)" ]; then
+        log "session jeu $SESSION terminée : démontage"
+        arret
+        exit 0
+    fi
+done
+
+# Flux fermé (udevadm arrêté) : on ne laisse pas de montage derrière nous, et
+# on sort en ERREUR pour que systemd relance la surveillance (Restart=).
+log "surveillance interrompue (redémarrage demandé)"
+arret
+exit 1

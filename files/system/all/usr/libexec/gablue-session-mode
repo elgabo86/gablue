@@ -229,6 +229,13 @@ fi
 #    bloquent la session suivante, pas la session logind.
 arret_compositeur
 
+# 2 bis. Disques montés EN LECTURE SEULE par la session jeu : démontés avant
+#    que la session meure, sinon le disque resterait en lecture seule dans la
+#    session bureau (Plasma le verrait déjà monté et ne le remonterait pas).
+#    Bloquant à dessein : le démontage est court, et une fois la session tuée
+#    udisks ne reconnaît plus l'utilisateur comme actif.
+userctl stop gablue-disk-automount.service >/dev/null 2>&1 || true
+
 # 3. Sessions logind restantes du siège (un autologin en mémoire peut en avoir
 #    recréé une) : elles doivent partir avant que le gestionnaire redémarre.
 for id in $(sessions_siege); do

@@ -59,6 +59,7 @@ chmod +x /usr/bin/gablue-manager
 chmod +x /usr/bin/ssh-key-add
 chmod +x /usr/bin/gremote
 chmod +x /usr/libexec/gablue-wait-devices
+chmod +x /usr/libexec/gablue-disk-automount
 chmod +x /usr/libexec/gablue-kargs
 chmod +x /usr/libexec/gablue-cpuid-emu
 chmod +x /usr/libexec/gablue-tailscale

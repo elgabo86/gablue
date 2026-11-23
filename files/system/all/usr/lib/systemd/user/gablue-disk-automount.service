@@ -1,0 +1,17 @@
+[Unit]
+Description=Montage en lecture seule des disques externes (session jeu)
+# Démarré explicitement par gablue-gaming-session, jamais par graphical-session
+# (une session bureau laisse Plasma monter les disques, en lecture-écriture).
+# Le script refuse de lui-même quand aucune session GablueGaming n'existe.
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/gablue-disk-automount
+# SIGTERM propre : le script démonte ce qu'il a monté (trap TERM).
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

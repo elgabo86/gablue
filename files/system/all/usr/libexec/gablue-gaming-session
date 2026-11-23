@@ -90,6 +90,14 @@ systemctl --user set-environment \
     XDG_SESSION_DESKTOP="$XDG_SESSION_DESKTOP" \
     XDG_SESSION_TYPE="$XDG_SESSION_TYPE" 2>/dev/null \
     || log "environnement de session non transmis au gestionnaire utilisateur"
+
+# Disques externes : personne ne les monte ici (pas de plasmashell), donc les
+# jeux posés dessus n'apparaîtraient jamais. Le service les monte en LECTURE
+# SEULE, au même chemin que Plasma, et les démonte en quittant la session.
+# RESTART et jamais `start` : l'unité vit dans le gestionnaire UTILISATEUR,
+# partagé entre sessions (même raison que gablue-pad.service ci-dessous).
+systemctl --user restart gablue-disk-automount.service 2>/dev/null \
+    || log "montage des disques externes indisponible (les jeux des disques USB resteront absents)"
 (
     # KWin crée le socket en ~1 s ; 30 s au plus avant d'abandonner
     for _ in $(seq 1 150); do

@@ -178,6 +178,30 @@ Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité pl
   voulus. BlueZ journalise `Controller resume with wake event 0x0` (« source
   non Bluetooth ») **même quand c'est la manette** — le dongle ne remonte pas
   d'événement HCI de réveil, ne pas s'y fier pour diagnostiquer.
+- **gablue-disk-automount.service** : montage **lecture seule** des disques
+  externes de la session jeu (`/usr/libexec/gablue-disk-automount`, démarré par
+  `gablue-gaming-session` avec `restart`, jamais activé par défaut). En console
+  il n'y a pas de plasmashell, donc personne ne demande à udisks de monter un
+  disque branché : le service le fait pour l'utilisateur, ce qui donne **le même
+  point de montage que Plasma** (`/run/media/<utilisateur>/<libellé>`) et les
+  mêmes droits ; un disque que Plasma a déjà monté (bascule de session) n'est
+  pas touché, et il n'est jamais démonté par nous. Filtre bus : `ID_USB_DRIVER`
+  ou `ID_BUS=usb|mmc` — `ID_BUS` seul ne suffit pas, un boîtier USB-SATA (le T5,
+  constaté le 23/11/2026) présente ses disques en `ata`. Deux garde-fous sur le
+  chemin, qui est écrit dans `config.toml` : après un montage le point obtenu
+  est comparé à celui que Plasma aurait pris (écart journalisé), et après un
+  retrait le service vérifie qu'aucun montage mort ne reste dans `/run/media`
+  (périphérique disparu = montage mort, udisks le démonte ; sinon le disque
+  reprendrait un autre nom au rebranchement, donc un autre chemin). **Démontage
+  en quittant la session** : `gablue-session-mode` arrête le service avant de
+  tuer la session (le disque ne doit pas rester en lecture seule dans la
+  session bureau), et le service s'arrête seul si la session « jeu » disparaît
+  (`loginctl`). `udevadm monitor` tourne dans un **tube nommé** (pas un
+  `| while`) : la boucle reste dans le shell principal et le moniteur est tué à
+  la sortie — un `udevadm` orphelin garde le tube ouvert et fige l'appelant
+  (constaté au banc). Testé au banc le 23/11/2026 (montage/parcours d'un
+  évènement udev factice/démontage, guetteur de session) ; le branchement réel
+  en session console reste à vérifier.
 - **gablue-login-theme.service** et **gablue-login-greeter.service** (utilisateur, greeter seulement) : l'écran de connexion — `login-bridge.sh theme` écrit le `kdeglobals` du compte `plasmalogin` **avant** `plasma-login-kwin_wayland.service` (qui le lit à son démarrage), puis `login-bridge.sh pad` ouvre le pointeur manette et le clavier visuel **au premier mouvement** d'une manette (jamais au simple branchement). Les deux sont `WantedBy=plasma-login-wayland.target` (cible qui n'existe que dans la session de `plasmalogin`), réglées par `/etc/gablue/login.conf` (`pad`, `dark`), écrites par `/usr/libexec/gablue-login` et exposées par le dialogue « Écran de connexion… » de Gablue Manager. Contrat → `src/gablue-pad/AGENTS.md`
 - **plasma-foreground-booster.service.d/10-after-plasmashell.conf** : `After=plasma-plasmashell.service`, correctif upstream kcgroups 0.2 absent du paquet Terra 0.1-3. Sans lui le booster démarre en parallèle du compositeur, Wayland n'existe pas encore, Qt ne trouve aucun plugin de plateforme et **abort** (coredump à chaque login, service relancé ensuite par `Restart=on-failure`). Après le bump Terra vers 0.2 le fichier devient un doublon inoffensif, à retirer. `plasmashell` plutôt que `plasma-kwin_wayland` : en `Type=dbus`, son « started » prouve un démarrage réel, alors que KWin en `Type=simple` peut être lancé sans avoir créé le socket
 
