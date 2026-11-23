@@ -870,6 +870,9 @@ struct Dispo {
     app: bool,
     /// une application compagne est ouverte à côté du jeu : le sélecteur
     bascule: bool,
+    /// session console (KWin nu) : le menu propose de revenir au bureau au
+    /// lieu d'y passer
+    console: bool,
 }
 
 impl Cat {
@@ -971,6 +974,9 @@ impl Cat {
                 // la veille est la seule action RÉVERSIBLE de la page : elle
                 // passe avant les sorties (demandé le 23/11)
                 Entree::Action("MISE EN VEILLE"),
+                // le mode d'à côté : changer de session n'est pas sortir, la
+                // ligne reste donc AU-DESSUS des sorties (demandé le 23/11)
+                Entree::Action(if dispo.console { "MODE BUREAU" } else { "MODE JEU" }),
                 Entree::Action("FERMER LA SESSION"),
                 Entree::Action("REDEMARRER"),
                 Entree::Action("ETEINDRE"),
@@ -1139,6 +1145,9 @@ enum Apres {
     Veille,
     /// menu console : déconnexion de la session (retour à l'écran de connexion)
     DeconnecterSession,
+    /// menu système : passer à l'autre session (console ⇄ bureau)
+    ModeJeu,
+    ModeBureau,
     /// menu console : killthemall, après fermeture du menu
     ToutFermer,
 }
@@ -1590,6 +1599,8 @@ fn demande_confirmation(nom: &str) -> bool {
         nom,
         "FERMER"
             | "DECONNECTER LA MANETTE"
+            | "MODE JEU"
+            | "MODE BUREAU"
             | "FERMER LA SESSION"
             | "REDEMARRER"
             | "ETEINDRE"
@@ -1685,6 +1696,38 @@ fn lancer_deconnexion() {
             Err(e) => eprintln!("SYSTEME logout loginctl: {e}"),
         },
         _ => eprintln!("SYSTEME logout: ni qdbus ni XDG_SESSION_ID"),
+    }
+}
+
+/// Configuration d'autologin écrite par `gablue-session-mode` : sa présence
+/// signifie qu'une déconnexion relancerait la même session.
+const AUTOLOGIN: &str = "/etc/plasmalogin.conf.d/zz-gablue-session.conf";
+
+fn autologin_arme() -> bool {
+    std::path::Path::new(AUTOLOGIN).exists()
+}
+
+/// Bascule de session (`console`, `bureau`, `greeter`). Le helper écrit dans
+/// /etc et redémarre le gestionnaire de connexion : il tourne en root via
+/// pkexec, la règle polkit de l'image l'autorisant pour le groupe wheel sans
+/// mot de passe. `GABLUE_SESSION_MODE` remplace la commande — le banc ne doit
+/// JAMAIS changer de session.
+fn lancer_mode(mode: &str) {
+    let mut c = match std::env::var("GABLUE_SESSION_MODE") {
+        Ok(prog) => {
+            let mut c = std::process::Command::new(prog);
+            c.arg(mode);
+            c
+        }
+        Err(_) => {
+            let mut c = std::process::Command::new("/usr/bin/pkexec");
+            c.arg("/usr/libexec/gablue-session-mode").arg(mode);
+            c
+        }
+    };
+    match c.spawn() {
+        Ok(_) => println!("SYSTEME mode {mode}"),
+        Err(e) => eprintln!("SYSTEME mode {mode}: {e}"),
     }
 }
 
@@ -2220,6 +2263,8 @@ impl App {
                         Apres::Eteindre => "COMBO: EXTINCTION",
                         Apres::Veille => "COMBO: VEILLE",
                         Apres::DeconnecterSession => "COMBO: DECONNEXION",
+                        Apres::ModeJeu => "COMBO: MODE JEU",
+                        Apres::ModeBureau => "COMBO: MODE BUREAU",
                         Apres::ToutFermer => "COMBO: TOUT FERMER",
                     }
                     .to_string();
@@ -2903,13 +2948,15 @@ impl App {
 
     /// Pixels disponibles pour la liste de la page courante.
     fn liste_budget(&self) -> i32 {
-        let (_, h) = self.size;
-        let ph = if self.side { h as i32 } else { 640.min(h as i32 - 120) };
-        // mêmes repères que `draw()` : la liste commence à 180 px (+ logo) et
-        // l'aide du bas commence à `ph - pied`. Le budget s'arrête 12 px avant.
-        // Avant, un 90/180 approximatif laissait les dernières lignes — 86 px
-        // pour un réglage à curseur — déborder SOUS les commandes.
-        let haut = 180 + self.decalage_logo();
+        let ph = self.hauteur_cadre();
+        // mêmes repères que `draw()` : en console la liste commence à 62 px,
+        // ailleurs à 180 px (+ logo) ; l'aide du bas commence à `ph - pied`.
+        // Le budget s'arrête 8 px avant.
+        let haut = if self.console {
+            62
+        } else {
+            180 + self.decalage_logo()
+        };
         let pied = if self.console { 74 } else { 114 };
         (ph - pied - 8 - haut).max(46)
     }
@@ -3645,6 +3692,7 @@ impl App {
             jeu: self.son_jeu.is_some(),
             app: self.son_app.is_some(),
             bascule: self.bascule_app.is_some(),
+            console: self.console,
         }
     }
 
@@ -3988,6 +4036,19 @@ impl App {
                     let mac = self.pad_bt.clone().unwrap_or_default();
                     println!("BT DISCONNECT {mac}");
                     self.status = bluetooth_disconnect(&mac);
+                    self.request_close();
+                }
+                "MODE JEU" | "MODE BUREAU" => {
+                    // la bascule tue la session : le panneau doit avoir
+                    // disparu avant (même règle que les sorties)
+                    let (apres, mode) = if nom == "MODE JEU" {
+                        (Apres::ModeJeu, "console")
+                    } else {
+                        (Apres::ModeBureau, "bureau")
+                    };
+                    self.status = format!("BASCULE {nom}");
+                    self.combo_apres = Some(apres);
+                    println!("SYSTEME bascule {mode}");
                     self.request_close();
                 }
                 "FERMER LA SESSION" => {
@@ -4408,7 +4469,20 @@ impl App {
             Apres::Reboot => lancer_systeme("REBOOT", "reboot"),
             Apres::Eteindre => lancer_systeme("POWEROFF", "poweroff"),
             Apres::Veille => lancer_systeme("SUSPEND", "suspend"),
-            Apres::DeconnecterSession => lancer_deconnexion(),
+            Apres::DeconnecterSession => {
+                // Un autologin armé (retour d'un MODE JEU / MODE BUREAU) relance
+                // la même session à la déconnexion : plasmalogin garde
+                // `Session=` en mémoire. Le helper retire la configuration et
+                // redémarre le gestionnaire de connexion, seul chemin fiable
+                // vers l'écran de connexion (constaté le 23/11).
+                if autologin_arme() {
+                    lancer_mode("greeter")
+                } else {
+                    lancer_deconnexion()
+                }
+            }
+            Apres::ModeJeu => lancer_mode("console"),
+            Apres::ModeBureau => lancer_mode("bureau"),
             Apres::ToutFermer => {
                 // jeux Windows/émulateurs (killthemall) PUIS les applis du
                 // menu Applications : c'est ce que « tout fermer » veut dire
@@ -4553,7 +4627,7 @@ impl App {
     /// dernière ligne hors du panneau serait pire que de cacher le logo. La
     /// page FENETRES défile, elle s'adapte d'elle-même (`fen_visibles`).
     fn decalage_logo(&self) -> i32 {
-        let (w, h) = self.size;
+        let (w, _) = self.size;
         let pw = if self.side {
             w as i32
         } else {
@@ -4571,11 +4645,7 @@ impl App {
         if self.page == Page::Fenetres {
             return bande;
         }
-        let ph = if self.side {
-            h as i32
-        } else {
-            640.min(h as i32 - 120)
-        };
+        let ph = self.hauteur_cadre();
         let place = (ph - 90) - 180 - self.hauteur_contenu();
         if place >= bande { bande } else { 0 }
     }
@@ -4586,10 +4656,26 @@ impl App {
         self.liste().iter().map(|e| e.hauteur()).sum()
     }
 
+    /// Hauteur du cadre non latéral. Le **menu système grandit avec ses
+    /// lignes** : 360 px fixes laissaient « ETEINDRE » passer sous l'aide
+    /// depuis l'ajout de MISE EN VEILLE (constaté le 23/11). 62 = début de
+    /// liste, 8 = marge avant l'aide, 74 = pied.
+    fn hauteur_cadre(&self) -> i32 {
+        let (_, h) = self.size;
+        if self.side {
+            return h as i32;
+        }
+        let dispo = (h as i32 - 120).max(240);
+        if self.console {
+            (62 + self.hauteur_contenu() + 8 + 74).min(dispo)
+        } else {
+            640.min(dispo)
+        }
+    }
+
     /// Nombre de lignes visibles sur la page « fenêtres » (lignes de 46 px).
     fn fen_visibles(&self) -> usize {
-        let (_, h) = self.size;
-        let ph = if self.side { h as i32 } else { 640.min(h as i32 - 120) };
+        let ph = self.hauteur_cadre();
         // 180 = départ de liste (sous l'en-tête et le titre de page),
         // 90 = pied + marges ; le bandeau du logo décale tout d'autant
         (((ph - 90) - (180 + self.decalage_logo())) / 46).max(1) as usize
@@ -5216,11 +5302,12 @@ impl App {
             cv.rect(0, 0, w, h, th.shade);
             // menu système (Home maintenu) : petit cadre au centre ; sinon
             // panneau de réglages
-            let (pw, ph) = if self.console {
-                (520.min(w - 80), 360.min(h - 120))
+            let pw = if self.console {
+                520.min(w - 80)
             } else {
-                (760.min(w - 80), 640.min(h - 120))
+                760.min(w - 80)
             };
+            let ph = self.hauteur_cadre();
             ((w - pw) / 2, (h - ph) / 2, pw, ph)
         };
         // Sous le cadre : le voile en plein écran (menu système) ou rien du
@@ -7537,6 +7624,7 @@ fn main() {
         // avec « tout fermer » avant toute action système.
         let mut v = vec![
             Entree::Action("MISE EN VEILLE"),
+            Entree::Action("MODE BUREAU"),
             Entree::Action("TOUT FERMER"),
         ];
         if app.pad_bt.is_some() {
@@ -8403,6 +8491,15 @@ mod tests {
         // (la ligne 0 est l'en-tête de fenêtre, commune à toutes les pages)
         let systeme = Cat::Systeme.entrees(Dispo::default());
         assert_eq!(systeme.get(1), Some(&Entree::Action("MISE EN VEILLE")));
+        // le mode d'à côté dépend de la session courante, jamais les deux
+        assert_eq!(systeme.get(2), Some(&Entree::Action("MODE JEU")));
+        let console = Cat::Systeme.entrees(Dispo {
+            console: true,
+            ..Dispo::default()
+        });
+        assert_eq!(console.get(2), Some(&Entree::Action("MODE BUREAU")));
+        assert!(!console.contains(&Entree::Action("MODE JEU")));
+        assert!(!systeme.contains(&Entree::Action("MODE BUREAU")));
         assert!(systeme.contains(&Entree::Action("ETEINDRE")));
 
         let deconnectable = |pad| {

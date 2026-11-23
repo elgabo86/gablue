@@ -96,7 +96,12 @@ systemctl --user set-environment \
         [ -S "$XDG_RUNTIME_DIR/$GABLUE_SOCKET" ] && break
         sleep 0.2
     done
-    systemctl --user start gablue-pad.service 2>/dev/null \
+    # RESTART et jamais `start` : l'unité vit dans le gestionnaire UTILISATEUR
+    # (partagé entre sessions). Arrivé ici par une bascule, elle est déjà
+    # `active` avec l'environnement de la session précédente — `start` ne fait
+    # alors RIEN, et l'overlay dessine sur un compositeur qui n'existe plus
+    # (constaté le 23/11/2026 : « pas de gpad » en session console).
+    systemctl --user restart gablue-pad.service 2>/dev/null \
         || log "overlay manette indisponible (aucun menu manette dans la session)"
 ) &
 

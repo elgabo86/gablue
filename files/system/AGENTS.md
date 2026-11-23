@@ -107,10 +107,30 @@
   disques externes (`gablue-gaming-removable`). C'est le bon endroit et non
   `gablue-gaming-session` : ce script tourne **dans** KWin, donc
   `WAYLAND_DISPLAY`, le bus utilisateur et le compositeur existent déjà.
+- **gablue-session-mode** : bascule de session demandée depuis le menu Home
+  de `gpad` — `console` (session Gablue Gaming), `bureau` (Plasma), `greeter`
+  (aucune session : écran de connexion), `status` (autologin en place, sans
+  privilège). Root via pkexec, autorisé sans mot de passe par
+  `60-gablue-session-mode.rules` (groupe wheel, session locale, programme
+  exact). Trois précautions, toutes mesurées le 23/11/2026 :
+  (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
+  `[Autologin] Session=` à son démarrage et le garde en mémoire (bug KDE
+  522181), donc une déconnexion relance la session précédente ;
+  (2) **arrêter la session sortante avant** — `plasma-kwin_wayland.service` et
+  `plasma-plasmashell.service` vivent dans le gestionnaire UTILISATEUR, pas
+  dans le scope de session : ils survivent, gardent `org.kde.KWin`, le siège
+  DRM et le grab de la manette, et la session suivante se fige (image figée,
+  overlay accroché à un compositeur mort, puis session Plasma sans compositeur) ;
+  KWin ignore SIGTERM, d'où le SIGKILL explicite ;
+  (3) **se détacher** dans une unité transitoire (`systemd-run --collect`) :
+  la bascule tue la session qui l'a demandée, un script resté dedans
+  s'arrêterait au milieu du chemin.
+  `FERMER LA SESSION` de `gpad` l'appelle en mode `greeter` **quand un
+  autologin est armé**, sinon il garde la déconnexion polie de Plasma.
 - **Pas encore là** (lots suivants) : la session « choix » avec compte à
-  rebours (autologin retardé sans passer par le greeter), les entrées
-  Mode console / Mode bureau de `gpad`, les réglages `session`/`autologin`/
-  `delay` de `/etc/gablue/login.conf` et la barre de mise à jour du launcher.
+  rebours (autologin retardé sans passer par le greeter), les réglages
+  `session`/`autologin`/`delay` de `/etc/gablue/login.conf` et la barre de mise
+  à jour du launcher.
 
 ## Unités systemd utilisateur (/usr/lib/systemd/user)
 

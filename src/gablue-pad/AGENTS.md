@@ -138,7 +138,7 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 | Geste | Effet |
 |---|---|
 | Home (appui court) | ouvre le panneau **au relâchement** ; le jeu a reçu l'appui |
-| Home maintenu ~1,2 s | **menu système** centré (Tout fermer / Déconnecter la manette / Fermer la session / Redémarrer / Éteindre) |
+| Home maintenu ~1,2 s | **menu système** centré (Mise en veille / Mode bureau\|jeu / Tout fermer / Déconnecter la manette / Fermer la session / Redémarrer / Éteindre) |
 | Home + gauche | bascule l'**enregistrement** (indépendant du replay) |
 | Home + droite | capture d'écran |
 | Home + haut | **replay** : démarre le buffer, ou **sauvegarde** s'il tourne |
@@ -149,6 +149,21 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 
 Pas de Home+triangle (retiré) : YouTube s'ouvre par la page Applications.
 Détail des gestes et des pages : `gpad/AGENTS.md`.
+
+**Changement de session** (`MODE JEU` sur le bureau, `MODE BUREAU` en console) :
+la ligne vit dans SYSTEME, entre la veille et les sorties — elle passe par
+`/usr/libexec/gablue-session-mode` (root via pkexec, règle polkit wheel), qui
+arrête la session sortante, écrit l'autologin de plasmalogin puis redémarre le
+gestionnaire de connexion. `FERMER LA SESSION` prend le même chemin **quand un
+autologin est armé** (fichier `zz-gablue-session.conf` présent) : une simple
+déconnexion relancerait la même session (plasmalogin garde `Session=` en
+mémoire, bug KDE 522181). Détail et pièges → `files/system/AGENTS.md`.
+
+Le changement de session fait aussi **redémarrer** `gablue-pad.service` côté
+console : l'unité vit dans le gestionnaire utilisateur, partagée entre
+sessions ; un `start` sur une unité déjà `active` ne rafraîchit pas son
+`WAYLAND_DISPLAY` et l'overlay resterait sur un compositeur mort (constaté le
+23/11/2026).
 
 ## Enregistreur et replay
 

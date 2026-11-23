@@ -1,0 +1,188 @@
+#!/usr/bin/bash
+
+# gablue-session-mode — passer d'une session graphique à l'autre.
+#
+#   gablue-session-mode console   session « Gablue Gaming » (KWin nu)
+#   gablue-session-mode bureau    session Plasma
+#   gablue-session-mode greeter   aucune session : écran de connexion
+#   gablue-session-mode status    autologin en place, sans privilège
+#
+# Lancé en root par pkexec (menu Home de gpad) : la règle polkit livrée avec
+# l'image autorise le groupe wheel sans mot de passe, donc aucun dialogue en
+# jeu. `console|bureau --check` fait le contrôle préalable sans rien changer.
+#
+# Pourquoi redémarrer le gestionnaire de connexion plutôt que simplement se
+# déconnecter : plasmalogin lit `[Autologin] Session=` au démarrage de son
+# processus et le garde EN MÉMOIRE — une déconnexion relance la session
+# précédente (bug KDE 522181, constaté ici en 6.8.3 le 23/11/2026). Le
+# redémarrage du service est aussi le seul chemin qui ramène l'écran de
+# connexion de façon fiable.
+#
+# Pourquoi arrêter la session sortante AVANT : les unités Plasma
+# (`plasma-kwin_wayland.service`, `plasma-plasmashell.service`) vivent dans le
+# gestionnaire UTILISATEUR, pas dans le scope de session — elles survivent donc
+# à la fin de la session. Elles gardent `org.kde.KWin`, le siège DRM et le grab
+# de la manette : la session suivante se fige (constaté le 23/11/2026 — deux
+# KWin sur le DRM, image figée, overlay accroché à un compositeur mort, puis
+# une session Plasma sans aucun compositeur).
+
+set -uo pipefail   # jamais -e : une étape ratée ne doit pas laisser la machine sans session
+
+CONF=/etc/plasmalogin.conf.d/zz-gablue-session.conf
+SESSION_CONSOLE=gablue-gaming.desktop
+SESSION_BUREAU=plasma.desktop
+DEMANDEUR_UID=${PKEXEC_UID:-$(id -u)}
+
+log() { printf 'gablue-session-mode: %s\n' "$*" >&2; }
+
+mode=${1:-}
+controle_seulement=0
+[ "${2:-}" = "--check" ] && controle_seulement=1
+
+case "$mode" in
+console|bureau|greeter|status) ;;
+*)
+    echo "usage : $0 console|bureau|greeter|status [--check]" >&2
+    exit 2
+    ;;
+esac
+
+utilisateur() { getent passwd "$DEMANDEUR_UID" | cut -d: -f1; }
+UTILISATEUR=$(utilisateur)
+if [ -z "$UTILISATEUR" ]; then
+    log "utilisateur introuvable (uid $DEMANDEUR_UID)"
+    exit 1
+fi
+UID_NUM=10#$(id -u "$UTILISATEUR")
+RUNTIME=/run/user/$UID_NUM
+
+if [ "$mode" = status ]; then
+    if [ -f "$CONF" ]; then
+        tr '\n' ' ' <"$CONF"
+        echo
+    else
+        echo "aucun autologin (écran de connexion au prochain démarrage)"
+    fi
+    exit 0
+fi
+
+# Contrôle préalable : mieux vaut refuser que laisser la machine sans session.
+# Aucun chemin ne doit dépendre d'un paquet absent de l'image.
+controle() {
+    local ko=0
+    for outil in /usr/bin/loginctl /usr/bin/systemctl /usr/bin/runuser; do
+        [ -x "$outil" ] || { log "manquant : $outil"; ko=1; }
+    done
+    [ -d /etc/plasmalogin.conf.d ] || { log "manquant : /etc/plasmalogin.conf.d"; ko=1; }
+    if [ "$mode" != greeter ]; then
+        local fichier
+        case "$mode" in
+        console) fichier=/usr/share/wayland-sessions/$SESSION_CONSOLE ;;
+        bureau) fichier=/usr/share/wayland-sessions/$SESSION_BUREAU ;;
+        esac
+        [ -r "$fichier" ] || { log "session absente : $fichier"; ko=1; }
+    fi
+    [ "$ko" = 0 ]
+}
+if ! controle; then
+    log "contrôle préalable en échec — rien n'a été changé"
+    exit 1
+fi
+if [ "$controle_seulement" = 1 ]; then
+    log "contrôle OK : mode=$mode utilisateur=$UTILISATEUR"
+    exit 0
+fi
+
+if [ "$(id -u)" != 0 ]; then
+    echo "$0 $mode : root requis" >&2
+    exit 1
+fi
+
+# Détachement obligatoire : la bascule tue la session qui l'a demandée (gpad
+# meurt avec elle). Sans unité transitoire, le script s'arrêterait au milieu et
+# laisserait la machine à mi-chemin (constaté au banc le 23/11/2026).
+if [ "${GABLUE_SESSION_MODE_DETACHE:-0}" != 1 ]; then
+    exec systemd-run --collect --unit=gablue-session-mode \
+        --setenv=GABLUE_SESSION_MODE_DETACHE=1 \
+        --setenv=PKEXEC_UID="$DEMANDEUR_UID" \
+        /usr/bin/bash "$0" "$mode"
+fi
+
+# Toutes les commandes passent par le gestionnaire UTILISATEUR (c'est lui qui
+# porte le compositeur) avec l'environnement de la session, sinon `--user`
+# vise le bus de root et ne trouve aucune unité.
+userctl() {
+    runuser -u "$UTILISATEUR" -- env \
+        XDG_RUNTIME_DIR="$RUNTIME" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" \
+        /usr/bin/systemctl --user "$@"
+}
+
+sessions_siege() {
+    /usr/bin/loginctl list-sessions --no-legend 2>/dev/null |
+        awk -v u="$UTILISATEUR" '$3 == u && $4 == "seat0" { print $1 }'
+}
+
+attendre_inactif() {   # unité  secondes
+    local unite=$1 delai=$(( $2 * 4 ))
+    for _ in $(seq 1 "$delai"); do
+        [ "$(userctl is-active "$unite" 2>/dev/null)" != active ] && return 0
+        sleep 0.25
+    done
+    return 1
+}
+
+ecrire_autologin() {   # session .desktop
+    mkdir -p "$(dirname "$CONF")"
+    printf '# Écrit par gablue-session-mode : session choisie depuis le menu Home.\n# Retiré par le mode « greeter » (fermer la session).\n[Autologin]\nUser=%s\nSession=%s\nRelogin=true\n' \
+        "$UTILISATEUR" "$1" >"$CONF"
+    chmod 644 "$CONF"
+    log "autologin : $1"
+}
+
+log "mode=$mode utilisateur=$UTILISATEUR sessions=$(sessions_siege | tr '\n' ' ')"
+
+# 1. Déconnexion polie : les applications se ferment comme avec « Quitter »
+#    de Plasma (sauvegardes, dialogues). Non bloquant, sans effet hors Plasma.
+if [ -x /usr/bin/qdbus6 ] || [ -x /usr/bin/qdbus ]; then
+    QDBUS=/usr/bin/qdbus6
+    [ -x "$QDBUS" ] || QDBUS=/usr/bin/qdbus
+    runuser -u "$UTILISATEUR" -- env \
+        XDG_RUNTIME_DIR="$RUNTIME" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME/bus" \
+        "$QDBUS" org.kde.Shutdown /Shutdown org.kde.Shutdown.logout \
+        >/dev/null 2>&1 &
+fi
+
+# 2. Le compositeur et la coquille sont arrêtés explicitement : c'est EUX qui
+#    bloquent la session suivante, pas la session logind.
+userctl stop --no-block plasma-plasmashell.service plasma-kwin_wayland.service \
+    graphical-session.target >/dev/null 2>&1
+if ! attendre_inactif plasma-kwin_wayland.service 10; then
+    log "KWin ignore SIGTERM (par conception) : SIGKILL"
+    userctl kill -s SIGKILL plasma-kwin_wayland.service \
+        plasma-plasmashell.service >/dev/null 2>&1
+    attendre_inactif plasma-kwin_wayland.service 5 ||
+        log "KWin encore actif : le redémarrage du gestionnaire de connexion tranche"
+fi
+
+# 3. Sessions logind restantes du siège (un autologin en mémoire peut en avoir
+#    recréé une) : elles doivent partir avant que le gestionnaire redémarre.
+for id in $(sessions_siege); do
+    /usr/bin/loginctl terminate-session "$id" >/dev/null 2>&1 &&
+        log "session $id terminée"
+done
+
+# 4. Configuration d'autologin, puis redémarrage du gestionnaire de connexion,
+#    seul moyen d'appliquer `Session=` (cf. en-tête).
+case "$mode" in
+console) ecrire_autologin "$SESSION_CONSOLE" ;;
+bureau) ecrire_autologin "$SESSION_BUREAU" ;;
+greeter)
+    rm -f "$CONF"
+    log "autologin retiré : écran de connexion"
+    ;;
+esac
+
+/usr/bin/systemctl restart plasmalogin.service
+log "plasmalogin redémarré (rc=$?)"
