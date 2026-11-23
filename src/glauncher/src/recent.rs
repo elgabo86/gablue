@@ -64,6 +64,22 @@ pub fn record(path: &Path, slug: &str, epoch: u64) -> bool {
     write(path, &entries)
 }
 
+/// Ne garde que les jeux encore présents (`garde`) et réécrit le fichier.
+/// Renvoie le nombre d'entrées retirées. Sert à « Oublier les jeux disparus ».
+pub fn retain(path: &Path, garde: &HashSet<String>) -> usize {
+    let entries = load(path);
+    let avant = entries.len();
+    let garde_entries: Vec<(String, u64)> = entries
+        .into_iter()
+        .filter(|(slug, _)| garde.contains(slug))
+        .collect();
+    let retires = avant - garde_entries.len();
+    if retires > 0 {
+        write(path, &garde_entries);
+    }
+    retires
+}
+
 /// Vide l'historique. Le fichier disparaît : « aucun jeu lancé » et un fichier
 /// absent sont le même état.
 pub fn clear(path: &Path) -> bool {
@@ -126,6 +142,22 @@ mod tests {
         assert!(load(&path).is_empty());
         // effacer deux fois n'est pas une erreur
         assert!(clear(&path));
+    }
+
+    #[test]
+    fn retain_ne_garde_que_les_jeux_presents() {
+        let path = bac("retain");
+        assert!(record(&path, "mario", 100));
+        assert!(record(&path, "zelda", 200));
+        assert!(record(&path, "metroid", 300));
+        let garde: HashSet<String> = ["mario".to_string(), "metroid".to_string()].into();
+        assert_eq!(retain(&path, &garde), 1);
+        assert_eq!(
+            load(&path),
+            vec![("metroid".to_string(), 300), ("mario".to_string(), 100)]
+        );
+        // plus rien à retirer : aucun fichier réécrit
+        assert_eq!(retain(&path, &garde), 0);
     }
 
     #[test]

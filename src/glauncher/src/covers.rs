@@ -1237,6 +1237,34 @@ fn date_aujourd_hui() -> String {
 /// légèrement différents redemanderaient la date. `<clé>=` veut dire « regardé,
 /// SteamGridDB ne donne pas de date » — une année connue n'est **jamais**
 /// redemandée, ni par l'interface ni par `--update`.
+/// Retire d'un fichier `slug=…` (`years.txt`, `identities.txt`) les lignes des
+/// jeux qui ne sont plus présents. Commentaires et lignes vides sont conservés,
+/// le fichier est réécrit atomiquement. Les IMAGES ne sont jamais touchées :
+/// un jeu rebranché retrouve ses visuels. Sert à « Oublier les jeux disparus ».
+pub fn oublier_slugs(path: &Path, garde: &std::collections::HashSet<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let mut sortie = String::with_capacity(text.len());
+    let mut change = false;
+    for ligne in text.lines() {
+        let garde_ligne = match ligne.split_once('=') {
+            Some((slug, _)) if !ligne.starts_with('#') => garde.contains(slug.trim()),
+            // commentaire, ligne vide : rien à jeter
+            _ => true,
+        };
+        if garde_ligne {
+            sortie.push_str(ligne);
+            sortie.push('\n');
+        } else {
+            change = true;
+        }
+    }
+    if change {
+        write_atomic(path, sortie.as_bytes());
+    }
+}
+
 pub fn years_path(assets: &Path) -> PathBuf {
     assets.join("years.txt")
 }
@@ -2555,6 +2583,28 @@ fn http_post(url: &str, headers: &[(&str, &str)], body: &str) -> Result<String, 
         .read_to_vec()
         .map_err(|err| format!("lecture {url} : {err}"))?;
     String::from_utf8(bytes).map_err(|err| format!("réponse non UTF-8 ({url}) : {err}"))
+}
+
+#[cfg(test)]
+mod tests_oublier {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn oublier_slugs_garde_les_presents_et_les_commentaires() {
+        let dir = std::env::temp_dir().join(format!("glauncher-oublier-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("years.txt");
+        std::fs::write(&path, "# commentaire\nmario=1996\nzelda=1998\n").unwrap();
+        let garde: HashSet<String> = ["mario".to_string()].into();
+        oublier_slugs(&path, &garde);
+        let texte = std::fs::read_to_string(&path).unwrap();
+        assert!(texte.contains("# commentaire"));
+        assert!(texte.contains("mario=1996"));
+        assert!(!texte.contains("zelda"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

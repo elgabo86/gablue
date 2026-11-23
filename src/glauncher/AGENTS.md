@@ -364,6 +364,14 @@ grille : un fond noir opaque l'aurait effacée.
   23/11). Partout où `pad_hints()` choisit les glyphes, la branche clavier
   passe par `key_hint` : pied de page, page d'un jeu, dialogues (remplacer,
   identifier, date, alias, choix d'image) et prompts de saisie.
+- **« Oublier les jeux disparus »** (Réglages ▸ Entretien, dernière ligne) :
+  efface les fiches des jeux qui ne sont plus dans la liste — favoris,
+  historique (`recent.txt`), temps de jeu (les trois fichiers), années,
+  identifications, réglages de lancement (`games.txt`) et lignes d'index
+  (`Index::purge_missing`, chemins absents). **Les images ne sont jamais
+  touchées** (`assets/`, cache des vignettes) : un jeu rebranché retrouve ses
+  visuels, mais repart sans favori ni temps de jeu. Confirmation par défaut sur
+  « Annuler ». Nom choisi pour être lisible sans jargon (« vider la base »).
 - **Le menu de choix d'image défile avec la sélection** : la grille
   (`PICKER_COLUMNS` = 5) a un `scrollable` identifié (`PICKER_SCROLL`) et
   `PickerNav` demande `operation::snap_to` avec un décalage relatif calculé sur

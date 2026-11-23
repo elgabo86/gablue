@@ -444,6 +444,11 @@ pub enum Message {
     ReplaceNav(i32),
     ReplaceChoose(usize),
     ReplacePick,
+    /// « Oublier les jeux disparus » : ouvre le dialogue de confirmation.
+    OublierOpen,
+    OublierNav(i32),
+    OublierChoose(usize),
+    OublierPick,
     Choices {
         slug: String,
         kind: covers::ArtKind,
@@ -688,6 +693,13 @@ struct Replace {
     old_key: String,
     game: covers::FoundGame,
     /// 0 = « Non, garder » (choix par défaut), 1 = « Oui, remplacer ».
+    index: usize,
+}
+
+/// Dialogue « Oublier les jeux disparus » : nombre de fiches concernées et
+/// bouton choisi (0 = annuler, 1 = oublier).
+struct Oublier {
+    count: usize,
     index: usize,
 }
 
@@ -1030,10 +1042,15 @@ impl Settings {
         self.dossiers.len() + 5
     }
 
-    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
-    /// dossiers de sortie, la musique et son volume, l'écran).
-    fn lignes(&self) -> usize {
+    /// Ligne « Oublier les jeux disparus », dernière de la page (entretien).
+    fn ligne_oublier(&self) -> usize {
         self.dossiers.len() + 6
+    }
+
+    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
+    /// dossiers de sortie, la musique et son volume, l'écran, l'entretien).
+    fn lignes(&self) -> usize {
+        self.dossiers.len() + 7
     }
 
     /// Clé de `recorder.conf` d'une ligne de sortie, si c'en est une.
@@ -1214,6 +1231,8 @@ pub struct App {
     /// Jeu identifié qui a **déjà** des visuels : question « les remplacer ? »
     /// avant de les effacer (par défaut sur « Non »).
     replace: Option<Replace>,
+    /// Dialogue « Oublier les jeux disparus ».
+    oublier: Option<Oublier>,
     /// Identifications retenues, par jeu (`assets/identities.txt`, partagé
     /// par Syncthing) : id SteamGridDB exact, pour que ce jeu ne retombe pas
     /// sur le premier résultat de l'autocomplete.
@@ -1449,6 +1468,7 @@ impl App {
             identify_menu: None,
             alias_menu: None,
             replace: None,
+            oublier: None,
             identities,
             absents,
             date: None,
@@ -3135,6 +3155,45 @@ impl App {
                 self.replace_art(&replace.slug, &replace.game, &replace.old_key);
                 Task::none()
             }
+            Message::OublierOpen => {
+                let count = self.slugs_disparus().len();
+                if count == 0 {
+                    self.status = Some(("Aucun jeu à oublier".to_string(), false));
+                    return Task::none();
+                }
+                self.oublier = Some(Oublier { count, index: 0 });
+                Task::none()
+            }
+            Message::OublierNav(delta) => {
+                if let Some(oublier) = self.oublier.as_mut() {
+                    oublier.index = (oublier.index as i32 + delta).clamp(0, 1) as usize;
+                }
+                Task::none()
+            }
+            Message::OublierChoose(index) => {
+                if let Some(oublier) = self.oublier.as_mut() {
+                    oublier.index = index.min(1);
+                }
+                Task::done(Message::OublierPick)
+            }
+            Message::OublierPick => {
+                let Some(oublier) = self.oublier.take() else {
+                    return Task::none();
+                };
+                if oublier.index == 0 {
+                    return Task::none();
+                }
+                let oublies = self.oublier_disparus();
+                self.status = Some((
+                    format!(
+                        "{} oublié{} de la liste (images conservées)",
+                        plural(oublies),
+                        if oublies > 1 { "s" } else { "" }
+                    ),
+                    false,
+                ));
+                Task::none()
+            }
             Message::Choices {
                 slug,
                 kind,
@@ -3760,6 +3819,10 @@ impl App {
                 // ligne écran : elle ne réagit qu'à gauche/droite
                 if settings.selected == settings.ligne_ecran() {
                     return Task::none();
+                }
+                // entretien : ouvre le dialogue de confirmation
+                if settings.selected == settings.ligne_oublier() {
+                    return Task::done(Message::OublierOpen);
                 }
                 // ligne musique : Croix coupe / relance, tout de suite
                 if settings.selected == settings.ligne_musique() {
@@ -4510,6 +4573,77 @@ impl App {
     /// Un dossier ou un paquet disparu sort de la liste ; les covers restent
     /// dans le cache (voir `library::cache_cover`).
     /// Demande une réindexation (liste vide = scan complet).
+    /// Slugs qui traînent dans les fiches (favoris, historique, temps de jeu,
+    /// années, identifications, réglages de lancement) alors que le jeu n'est
+    /// plus dans la liste : ce que « Oublier les jeux disparus » efface.
+    fn slugs_disparus(&self) -> HashSet<String> {
+        let connus: HashSet<String> = self
+            .all_games
+            .iter()
+            .map(|game| game.slug.clone())
+            .collect();
+        let mut tous: HashSet<String> = HashSet::new();
+        tous.extend(self.favorites.iter().cloned());
+        tous.extend(self.recent.iter().map(|(slug, _)| slug.clone()));
+        tous.extend(self.playtime.keys().cloned());
+        tous.extend(self.years.keys().cloned());
+        tous.extend(self.identities.keys().cloned());
+        // réglages de lancement : fichier relu (petit, une ligne par jeu réglé)
+        if let Ok(texte) = std::fs::read_to_string(pergame::chemin()) {
+            tous.extend(pergame::parse(&texte).into_keys());
+        }
+        tous.retain(|slug| !connus.contains(slug));
+        tous
+    }
+
+    /// Efface les fiches des jeux absents — favoris, historique, temps de jeu,
+    /// années, identifications, réglages, lignes d'index — et **garde les
+    /// images** (`assets/`, cache des vignettes) : un jeu rebranché retrouve
+    /// ses visuels, mais repart sans favori ni temps de jeu.
+    /// Renvoie le nombre de jeux oubliés.
+    fn oublier_disparus(&mut self) -> usize {
+        let disparus = self.slugs_disparus();
+        if disparus.is_empty() {
+            return 0;
+        }
+        let garde: HashSet<String> = self
+            .all_games
+            .iter()
+            .map(|game| game.slug.clone())
+            .collect();
+
+        self.favorites.retain(|slug| garde.contains(slug));
+        let _ = favorites::save(&self.config.favorites_path(), &self.favorites);
+
+        let recent_path = recent::path(&self.config.cache_dir());
+        recent::retain(&recent_path, &garde);
+        self.recent = recent::load(&recent_path);
+
+        playtime::retain(&self.playtime_paths, &garde);
+        self.playtime = playtime::load(&self.playtime_paths);
+
+        let assets = self.config.assets_dir();
+        covers::oublier_slugs(&covers::years_path(&assets), &garde);
+        self.years.retain(|slug, _| garde.contains(slug));
+        covers::oublier_slugs(&covers::identities_path(&assets), &garde);
+        self.identities.retain(|slug, _| garde.contains(slug));
+
+        pergame::oublier(&garde);
+
+        // index : les paquets dont le fichier n'existe plus (disque absent)
+        if let Ok(mut slot) = self.index.lock()
+            && let Some(index) = slot.as_mut()
+        {
+            let _ = index.purge_missing();
+        }
+
+        self.apply_filter();
+        self.selected = self.selected.min(self.games.len().saturating_sub(1));
+        self.update_scroll_target();
+        self.request_visible_covers();
+        disparus.len()
+    }
+
     fn refresh(&mut self, changed: Vec<PathBuf>) {
         if self.refreshing {
             self.pending.extend(changed);
@@ -5317,6 +5451,25 @@ impl App {
                 _ => Task::none(),
             };
         }
+        // « oublier les jeux disparus ? » : « Annuler » sélectionné, Entrée
+        // annule ; Échap aussi
+        if self.oublier.is_some() {
+            let keyboard::Event::KeyPressed { key, .. } = event else {
+                return Task::none();
+            };
+            return match key {
+                keyboard::Key::Named(Named::Escape) => Task::done(Message::OublierChoose(0)),
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::OublierPick)
+                }
+                keyboard::Key::Named(Named::ArrowLeft) | keyboard::Key::Named(Named::Tab) => {
+                    Task::done(Message::OublierNav(-1))
+                }
+                keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::OublierNav(1)),
+                _ => Task::none(),
+            };
+        }
+
         // « remplacer les visuels ? » : « Non » est sélectionné, donc Entrée
         // garde tout ; Échap fait la même chose
         if self.replace.is_some() {
@@ -5965,6 +6118,9 @@ impl App {
         if self.date.is_some() {
             menus = stack![menus, self.date_view()].into();
         }
+        if self.oublier.is_some() {
+            menus = stack![menus, self.oublier_view()].into();
+        }
         if self.galerie.is_some() {
             menus = stack![menus, self.gallery_view()].into();
         }
@@ -6511,6 +6667,81 @@ impl App {
             .into()
     }
 
+    /// Confirmation « Oublier les jeux disparus ? » : « Annuler » par défaut,
+    /// même raison que pour les visuels — rien ne part sur un appui malheureux.
+    fn oublier_view(&self) -> Element<'_, Message> {
+        let Some(oublier) = &self.oublier else {
+            return Row::new().into();
+        };
+
+        let mut actions = Row::new().spacing(12).align_y(Alignment::Center);
+        for (index, label) in ["Annuler", "Oublier"].into_iter().enumerate() {
+            let selected = index == oublier.index;
+            let bouton = container(
+                text(label)
+                    .size(16)
+                    .color(if selected { Color::BLACK } else { TEXT }),
+            )
+            .padding([9.0, 18.0])
+            .style(move |_| action_style(selected));
+            actions = actions.push(mouse_area(bouton).on_press(Message::OublierChoose(index)));
+        }
+
+        let help: Element<'_, Message> = if self.pad_hints() {
+            row![
+                hint(self.glyphs.confirm.clone(), "Valider"),
+                hint(self.glyphs.back.clone(), "Annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            row![
+                key_hint(&["←", "→"], "choisir"),
+                key_hint(&["Entrée"], "valider"),
+                key_hint(&["Échap"], "annuler"),
+            ]
+            .spacing(18)
+            .align_y(Alignment::Center)
+            .into()
+        };
+
+        let panel = container(
+            column![
+                text("Oublier les jeux disparus ?").size(18).color(TEXT),
+                text(format!(
+                    "{} ne sont plus dans la liste (disque débranché ou dossier retiré). \
+                     Leurs favoris, historique, temps de jeu et réglages seront effacés. \
+                     Les images, elles, sont conservées : un jeu rebranché retrouve ses visuels.",
+                    plural(oublier.count)
+                ))
+                .size(14)
+                .color(MUTED),
+                actions,
+                help,
+            ]
+            .spacing(14),
+        )
+        .padding(20)
+        .width(Length::Fixed(640.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.72,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     /// Question posée après une identification : « ce paquet a déjà des
     /// visuels, on les remplace ? ». « Non » est sélectionné par défaut : un
     /// appui malheureux ne détruit pas des images choisies à la main.
@@ -6801,8 +7032,10 @@ impl App {
                 "Sortie"
             } else if index <= settings.ligne_volume() {
                 "Son"
-            } else {
+            } else if index <= settings.ligne_ecran() {
                 "Affichage"
+            } else {
+                "Entretien"
             };
             if courante != section {
                 section = courante;
@@ -6961,6 +7194,30 @@ impl App {
                 continue;
             }
 
+            // entretien : oublier les fiches des jeux qui ne sont plus là
+            if index == settings.ligne_oublier() {
+                let ligne = container(
+                    row![
+                        text("Oublier les jeux disparus")
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text(" ▸")
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(
+                    mouse_area(ligne)
+                        .on_press(if selected { Message::OublierOpen } else { Message::Nothing }),
+                );
+                continue;
+            }
+
             let (label, detail, danger) = if index == 0 {
                 ("+ Ajouter un dossier…".to_string(), String::new(), false)
             } else {
@@ -7034,6 +7291,8 @@ impl App {
             "Gauche/droite = volume de la musique, par pas de 5 % — 0 % la rend silencieuse sans la couper.".to_string()
         } else if settings.selected == settings.ligne_ecran() {
             "Gauche/droite = écran du jeu. « Comme Plasma » suit la disposition du bureau ; « Cloner » réplique l'écran principal sur les autres ; « Principal seul » éteint les autres — à la prochaine session de jeu.".to_string()
+        } else if settings.selected == settings.ligne_oublier() {
+            "Oublie les jeux qui ne sont plus dans la liste (disque débranché, dossier retiré) : favoris, historique, temps de jeu, réglages de lancement. Les images sont conservées — un jeu rebranché retrouve ses visuels.".to_string()
         } else if settings.dossiers.is_empty() {
             "Aucun dossier de jeux : la bibliothèque est vide. Croix = ajouter un dossier.".to_string()
         } else if settings.selected == 0 {
@@ -7068,6 +7327,8 @@ impl App {
                 (&self.glyphs.confirm, "Ajouter"),
                 (&self.glyphs.back, "Fermer"),
             ]
+        } else if settings.selected == settings.ligne_oublier() {
+            vec![(&self.glyphs.confirm, "Oublier"), (&self.glyphs.back, "Fermer")]
         } else if settings.selected == settings.ligne_volume()
             || settings.selected == settings.ligne_ecran()
             || settings.selected < settings.lignes()

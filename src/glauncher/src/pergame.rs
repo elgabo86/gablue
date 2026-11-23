@@ -111,8 +111,34 @@ pub fn ecrire_dans(path: &Path, slug: &str, options: Options) -> Result<(), Stri
     } else {
         table.insert(slug.to_string(), options);
     }
+    ecrire_table(path, &table)
+}
+
+/// Retire les réglages des jeux qui ne sont plus présents. Renvoie le nombre de
+/// lignes retirées. Sert à « Oublier les jeux disparus ».
+pub fn oublier(garde: &std::collections::HashSet<String>) -> usize {
+    oublier_dans(&chemin(), garde)
+}
+
+/// Même chose sur un fichier donné (banc d'essai).
+pub fn oublier_dans(path: &Path, garde: &std::collections::HashSet<String>) -> usize {
+    let Ok(texte) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let mut table = parse(&texte);
+    let avant = table.len();
+    table.retain(|slug, _| garde.contains(slug));
+    let retires = avant - table.len();
+    if retires > 0 {
+        let _ = ecrire_table(path, &table);
+    }
+    retires
+}
+
+/// Réécrit tout le fichier (écriture atomique).
+fn ecrire_table(path: &Path, table: &BTreeMap<String, Options>) -> Result<(), String> {
     let mut sortie = String::new();
-    for (cle, options) in &table {
+    for (cle, options) in table {
         sortie.push_str(cle);
         if options.gamescope {
             sortie.push_str("\tgamescope=1");
@@ -167,6 +193,22 @@ pub fn parse(texte: &str) -> BTreeMap<String, Options> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oublier_retire_les_jeux_absents() {
+        let base =
+            std::env::temp_dir().join(format!("glauncher-pg-oublier-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let path = base.join("games.txt");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "mario\tgamescope=1\nzelda\tres=720\n").unwrap();
+        let garde: std::collections::HashSet<String> = ["mario".to_string()].into();
+        assert_eq!(oublier_dans(&path, &garde), 1);
+        let texte = std::fs::read_to_string(&path).unwrap();
+        assert!(texte.contains("mario"));
+        assert!(!texte.contains("zelda"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn aller_retour_et_fusion() {

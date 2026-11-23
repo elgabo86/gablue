@@ -87,6 +87,25 @@ pub fn add(paths: &Paths, times: &mut HashMap<String, u64>, slug: &str, kind: &s
     times.insert(slug.to_string(), total);
 }
 
+/// Ne garde que les jeux encore présents dans les trois fichiers (les deux
+/// formats et l'ancien du cache). Renvoie le nombre d'entrées retirées.
+pub fn retain(paths: &Paths, garde: &std::collections::HashSet<String>) -> usize {
+    let mut retires = 0;
+    for path in [&paths.legacy, &paths.lgp, &paths.wgp] {
+        let mut file = load_one(path);
+        let avant = file.len();
+        if avant == 0 {
+            continue;
+        }
+        file.retain(|slug, _| garde.contains(slug));
+        if file.len() != avant {
+            retires += avant - file.len();
+            save(path, &file);
+        }
+    }
+    retires
+}
+
 /// Range l'ancien `<cache>/playtime.txt` dans les fichiers des sauvegardes,
 /// quand la liste des jeux (donc le format de chaque slug) est connue. Un slug
 /// absent de la liste reste dans l'ancien fichier : le jeu reviendra (disque
@@ -173,6 +192,28 @@ mod tests {
             wgp: dir.join("LocalSavesWGP/glauncher/playtime.txt"),
             legacy: dir.join("cache/playtime.txt"),
         }
+    }
+
+    #[test]
+    fn retain_vide_les_trois_fichiers() {
+        let dir = std::env::temp_dir().join(format!("glauncher-pt-retain-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths = paths(&dir);
+        for (path, contenu) in [
+            (&paths.lgp, "mario\t600\nzelda\t60\n"),
+            (&paths.wgp, "metroid\t120\n"),
+            (&paths.legacy, "vieux\t30\n"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contenu).unwrap();
+        }
+        let garde: std::collections::HashSet<String> = ["mario".to_string()].into();
+        assert_eq!(retain(&paths, &garde), 3);
+        assert_eq!(
+            load(&paths),
+            [("mario".to_string(), 600)].into_iter().collect()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

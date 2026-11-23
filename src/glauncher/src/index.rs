@@ -201,10 +201,87 @@ impl Index {
         insert(&mut statement, row)
     }
 
+    /// Oublie les paquets (et les dossiers) dont le chemin n'existe plus sur
+    /// le disque — disque externe débranché, dossier de jeux retiré. Renvoie le
+    /// nombre de paquets oubliés. Ne touche à aucun visuel : ils vivent dans
+    /// `assets/`.
+    pub fn purge_missing(&mut self) -> Result<usize, String> {
+        let rows = self.all()?;
+        let mut retires = 0;
+        for row in rows {
+            if row.path.exists() {
+                continue;
+            }
+            self.conn
+                .execute(
+                    "DELETE FROM packs WHERE path = ?1",
+                    params![row.path.to_string_lossy().to_string()],
+                )
+                .map_err(|err| format!("index : {err}"))?;
+            retires += 1;
+        }
+
+        let dirs: Vec<String> = {
+            let mut statement = self
+                .conn
+                .prepare("SELECT path FROM dirs")
+                .map_err(|err| format!("lecture index : {err}"))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|err| format!("lecture index : {err}"))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|err| format!("lecture index : {err}"))?
+        };
+        for dir in dirs {
+            if Path::new(&dir).exists() {
+                continue;
+            }
+            self.conn
+                .execute("DELETE FROM dirs WHERE path = ?1", params![dir])
+                .map_err(|err| format!("index : {err}"))?;
+        }
+        Ok(retires)
+    }
+
     /// Supprime une entrée, et tout son sous-arbre si c'est un dossier disparu.
     pub fn remove_subtree(&mut self, path: &Path) -> Result<(), String> {
         delete_subtree(&self.conn, path)?;
         delete_dirs_under(&self.conn, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn purge_missing_oublie_les_paquets_disparus() {
+        let dir = std::env::temp_dir().join(format!("glauncher-index-purge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let present = dir.join("present.wgp");
+        std::fs::write(&present, b"x").unwrap();
+        let absent = dir.join("absent.lgp");
+
+        let mut index = Index::open(&dir.join("index.sqlite")).unwrap();
+        for (path, kind) in [(&present, Kind::Wgp), (&absent, Kind::Lgp)] {
+            index
+                .upsert(&PackRow {
+                    path: path.clone(),
+                    dir: dir.clone(),
+                    name: path.display().to_string(),
+                    kind,
+                    mtime: 0,
+                    size: 1,
+                })
+                .unwrap();
+        }
+        assert_eq!(index.all().unwrap().len(), 2);
+        assert_eq!(index.purge_missing().unwrap(), 1);
+        let restants = index.all().unwrap();
+        assert_eq!(restants.len(), 1);
+        assert_eq!(restants[0].path, present);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
