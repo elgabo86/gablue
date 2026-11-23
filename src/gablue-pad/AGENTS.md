@@ -170,6 +170,29 @@ l'activation part dans le **même** script KWin (deux chargements se
 marcheraient dessus). Un seul jeu à la fois : c'est le modèle du launcher
 (`running: Option<String>`), il n'y a donc jamais de choix entre deux jeux.
 
+**Le son suit la fenêtre** : en allant vers l'app, les flux du jeu passent en
+**sourdine** (`pactl set-sink-input-mute`, tous ceux dont le PID est celui de la
+fenêtre ou un descendant) ; au retour ils sont rendus et les deux s'entendent.
+Muet et pas volume à 0 : le jeu garde son réglage. Les applications compagnes
+sont exclues du filtre par leur nom (`est_compagne`) — leur son ne doit jamais
+être coupé par la bascule, même si leur flux est lancé par un enfant du jeu. Si
+l'app est fermée alors que le jeu est en sourdine, `refresh_bascule` rend le son
+sans attendre un geste : sans ça le jeu restait muet, le sélecteur n'existant
+que tant qu'une app est ouverte.
+
+**Home+L2 / Home+R2 hors panneau** (déclencheur → `bascule <sens>` sur l'IPC du
+résident) : même bascule sans ouvrir le menu — R2 vers l'app, L2 vers le jeu.
+Au bureau (aucun jeu publié) les deux cyclent **toutes** les fenêtres dans
+l'ordre de la pile, R2 en avant, L2 en arrière (`CYCLE_JS`, même ancre que le
+cyclage du panneau). Deux pièges trouvés en le testant le 23/11/2026 :
+(1) pas de garde « déjà sur la cible » — une app lancée pendant une partie est
+*active* sous la fenêtre plein écran, donc la garde refusait la bascule qui
+sert justement à révéler l'app ; la direction s'applique toujours, rejouée elle
+est idempotente ; (2) la fenêtre du jeu se cherche parmi **tous** les jeux
+publiés (`running.txt`), pas via `jeu_actif()` qui ne désigne que le jeu de la
+fenêtre active — app au premier plan = aucun jeu reconnu, et la bascule cyclait
+les fenêtres au lieu de passer à l'app.
+
 **Réveil par Home** : une manette Bluetooth éteinte avec la machine en veille
 la rallume. C'est du système, pas de l'overlay — clé Bluetooth en réveil USB
 plus `WakeAllowed` posé sur les manettes appariées par

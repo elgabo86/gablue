@@ -1449,6 +1449,9 @@ struct App {
     bascule_jeu: Option<Fenetre>,
     /// l'application compagne a le focus (donc le sélecteur propose le jeu)
     bascule_sur_app: bool,
+    /// le son du jeu est en sourdine parce qu'on est passé à l'app : il doit
+    /// être rendu au retour, même si l'app a disparu entre-temps
+    jeu_muet: bool,
     // diagnostic du canal : qui lit encore la manette pendant l'overlay
     evdev_node: Option<String>,
     hidraw_node: Option<String>,
@@ -1862,6 +1865,7 @@ impl App {
             bascule_app: None,
             bascule_jeu: None,
             bascule_sur_app: false,
+            jeu_muet: false,
             evdev_node: None,
             hidraw_node: None,
             last_scan: Instant::now(),
@@ -3747,9 +3751,13 @@ impl App {
                 || audio::est_compagne(&f.caption)
         };
         self.bascule_app = liste.iter().find(|f| compagne(f)).cloned();
+        // Tous les jeux publiés, pas seulement celui de la fenêtre active :
+        // une app compagne au premier plan fait `jeu_actif()` = None, et la
+        // bascule retombait alors sur le cyclage des fenêtres au lieu de
+        // reconnaître le jeu qui tourne derrière (constaté le 23/11/2026).
         let mut pids: Vec<i32> = Vec::new();
-        if let Some(jeu) = self.jeu_actif() {
-            for racine in jeu.pids.clone() {
+        for jeu in lire_jeux_actifs() {
+            for racine in jeu.pids {
                 pids.push(racine);
                 pids.extend(descendants(racine));
             }
@@ -3782,39 +3790,129 @@ impl App {
     /// dessus. `keepAbove` est levé au passage : le launcher s'en sert le temps
     /// du démarrage du jeu, jamais après.
     fn basculer(&mut self) {
-        let (Some(jeu), Some(app)) = (self.bascule_jeu.clone(), self.bascule_app.clone()) else {
+        if self.bascule_jeu.is_none() || self.bascule_app.is_none() {
             self.status = "BASCULER: JEU OU APP ABSENT".to_string();
             return;
+        }
+        // sur l'app → on revient au jeu ; sur le jeu → on va à l'app
+        let vers_app = !self.bascule_sur_app;
+        if self.echanger(vers_app) {
+            self.request_close();
+        }
+    }
+
+    /// Cœur de la bascule jeu ⇄ app, sans panneau : script KWin (le plein
+    /// écran du jeu est retiré en allant vers l'app, remis en revenant) puis
+    /// le son du jeu. Renvoie `false` si KWin n'a pas pris le script.
+    fn echanger(&mut self, vers_app: bool) -> bool {
+        let (Some(jeu), Some(app)) = (self.bascule_jeu.clone(), self.bascule_app.clone()) else {
+            return false;
         };
-        // sur l'app → on revient au jeu (plein écran remis) ; sur le jeu → on
-        // va à l'app (plein écran retiré)
-        let (cible, jeu_plein_ecran) = if self.bascule_sur_app {
-            (&jeu, true)
-        } else {
-            (&app, false)
-        };
+        let cible = if vers_app { &app } else { &jeu };
+        let jeu_plein_ecran = !vers_app;
         let plugin = self.nom_plugin("bascule");
         let Some(kbus) = &self.kbus else {
             self.status = "BASCULER: KWIN INJOIGNABLE".to_string();
-            return;
+            return false;
         };
         let script = script_bascule(&jeu.uuid, &cible.uuid, jeu_plein_ecran);
         let chemin = format!("/tmp/opencode/kwin-bascule-{}.js", std::process::id());
         if std::fs::write(&chemin, script).is_err() {
             self.status = "BASCULER: ECRITURE IMPOSSIBLE".to_string();
+            return false;
+        }
+        if !kbus.un_shot(&chemin, &plugin) {
+            self.status = "BASCULER: ECHEC KWIN".to_string();
+            return false;
+        }
+        // Le son suit la fenêtre : en allant vers l'app, le jeu passe en
+        // sourdine (sinon les deux se superposent) ; au retour il est rendu, et
+        // l'app continue de sonner — on entend les deux.
+        let muets = self.muter_jeu(vers_app);
+        self.jeu_muet = vers_app;
+        self.status = format!(
+            "BASCULE: {} ({} flux {})",
+            cible.titre(),
+            muets,
+            if vers_app { "coupés" } else { "rendus" }
+        );
+        println!(
+            "BASCULE -> {} (jeu plein écran: {}, {muets} flux en sourdine: {vers_app})",
+            cible.titre(),
+            jeu_plein_ecran
+        );
+        true
+    }
+
+    /// Bascule demandée hors panneau (Home+L2 / Home+R2, commande `bascule`
+    /// du déclencheur). Deux cas :
+    ///
+    /// - un jeu tourne et une application compagne est ouverte → bascule jeu
+    ///   ⇄ app, la **direction** choisissant la cible (R2 vers l'app, L2 vers
+    ///   le jeu, comme dans le panneau) ; si la cible est déjà devant, rien ne
+    ///   se passe ;
+    /// - sinon (bureau, ou aucun jeu) → cyclage de **toutes** les fenêtres dans
+    ///   l'ordre où elles sont empilées, R2 en avant, L2 en arrière.
+    fn bascule_combo(&mut self, sens: i32) {
+        // le jeu a pu démarrer depuis le dernier rafraîchissement du panneau :
+        // sans relecture, `running.txt` n'était pas encore connu et la bascule
+        // aurait cyclé les fenêtres au lieu de passer à l'app
+        self.rafraichir_jeu();
+        self.refresh_bascule();
+        if self.bascule_jeu.is_some() && self.bascule_app.is_some() {
+            // Pas de garde « déjà sur la cible » : une app lancée pendant une
+            // partie devient active **sous** la fenêtre plein écran du jeu, donc
+            // `bascule_sur_app` est vrai alors que l'écran montre le jeu. La
+            // direction demandée s'applique toujours — rejouer la même est
+            // idempotente (plein écran, activation, sourdine).
+            self.echanger(sens > 0);
             return;
         }
-        if kbus.un_shot(&chemin, &plugin) {
-            self.status = format!("BASCULE: {}", cible.titre());
-            println!(
-                "BASCULE -> {} (jeu plein écran: {})",
-                cible.titre(),
-                jeu_plein_ecran
-            );
-            self.request_close();
-        } else {
-            self.status = "BASCULER: ECHEC KWIN".to_string();
+        self.cycler_fenetres(sens);
+    }
+
+    /// Active la fenêtre suivante (`sens > 0`) ou précédente dans la pile —
+    /// script KWin jetable, même ancre que le cyclage du panneau (UUID de la
+    /// fenêtre active, jamais devinée).
+    fn cycler_fenetres(&mut self, sens: i32) {
+        let plugin = self.nom_plugin("cycle");
+        let Some(kbus) = &self.kbus else {
+            println!("CYCLE: KWIN INJOIGNABLE");
+            return;
+        };
+        let script = CYCLE_JS
+            .replace("__CIBLE__", &self.win.uuid)
+            .replace("__SENS__", &sens.to_string());
+        let chemin = format!("/tmp/opencode/kwin-cycle-{}.js", std::process::id());
+        if std::fs::write(&chemin, script).is_err() {
+            println!("CYCLE: ECRITURE IMPOSSIBLE");
+            return;
         }
+        println!("CYCLE sens={sens} ok={}", kbus.un_shot(&chemin, &plugin));
+    }
+
+    /// Met en sourdine (ou rend) le son du jeu, flux par flux.
+    ///
+    /// Muet et pas volume à 0 : le jeu garde son réglage, le retour est exact.
+    /// Renvoie le nombre de flux touchés — 0 signifie « le jeu n'émet rien »
+    /// (jeu en pause, son coupé dans le jeu), pas une erreur.
+    fn muter_jeu(&mut self, muet: bool) -> usize {
+        let Some(jeu) = self.bascule_jeu.clone() else {
+            return 0;
+        };
+        if jeu.pid <= 1 {
+            return 0;
+        }
+        let mut pids = vec![jeu.pid];
+        pids.extend(descendants(jeu.pid));
+        let flux = flux_du_jeu(&audio::flux(), &pids);
+        let mut faits = 0;
+        for f in &flux {
+            if audio::muet(f.index, muet) {
+                faits += 1;
+            }
+        }
+        faits
     }
 
     fn refresh_sons(&mut self) {
@@ -4462,6 +4560,13 @@ impl App {
                     self.ouvrir(&node, &cibles);
                 }
                 Some("close") => self.request_close(),
+                // Home+L2 / Home+R2 hors panneau : `bascule <sens>` (-1 en
+                // arrière, +1 en avant). Le résident décide (jeu ⇄ app ou
+                // cyclage des fenêtres) et n'ouvre rien.
+                Some("bascule") => {
+                    let sens = mots.next().and_then(|v| v.parse::<i32>().ok()).unwrap_or(1);
+                    self.bascule_combo(sens);
+                }
                 // le déclencheur demande si le panneau est ouvert avant de
                 // fermer/agir (il ne peut pas le savoir autrement)
                 Some("state") => {
@@ -6536,6 +6641,17 @@ struct Fenetre {
 /// (constaté le 23/11/2026). Le plein écran du jeu est donc piloté en même
 /// temps que l'activation, dans un seul script (deux chargements KWin se
 /// marcheraient dessus).
+/// Flux audio attribuables au jeu : ceux dont le PID est celui de sa fenêtre
+/// ou l'un de ses descendants (un émulateur délègue souvent le son à un enfant),
+/// en excluant les applications compagnes — leur nom peut contenir celui du
+/// jeu, et leur son ne doit jamais être coupé par la bascule.
+fn flux_du_jeu(flux: &[audio::Flux], pids: &[i32]) -> Vec<audio::Flux> {
+    flux.iter()
+        .filter(|f| f.pid > 0 && pids.contains(&f.pid) && !audio::est_compagne(&f.nom))
+        .cloned()
+        .collect()
+}
+
 fn script_bascule(jeu: &str, cible: &str, jeu_plein_ecran: bool) -> String {
     format!(
         "var ws = workspace.stackingOrder;\n\
@@ -8097,6 +8213,30 @@ mod tests {
         let vers_jeu = script_bascule("{jeu}", "{app}", true);
         assert!(vers_jeu.contains("w.fullScreen = true"));
         assert!(!vers_jeu.contains("w.fullScreen = false"));
+    }
+
+    /// La sourdine du jeu ne touche que ses flux : l'application compagne
+    /// (dont le nom peut contenir celui du jeu) et la musique de fond gardent
+    /// leur son quand on passe à l'app.
+    #[test]
+    fn sourdine_limitee_aux_flux_du_jeu() {
+        let flux = |index: u32, pid: i32, nom: &str| audio::Flux {
+            index,
+            pid,
+            nom: nom.to_string(),
+            pourcent: 80,
+            mute: false,
+        };
+        let liste = vec![
+            flux(10, 500, "MarioKart64Recompiled"),
+            flux(11, 501, "tvqt"),
+            flux(12, 900, "mpv"),
+        ];
+        let retenus: Vec<u32> = flux_du_jeu(&liste, &[500, 501])
+            .iter()
+            .map(|f| f.index)
+            .collect();
+        assert_eq!(retenus, vec![10]);
     }
 
     fn pid_mort() -> i32 {

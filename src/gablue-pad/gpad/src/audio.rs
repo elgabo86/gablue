@@ -197,6 +197,20 @@ pub fn regler(index: u32, pourcent: u8) -> bool {
         .is_ok_and(|statut| statut.success())
 }
 
+/// Pose le muet d'un flux, valeur **explicite** (contrairement à
+/// `basculer_mute`, rejouable sans dépendre de l'état courant).
+pub fn muet(index: u32, muet: bool) -> bool {
+    std::process::Command::new(PACTL)
+        .args([
+            "set-sink-input-mute",
+            &index.to_string(),
+            if muet { "1" } else { "0" },
+        ])
+        .env("LC_ALL", "C")
+        .status()
+        .is_ok_and(|statut| statut.success())
+}
+
 /// Bascule le muet d'un flux.
 pub fn basculer_mute(index: u32) -> bool {
     std::process::Command::new(PACTL)

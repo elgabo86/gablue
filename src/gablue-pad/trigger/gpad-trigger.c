@@ -682,6 +682,33 @@ static void do_record(void)
     run_cmd(cmd);
 }
 
+/* Home+L2 / Home+R2 : bascule jeu ⇄ application compagne, et cyclage de
+ * TOUTES les fenêtres quand aucun jeu ne tourne (bureau). La décision est prise
+ * par l'overlay résident : il tient déjà la liste des fenêtres, le canal KWin
+ * et la mise en sourdine du jeu. Sans résident on le démarre — il reste ensuite
+ * vivant pour la session, donc la bascule suivante ne paie rien.
+ *
+ * `sens` : -1 = L2 (vers le jeu / fenêtre précédente), +1 = R2 (vers l'app /
+ * fenêtre suivante). */
+static void do_bascule(char **argv, int argc, int first_free, int sens)
+{
+    if (resident <= 0) {
+        fprintf(stderr, "[gpad-trigger] COMBO Home+L2/R2 : demarrage du resident\n");
+        fflush(stderr);
+        resident_start(argv, argc, first_free);
+    }
+    char cmd[64];
+    snprintf(cmd, sizeof cmd, "bascule %d\n", sens);
+    if (overlay_send(cmd)) {
+        fprintf(stderr, "[gpad-trigger] COMBO Home+%s -> bascule envoyee\n",
+                sens > 0 ? "R2" : "L2");
+    } else {
+        fprintf(stderr, "[gpad-trigger] COMBO Home+%s -> resident injoignable\n",
+                sens > 0 ? "R2" : "L2");
+    }
+    fflush(stderr);
+}
+
 static void do_shot(void)
 {
     panneau_ferme();
@@ -1022,6 +1049,25 @@ int main(int argc, char **argv)
                             do_pad_kbd(argv, argc, first_free, home_node);
                         else
                             do_mouse();
+                    }
+                } else if (ev.type == EV_KEY && ev.value == 1
+                           && (ev.code == BTN_TL2 || ev.code == BTN_TR2)) {
+                    /* Home+gâchette : bascule jeu ⇄ app hors panneau, et
+                     * cyclage des fenêtres au bureau. Les gâchettes sont
+                     * analogiques (ABS_Z/ABS_RZ) mais le noyau émet aussi le
+                     * bouton numérique au seuil : c'est lui qu'on lit, sans
+                     * dépendre d'un seuil à notre main. */
+                    if (opt_shortcuts && home_down && !combo_done && child < 0) {
+                        combo_done = 1;
+                        if (!combo_jeton()) {
+                            fprintf(stderr,
+                                    "[gpad-trigger] combo L2/R2 ignore"
+                                    " (deja traite par le panneau)\n");
+                            fflush(stderr);
+                        } else {
+                            do_bascule(argv, argc, first_free,
+                                       ev.code == BTN_TR2 ? 1 : -1);
+                        }
                     }
                 } else if (ev.type == EV_ABS && ev.code == ABS_HAT0X && ev.value != 0) {
                     if (opt_shortcuts && home_down && !combo_done && child < 0) {

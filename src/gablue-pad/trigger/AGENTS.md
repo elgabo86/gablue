@@ -120,6 +120,16 @@ se filme jamais dans le clip.
 | Home + droite | capture d'écran (`screenshot.sh` → `gpad-shot`, son joué d'abord : ~40 ms de capture) |
 | Home + haut | **replay** : démarre le buffer s'il est arrêté, **sauvegarde** s'il tourne (`replay.sh start`/`save`) — en arrière-plan, le bip + 0,35 s de silence + démarrage prennent ~1,2 s et le déclencheur doit rester à l'écoute du retour de Home |
 | Home + bas | **arrête** le replay s'il tourne (`replay.sh stop`) ; sinon ouvre le panneau sur la ligne **FPS** (geste d'origine, aucune fonction perdue) |
+| Home + R2 | **bascule jeu ⇄ application compagne** sans ouvrir le panneau (vers l'app) ; au bureau, fenêtre **suivante** de la pile |
+| Home + L2 | même bascule en sens inverse (vers le jeu) ; au bureau, fenêtre **précédente** |
+
+Les deux gâchettes lisent `BTN_TR2`/`BTN_TL2` — le bouton **numérique** que le
+noyau émet au seuil, pas `ABS_RZ`/`ABS_Z` : aucun seuil à choisir, et les
+manettes qui n'exposent que le bouton (Xbox filaire) marchent pareil. Il n'y a **qu'une décision** : `do_bascule` envoie `bascule
+<sens>` au résident, qui connaît les fenêtres, le canal KWin et la sourdine du
+jeu (détail → `../AGENTS.md`). S'il n'y a pas encore de résident, il le démarre
+(≤ 3 s une fois par session) puis la commande part ; le panneau ne s'ouvre
+jamais.
 
 `PAD_NODE` est transmis pour que la vibration parte sur la bonne manette.
 
