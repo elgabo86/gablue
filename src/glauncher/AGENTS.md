@@ -324,6 +324,27 @@ grille : un fond noir opaque l'aurait effacée.
   dernière ligne, à 8 px du bord (demandé le 23/11). Implémentation : une
   colonne `[milieu (Fill, center_y), pied]`, et non plus un `align_y(End)`
   conditionnel.
+- **Recherche par nom (`/`)** : le champ s'ouvre au clavier, filtre à la
+  frappe (`normalise` : minuscules, sans accents ni ligatures — « epee »
+  trouve « Épée », « coeur » trouve « Cœur »), Échap efface et referme, Entrée
+  ouvre le jeu sélectionné. La barre reste affichée tant que le filtre est
+  actif, pour qu'une liste courte ne passe pas pour une bibliothèque vide.
+  **Clavier uniquement** : la manette ne tape pas, et le launcher n'a pas de
+  clavier virtuel — un filtre par roue de lettres serait une autre fonction.
+- **Ordre « Derniers lancés »** : `recent.txt` dans le cache du launcher
+  (`slug<TAB>epoch`, atomique, 24 entrées), écrit à chaque lancement. C'est un
+  ordre de tri à part entière, **distinct de `Récents`** (date du paquet) ; il
+  survit aux sessions (état `tri=derniers`). Le menu Tri porte une ligne
+  **« Effacer les derniers lancés »**, présente seulement si l'historique
+  n'est pas vide ; elle vide l'historique, **jamais** `playtime.txt`.
+- **La vue LISTE a sa propre présentation** : lignes en cartes (pochette,
+  titre, année et temps de jeu alignés à droite, étoile), filet d'accent sur la
+  ligne choisie, et **trois crans de taille** (`liste_taille` dans
+  `state.txt`, 38/56/78 px d'art) pilotés par L2/R2 et `+`/`−` — le zoom
+  modifiait les colonnes de la grille, jamais la liste (signalé le
+  23/11/2026). Le panneau de droite montre la **bannière héros** (repli :
+  pochette plafonnée) dans une carte qui prend sa hauteur et se centre :
+  la cover pleine hauteur écrasait la liste.
 - **Le menu de choix d'image défile avec la sélection** : la grille
   (`PICKER_COLUMNS` = 5) a un `scrollable` identifié (`PICKER_SCROLL`) et
   `PickerNav` demande `operation::snap_to` avec un décalage relatif calculé sur

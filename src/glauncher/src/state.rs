@@ -22,11 +22,15 @@ pub enum SortBy {
     Modified,
     /// Seuls les jeux marqués ★, dans l'ordre alphabétique.
     Favorites,
+    /// Derniers jeux **lancés** d'abord (`recent.txt`), puis le reste A→Z :
+    /// distinct de `Modified`, qui regarde la date du paquet, pas la partie.
+    Recent,
 }
 
 impl SortBy {
     /// Les tris du menu, dans l'ordre d'affichage.
-    pub const ALL: [SortBy; 3] = [SortBy::Name, SortBy::Modified, SortBy::Favorites];
+    pub const ALL: [SortBy; 4] =
+        [SortBy::Name, SortBy::Modified, SortBy::Favorites, SortBy::Recent];
 
     /// Nom court, tel qu'écrit dans le fichier d'état.
     fn key(self) -> &'static str {
@@ -34,6 +38,7 @@ impl SortBy {
             SortBy::Name => "nom",
             SortBy::Modified => "recents",
             SortBy::Favorites => "favoris",
+            SortBy::Recent => "derniers",
         }
     }
 
@@ -44,6 +49,7 @@ impl SortBy {
             SortBy::Name => "A→Z",
             SortBy::Modified => "Récents",
             SortBy::Favorites => "Favoris",
+            SortBy::Recent => "Derniers lancés",
         }
     }
 
@@ -57,6 +63,7 @@ impl SortBy {
             "nom" => Some(SortBy::Name),
             "recents" => Some(SortBy::Modified),
             "favoris" => Some(SortBy::Favorites),
+            "derniers" => Some(SortBy::Recent),
             _ => None,
         }
     }
@@ -89,6 +96,10 @@ pub struct State {
     pub sort: SortBy,
     /// Filtre d'année actif (`None` = toutes).
     pub year: Option<u32>,
+    /// Taille des lignes de la vue LISTE (0 compact, 1 normal, 2 grand). La
+    /// grille a ses propres crans (colonnes) : une seule valeur ne pouvait pas
+    /// servir les deux, et la liste n'avait aucun réglage (signalé 23/11/2026).
+    pub list_size: u8,
 }
 
 /// Lit le fichier d'état. Absent ou illisible → valeurs par défaut (aucune
@@ -110,6 +121,9 @@ pub fn load(path: &Path) -> State {
                 }
             }
             "annee" => state.year = value.trim().parse().ok(),
+            "liste_taille" => {
+                state.list_size = value.trim().parse::<u8>().unwrap_or(1).min(2)
+            }
             _ => {}
         }
     }
@@ -129,6 +143,7 @@ pub fn save(path: &Path, state: State) {
     if let Some(year) = state.year {
         text.push_str(&format!("annee={year}\n"));
     }
+    text.push_str(&format!("liste_taille={}\n", state.list_size.min(2)));
 
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".part");
@@ -161,6 +176,7 @@ mod tests {
             view: Some(ViewMode::Mosaic),
             sort: SortBy::Modified,
             year: Some(1994),
+            list_size: 2,
         };
         save(&path, state);
         assert_eq!(load(&path), state);
@@ -176,6 +192,7 @@ mod tests {
                 view: Some(ViewMode::Grid),
                 sort: SortBy::Favorites,
                 year: None,
+                list_size: 1,
             },
         );
         assert_eq!(load(&path).sort, SortBy::Favorites);

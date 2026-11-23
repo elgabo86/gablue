@@ -26,6 +26,7 @@ use crate::covers;
 use crate::cursor;
 use crate::dialog;
 use crate::favorites;
+use crate::recent;
 use crate::folders;
 use crate::gallery;
 use crate::gamepad::{PadButton, PadEvent, PadKind};
@@ -1232,6 +1233,13 @@ pub struct App {
     art_menu: Option<usize>,
     /// Slugs marqués ★ (fichier `favorites.txt`).
     favorites: HashSet<String>,
+    /// jeux lancés, du plus récent au plus ancien (ordre « Derniers lancés »)
+    recent: Vec<(String, u64)>,
+    /// recherche par nom : texte saisi, et champ ouvert au clavier
+    search: String,
+    search_open: bool,
+    /// taille des lignes de la vue LISTE (0 compact, 1 normal, 2 grand)
+    list_size: u8,
     /// Tous les jeux ; `games` n'en est que la vue filtrée (favoris).
     all_games: Vec<Game>,
     /// La fenêtre a le focus. La manette est lue sur `/dev/input` directement,
@@ -1326,6 +1334,7 @@ impl App {
             .unwrap_or_default();
         let all_games = library::from_rows(&config, &rows, &mut artwork, &[], &identities);
         let favorites = favorites::load(&config.favorites_path());
+        let recent = recent::load(&recent::path(&config.cache_dir()));
         // temps de jeu : avec les sauvegardes (lgp-saves / LocalSavesWGP).
         // L'ancien fichier du cache est rangé ici, une fois la liste connue,
         // pour que le format de chaque jeu soit connu.
@@ -1415,6 +1424,7 @@ impl App {
             playtime_paths,
             years: BTreeMap::new(),
             sort: saved.sort,
+            list_size: saved.list_size.min(2),
             view_menu: None,
             sort_menu: None,
             year_menu: None,
@@ -1441,6 +1451,9 @@ impl App {
             page: None,
             art_menu: None,
             favorites,
+            recent,
+            search: String::new(),
+            search_open: false,
             all_games,
             active: true,
             input: Input::Keyboard,
@@ -3407,7 +3420,13 @@ impl App {
                     // `columns` colonnes le zoom ne changeait rien du tout
                     // (constaté 18/11 : +/− sans effet). Le levier réel est le
                     // nombre de colonnes : un cran = une colonne.
-                    ViewMode::Grid | ViewMode::List => {
+                    // liste : ses lignes ont leurs trois crans à elles (L2/R2,
+                    // +/−). La largeur de colonne ne les touchait pas, donc la
+                    // liste n'avait aucun réglage de taille (signalé 23/11/2026).
+                    ViewMode::List => {
+                        self.list_size = (self.list_size as i32 + step).clamp(0, 2) as u8;
+                    }
+                    ViewMode::Grid => {
                         self.config.columns = zoom_columns(self.config.columns, step);
                         // `cell_size` n'est qu'une largeur MINIMALE : la fixer
                         // sur la largeur affichée rendait `fitted` égal au
@@ -3422,6 +3441,7 @@ impl App {
                 }
                 // les colonnes et la hauteur de rangée changent avec la taille
                 self.update_scroll_target();
+                self.remember();
                 // glissade vers la nouvelle disposition (aucune en liste, où le
                 // zoom ne change pas la taille des vignettes)
                 if matches!(self.config.view, ViewMode::Grid | ViewMode::Mosaic) {
@@ -3508,16 +3528,28 @@ impl App {
             }
             Message::SortMenuNav(delta) => {
                 if let Some(choice) = self.sort_menu.as_mut() {
-                    // `SortBy::ALL` puis la ligne « Année »
-                    let last = SortBy::ALL.len();
+                    // `SortBy::ALL`, puis « Année », puis « Effacer les derniers
+                    // lancés » (cette dernière n'existe que si l'historique
+                    // n'est pas vide)
+                    let mut last = SortBy::ALL.len();
+                    if !self.recent.is_empty() {
+                        last += 1;
+                    }
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::SortMenuChoose(index) => {
                 self.sort_menu = None;
+                if index > SortBy::ALL.len() && !self.recent.is_empty() {
+                    // ligne « Effacer les derniers lancés » (sous le filtre
+                    // d'année) : elle vide l'historique, pas les temps de jeu
+                    self.effacer_derniers();
+                    self.status = Some(("Derniers lancés effacés".to_string(), false));
+                    return Task::none();
+                }
                 let Some(&sort) = SortBy::ALL.get(index) else {
-                    // dernière ligne du menu : le filtre d'année
+                    // avant-dernière ligne du menu : le filtre d'année
                     self.year_menu = Some(year_index(self.year_filter, self.known_years()));
                     return Task::none();
                 };
@@ -3968,6 +4000,7 @@ impl App {
         };
 
         let command = launch::build(&self.config, &game);
+        self.noter_lancement(&game.slug);
         self.running = Some(game.name.clone());
         self.pending_slug = Some(game.slug.clone());
         self.pending_key = Some(self.key_of(&game.slug));
@@ -4979,6 +5012,7 @@ impl App {
                 view: Some(self.config.view),
                 sort: self.sort,
                 year: self.year_filter,
+                list_size: self.list_size,
             },
         );
     }
@@ -4991,6 +5025,46 @@ impl App {
                 .games
                 .sort_by_cached_key(|game| game.name.to_lowercase()),
             SortBy::Modified => self.games.sort_by_key(|game| std::cmp::Reverse(game.mtime)),
+            // derniers lancés d'abord, puis le reste A→Z : un jeu jamais lancé
+            // n'a pas de rang, il ne doit pas disparaître de la liste
+            SortBy::Recent => {
+                let rang: std::collections::HashMap<String, usize> = self
+                    .recent
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (slug, _))| (slug.clone(), index))
+                    .collect();
+                self.games.sort_by_cached_key(|game| {
+                    (
+                        rang.get(&game.slug).copied().unwrap_or(usize::MAX),
+                        game.name.to_lowercase(),
+                    )
+                });
+            }
+        }
+    }
+
+    /// Note le jeu comme lancé (ordre « Derniers lancés ») et relit la liste.
+    fn noter_lancement(&mut self, slug: &str) {
+        let path = recent::path(&self.config.cache_dir());
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duree| duree.as_secs())
+            .unwrap_or(0);
+        if recent::record(&path, slug, epoch) {
+            self.recent = recent::load(&path);
+        }
+    }
+
+    /// Vide l'historique des derniers lancés (le fichier, pas les temps de jeu).
+    fn effacer_derniers(&mut self) {
+        let path = recent::path(&self.config.cache_dir());
+        if recent::clear(&path) {
+            self.recent.clear();
+            self.apply_filter();
+            self.selected = 0;
+            self.scroll = 0.0;
+            self.scroll_target = 0.0;
         }
     }
 
@@ -5061,9 +5135,13 @@ impl App {
         let current = self.games.get(self.selected).map(|game| game.slug.clone());
         let favorites = self.sort == SortBy::Favorites;
         let year = self.year_filter;
+        // recherche : sous-chaîne, minuscules et sans accents (« zelda »
+        // trouve « The Legend of Zelda », « epee » trouve « Épée »)
+        let requete = normalise(&self.search);
         self.games = self
             .all_games
             .iter()
+            .filter(|game| requete.is_empty() || normalise(&game.name).contains(&requete))
             .filter(|game| !favorites || self.favorites.contains(&game.slug))
             // filtre d'année : seuls les jeux dont la date est connue peuvent
             // y répondre (elle s'apprend page par page)
@@ -5249,6 +5327,37 @@ impl App {
             return Task::none();
         };
 
+        // recherche ouverte : le champ capte le clavier (aucun raccourci ne
+        // doit se déclencher pendant qu'on tape un titre)
+        if self.search_open {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.search.clear();
+                    self.search_open = false;
+                    self.apply_filter();
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::OpenPage(self.selected))
+                }
+                keyboard::Key::Named(Named::Backspace) => {
+                    self.search.pop();
+                    self.apply_filter();
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::ArrowRight) => self.navigate(Nav::Next),
+                keyboard::Key::Named(Named::ArrowLeft) => self.navigate(Nav::Prev),
+                keyboard::Key::Named(Named::ArrowDown) => self.navigate(Nav::Down),
+                keyboard::Key::Named(Named::ArrowUp) => self.navigate(Nav::Up),
+                keyboard::Key::Character(ch) => {
+                    self.search.push_str(ch);
+                    self.apply_filter();
+                    Task::none()
+                }
+                _ => Task::none(),
+            };
+        }
+
         // page RÉGLAGES : elle capte tout tant qu'elle est ouverte
         if let Some(settings) = self.settings.as_ref() {
             if settings.browser.is_some() {
@@ -5399,6 +5508,14 @@ impl App {
                 "s" | "j" => return self.navigate(Nav::Down),
                 "w" | "k" => return self.navigate(Nav::Up),
                 "v" => return Task::done(Message::ToggleView),
+                // recherche : « / » ouvre le champ (le clavier physique est
+                // branché en session console — K400 —, la manette ne tape pas)
+                "/" => {
+                    self.search.clear();
+                    self.search_open = true;
+                    self.apply_filter();
+                    return Task::none();
+                }
                 "t" => return Task::done(Message::SortMenu),
                 "+" | "=" | "＋" => return Task::done(Message::Zoom(1)),
                 "-" | "_" | "−" | "–" | "‐" => return Task::done(Message::Zoom(-1)),
@@ -5895,6 +6012,8 @@ impl App {
         let content: Element<'_, Message> = if self.games.is_empty() {
             if self.sort == SortBy::Favorites {
                 self.favorites_empty()
+            } else if self.sort == SortBy::Recent && self.recent.is_empty() {
+                self.recent_empty()
             } else if let Some(year) = self.year_filter {
                 self.year_empty(year)
             } else {
@@ -5929,8 +6048,45 @@ impl App {
             }
         };
         let footer = self.footer();
+        // champ de recherche : visible tant qu'il est ouvert ou qu'un filtre
+        // est actif, pour qu'on ne cherche pas pourquoi la liste est courte
+        let mut pile = Column::new().spacing(0);
+        if self.search_open || !self.search.is_empty() {
+            let vide = self.search.is_empty();
+            let ligne = text(if vide {
+                "Rechercher : tape le début d'un nom…".to_string()
+            } else {
+                format!("Rechercher : {}", self.search)
+            })
+            .size(16)
+            .color(if vide { MUTED } else { TEXT });
+            let champ = container(ligne)
+                .width(Fill)
+                .padding([6.0, 10.0])
+                .style(|_| container::Style {
+                    background: Some(Background::Color(CELL_BG)),
+                    border: Border {
+                        color: if self.search_open { ACCENT } else { CELL_BORDER },
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..container::Style::default()
+                });
+            pile = pile.push(
+                container(champ)
+                    .width(Fill)
+                    .center_x(Fill)
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 0.0,
+                        bottom: 10.0,
+                        left: 0.0,
+                    }),
+            );
+        }
+        pile = pile.push(content).push(footer);
 
-        container(column![content, footer].spacing(0))
+        container(pile)
             .width(Fill)
             .height(Fill)
             // marge de droite plus large : la barre de défilement d'iced est
@@ -7489,6 +7645,25 @@ impl App {
         rows =
             rows.push(mouse_area(year_line).on_press(Message::SortMenuChoose(SortBy::ALL.len())));
 
+        // sous le filtre d'année : effacer l'historique des derniers lancés.
+        // La ligne n'existe que si l'historique n'est pas vide — proposer
+        // d'effacer du vide n'apprend rien.
+        if !self.recent.is_empty() {
+            let clear_selected = choice == SortBy::ALL.len() + 1;
+            let clear_line = container(
+                text("Effacer les derniers lancés")
+                    .size(18)
+                    .color(if clear_selected { Color::BLACK } else { MUTED }),
+            )
+            .width(Fill)
+            .padding([9.0, 14.0])
+            .style(move |_| action_style(clear_selected));
+            rows = rows.push(
+                mouse_area(clear_line)
+                    .on_press(Message::SortMenuChoose(SortBy::ALL.len() + 1)),
+            );
+        }
+
         let panel = container(column![text("Tri").size(18).color(TEXT), rows].spacing(12))
             .padding(18)
             .width(Length::Fixed(300.0))
@@ -8143,7 +8318,11 @@ impl App {
 
     /// Vignette des lignes de liste, proportionnelle au zoom de la grille.
     fn list_thumb(&self) -> f32 {
-        (self.config.cell_size as f32 / 5.0).clamp(28.0, 96.0)
+        match self.list_size {
+            0 => 38.0,
+            2 => 78.0,
+            _ => 56.0,
+        }
     }
 
     /// Hauteur d'une ligne de liste (vignette + marges).
@@ -8399,43 +8578,84 @@ impl App {
     /// Disposition en lignes : vignette à gauche, nom à droite.
     fn list(&self) -> Column<'_, Message> {
         let mut rows = Column::new().spacing(8);
+        let hauteur = self.list_thumb();
+        // couverture au format portrait des pochettes (205×308)
+        let largeur = hauteur * 205.0 / 308.0;
 
         for (index, game) in self.games.iter().enumerate() {
             let selected = index == self.selected;
-            let thumb = self.list_thumb();
+            let titre = if selected { TEXT } else { Color::from_rgb(0.80, 0.83, 0.89) };
 
-            // en liste, c'est l'ICÔNE DU PAQUET qui identifie le jeu ;
-            // la cover ne sert que de repli, puis le sample
-            let art: Element<'_, Message> =
-                match game.icon.clone().or_else(|| self.cover_handle(game, thumb)) {
-                    Some(handle) => image(handle)
-                        .width(Length::Fixed(thumb))
-                        .height(Length::Fixed(thumb))
-                        .content_fit(ContentFit::Contain)
-                        .into(),
-                    None => sample_art(&self.sample, &game.name, game.icon.as_ref(), thumb, thumb),
-                };
+            // art : la pochette d'abord (c'est elle qui identifie un jeu),
+            // l'icône du paquet ensuite, une vignette générée en dernier
+            let art: Element<'_, Message> = match self.cover_handle(game, largeur) {
+                Some(handle) => image(handle)
+                    .width(Length::Fixed(largeur))
+                    .height(Length::Fixed(hauteur))
+                    .content_fit(ContentFit::Cover)
+                    .into(),
+                None => sample_art(&self.sample, &game.name, game.icon.as_ref(), largeur, hauteur),
+            };
+
+            // méta à DROITE, sur une colonne de largeur fixe : les années et
+            // les temps de jeu s'alignent d'une ligne à l'autre au lieu de
+            // flotter après le titre
+            let mut meta: Vec<String> = Vec::new();
+            if let Some(year) = self.year_of(&game.slug) {
+                meta.push(year.to_string());
+            }
+            let secondes = self.playtime.get(&game.slug).copied().unwrap_or(0);
+            if secondes >= 60 {
+                meta.push(playtime::format(Some(secondes)));
+            }
+            let taille_titre = match self.list_size {
+                0 => 15.0,
+                2 => 21.0,
+                _ => 18.0,
+            };
+            let titre_texte = text(short(&game.name, 72))
+                .size(taille_titre)
+                .color(titre)
+                .width(Length::Fill);
+            let meta_texte: Element<'_, Message> = if meta.is_empty() {
+                Row::new().into()
+            } else {
+                text(meta.join("  ·  "))
+                    .size(13)
+                    .color(MUTED)
+                    .width(Length::Fixed(150.0))
+                    .align_x(Alignment::End)
+                    .into()
+            };
 
             let star: Element<'_, Message> = if self.favorites.contains(&game.slug) {
-                self.star_icon(17.0, 1.0)
+                self.star_icon(16.0, 1.0)
             } else {
                 Row::new().into()
             };
 
-            let body = row![
-                art,
-                text(short(&game.name, 64))
-                    .size(18)
-                    .color(if selected { TEXT } else { MUTED }),
-                star,
-            ]
+            // filet d'accent à gauche de la ligne sélectionnée : le fond teinté
+            // seul se perdait dans une longue liste (retour 18/11)
+            let filet = container(Row::new())
+                .width(Length::Fixed(3.0))
+                .height(Length::Fixed(hauteur.max(40.0)))
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(if selected {
+                        ACCENT
+                    } else {
+                        Color::TRANSPARENT
+                    })),
+                    ..container::Style::default()
+                });
+
+            let body = row![filet, art, titre_texte, meta_texte, star,]
             .spacing(14)
             .align_y(Alignment::Center)
             .padding(Padding {
                 top: 8.0,
                 right: 16.0,
                 bottom: 8.0,
-                left: 10.0,
+                left: 9.0,
             });
 
             let line = container(body)
@@ -8448,36 +8668,77 @@ impl App {
         rows
     }
 
-    /// Grand aperçu (cover) du jeu sélectionné, à droite de la liste.
+    /// Panneau de droite de la vue liste : la pochette du jeu sélectionné,
+    /// BORNÉE en hauteur, puis son nom et son état.
+    ///
+    /// La cover remplissait toute la place (`Fill`) : à 1440p elle devenait
+    /// énorme et écrasait la liste (signalé le 23/11/2026). Elle est plafonnée
+    /// et centrée ; le chemin du paquet, qui ne servait qu'au développement,
+    /// a disparu.
     fn preview(&self) -> Element<'_, Message> {
         let Some(game) = self.games.get(self.selected) else {
             return Row::new().into();
         };
 
-        let art = game.cover.clone().or_else(|| game.icon.clone());
-        let picture: Element<'_, Message> = match art {
-            Some(handle) => image(handle)
+        // bannière héros en haut du panneau quand elle existe : elle occupe
+        // toute la largeur de la carte et la remplit, au lieu d'une pochette
+        // perdue au milieu du vide. Repli : la pochette, plafonnée.
+        let picture: Element<'_, Message> = match &game.hero {
+            Some(handle) => image(handle.clone())
                 .width(Fill)
-                .height(Fill)
-                .content_fit(ContentFit::Contain)
+                .height(Length::Fixed((self.viewport.1 * 0.28).clamp(140.0, 300.0)))
+                .content_fit(ContentFit::Cover)
                 .into(),
-            None => sample_cover(&self.sample, &game.name, game.icon.as_ref()),
+            None => {
+                let hauteur = (self.viewport.1 * 0.46).clamp(180.0, 460.0);
+                let largeur = hauteur * 205.0 / 308.0;
+                match game.cover.clone().or_else(|| game.icon.clone()) {
+                    Some(handle) => image(handle)
+                        .width(Length::Fixed(largeur))
+                        .height(Length::Fixed(hauteur))
+                        .content_fit(ContentFit::Contain)
+                        .into(),
+                    None => sample_art(
+                        &self.sample,
+                        &game.name,
+                        game.icon.as_ref(),
+                        largeur,
+                        hauteur,
+                    ),
+                }
+            }
+        };
+
+        let mut meta: Vec<String> = Vec::new();
+        if let Some(year) = self.year_of(&game.slug) {
+            meta.push(format!("Sorti en {year}"));
+        }
+        let joue = playtime::format(self.playtime.get(&game.slug).copied());
+        meta.push(format!("Temps de jeu : {joue}"));
+        let favori = if self.favorites.contains(&game.slug) {
+            "  ·  ★"
+        } else {
+            ""
         };
 
         let caption = column![
-            text(short(&game.name, 42)).size(22).color(TEXT),
-            text(game.path.display().to_string()).size(13).color(MUTED),
+            text(short(&game.name, 46)).size(21).color(TEXT),
+            text(format!("{}{favori}", meta.join("  ·  ")))
+                .size(13)
+                .color(MUTED),
         ]
-        .spacing(4)
+        .spacing(5)
         .align_x(Alignment::Center);
 
-        container(
+        // la carte prend SA hauteur (bannière + textes) et se centre dans la
+        // colonne : une carte pleine hauteur laissait un grand vide sous le
+        // contenu (signalé 23/11/2026)
+        let carte = container(
             column![picture, caption]
-                .spacing(14)
+                .spacing(16)
                 .align_x(Alignment::Center),
         )
         .width(Fill)
-        .height(Fill)
         .padding(18)
         .style(|_| container::Style {
             background: Some(Background::Color(CELL_BG)),
@@ -8487,8 +8748,14 @@ impl App {
                 radius: 18.0.into(),
             },
             ..container::Style::default()
-        })
-        .into()
+        });
+
+        container(carte)
+            .width(Fill)
+            .height(Fill)
+            .center_x(Fill)
+            .center_y(Fill)
+            .into()
     }
 
     /// Vue « favoris » sans aucun favori : on explique comment en poser un.
@@ -8514,6 +8781,25 @@ impl App {
         .padding(24)
         .center_x(Fill)
         .center_y(Fill)
+        .into()
+    }
+
+    fn recent_empty(&self) -> Element<'_, Message> {
+        container(
+            column![
+                text("Aucun jeu lancé").size(22).color(TEXT),
+                text("L'ordre « Derniers lancés » se remplit au premier jeu ouvert.")
+                    .size(14)
+                    .color(MUTED),
+                text("Tri (menu T ou Carré/X) pour revenir à A→Z.")
+                    .size(14)
+                    .color(MUTED),
+            ]
+            .spacing(8),
+        )
+        .width(Fill)
+        .height(Fill)
+        .padding(24)
         .into()
     }
 
@@ -8597,12 +8883,12 @@ impl App {
             .spacing(16)
             .align_y(Alignment::Center)
             .into(),
-            (false, false) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
+            (false, false) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   / rechercher   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran   ·   Échap quitter")
                 .size(15)
                 .font(HELP_FONT)
                 .color(MUTED)
                 .into(),
-            (false, true) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran")
+            (false, true) => text("←↑→↓ naviguer   ·   Entrée ouvrir   ·   / rechercher   ·   V vue   ·   +/− taille   ·   T tri   ·   F plein écran")
                 .size(15)
                 .font(HELP_FONT)
                 .color(MUTED)
@@ -9055,16 +9341,6 @@ fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> 
     .into()
 }
 
-/// Sample occupant tout l'espace disponible (aperçu de la vue liste), avec
-/// l'initiale du jeu par-dessus pour ne pas confondre deux jeux sans cover.
-fn sample_cover<'a>(
-    sample: &image::Handle,
-    name: &str,
-    icon: Option<&image::Handle>,
-) -> Element<'a, Message> {
-    sample_layer(sample, name, icon, 420.0)
-}
-
 /// Sample + icône du paquet (petite, ratio conservé) + NOM DU JEU : sans
 /// cover, on doit au moins reconnaître le jeu et lire son nom.
 fn sample_layer<'a>(
@@ -9233,21 +9509,49 @@ fn picker_panel_style() -> container::Style {
 
 /// Ligne de liste : aucun cadre, fond teinté seulement pour la sélection.
 fn list_style(selected: bool) -> container::Style {
+    // Toutes les lignes ont un fond (très discret) et un liseré : sans ça la
+    // liste flottait dans le vide noir, et la sélection ne se voyait que par
+    // la teinte. La ligne choisie prend le fond clair + liseré d'accent.
     container::Style {
         background: Some(Background::Color(if selected {
             CELL_BG_SELECTED
         } else {
-            Color::TRANSPARENT
+            Color::from_rgba(0.07, 0.08, 0.11, 0.55)
         })),
-        // le fond teinté seul ne suffisait pas : sur 666 vignettes on perdait
-        // de vue laquelle était sélectionnée (retour 18/11)
         border: Border {
-            color: if selected { ACCENT } else { Color::TRANSPARENT },
-            width: if selected { FOCUS_BORDER } else { 0.0 },
-            radius: 12.0.into(),
+            color: if selected {
+                ACCENT
+            } else {
+                Color::from_rgba(0.14, 0.16, 0.21, 0.85)
+            },
+            width: 1.0,
+            radius: 10.0.into(),
         },
         ..container::Style::default()
     }
+}
+
+/// Texte de comparaison de la recherche : minuscules, sans accents ni
+/// ligatures. « Épée » et « epee » doivent trouver le même jeu, et un titre
+/// français tapé sans accent ne doit pas demander de le taper avec.
+fn normalise(texte: &str) -> String {
+    let mut sortie = String::with_capacity(texte.len());
+    for c in texte.to_lowercase().chars() {
+        match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => sortie.push('a'),
+            'ç' => sortie.push('c'),
+            'è' | 'é' | 'ê' | 'ë' => sortie.push('e'),
+            'ì' | 'í' | 'î' | 'ï' => sortie.push('i'),
+            'ñ' => sortie.push('n'),
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => sortie.push('o'),
+            'ù' | 'ú' | 'û' | 'ü' => sortie.push('u'),
+            'ý' | 'ÿ' => sortie.push('y'),
+            'œ' => sortie.push_str("oe"),
+            'æ' => sortie.push_str("ae"),
+            _ => sortie.push(c),
+        }
+    }
+    sortie
 }
 
 /// Nom court pour l'affichage (les noms de paquets peuvent être longs).
@@ -9258,6 +9562,20 @@ fn short(name: &str, max: usize) -> String {
     let mut out: String = name.chars().take(max - 1).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod recherche_tests {
+    use super::normalise;
+
+    #[test]
+    fn recherche_insensible_aux_accents_et_la_casse() {
+        assert_eq!(normalise("Épée de Légende"), "epee de legende");
+        assert!(normalise("The Legend of Zelda").contains(&normalise("ZELDA")));
+        // ligatures : « cœur » se tape « coeur »
+        assert!(normalise("Cœur").contains(&normalise("coeur")));
+        assert!(normalise("Æther").contains(&normalise("aether")));
+    }
 }
 
 fn plural(count: usize) -> String {

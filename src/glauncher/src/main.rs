@@ -20,6 +20,7 @@ mod music;
 mod pergame;
 mod play;
 mod playtime;
+mod recent;
 mod pose;
 mod recorder;
 mod sons;
