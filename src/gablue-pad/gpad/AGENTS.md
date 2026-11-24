@@ -34,13 +34,24 @@ l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliqué
 | `CAPTURE` / `CURSEUR` | 2 positions, **`MASQUE`** → `AFFICHE` | `curseur` (affiché = v2, non implémenté) |
 | `CAPTURE` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | `replay_sec` dans `recorder.conf` (le démon relit le fichier seul) |
 | `CAPTURE` / `REPLAY AUTO` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
-| `AFFICHAGE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
+| `AFFICHAGE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : `cpu.weight` **×100** (10 000) **et** VRAM réservée (`dmem.low` = capacité de chaque GPU) pour l'app de la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
 | `AFFICHAGE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
 
 `AFFICHAGE` **a absorbé `PERF`** (24/11/2026) : HUD, limite de FPS, VRR,
 priorité CPU et style sont le même sujet — ce qu'on voit, et à quelle vitesse.
 `TOUT FERMER` reste dans `SYSTEME` **et** dans le **menu système** (Home
 maintenu) : deux chemins voulus, décidé le 24/11/2026.
+
+`PRIORITE ACTIVE` n'est pas du CPU seul (vérifié le 24/11/2026 sur
+`foreground_booster`, variante *dmemcg* : `cpu.weight` 100 → **10 000** et
+`dmem.low` 0 → **capacité VRAM des GPU**, rien d'autre — ni `io.weight`, ni
+`memory.low`, ni quota). Et c'est **par unité systemd**, pas par fenêtre :
+`GetUnitByPID` rend l'unité qui *englobe* le pid, donc un jeu lancé depuis
+Konsole est boosté dans le scope du terminal (aucun `systemd-run` dans gwine,
+lgplaunch ni glauncher), et en session console tout — KWin, glauncher, jeu —
+vit dans `session-N.scope` : le boost porte alors sur la session entière.
+Sous pression VRAM, c'est le vrai gain pour un jeu ; le CPU n'est qu'une part
+relative, sans plafond.
 
 - Les lignes `CAPTURE` et `REPLAY` écrivent `~/.config/gablue/recorder.conf` :
   le démon en **surveille le `mtime`** (poll 500 ms), donc aucune socket à

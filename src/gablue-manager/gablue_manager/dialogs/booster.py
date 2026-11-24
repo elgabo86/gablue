@@ -1,4 +1,14 @@
-"""Optimiser au premier plan : priorité CPU à l'application active.
+"""Optimiser au premier plan : priorité CPU et VRAM à l'application active.
+
+Le service `plasma-foreground-booster` (binaire `foreground_booster`, variante
+*dmemcg* livrée par Gablue) fait **deux** choses à la fenêtre active, relevées
+dans le source amont (pixelcluster/kcgroups, tag
+`booster-dmemcg-experimental-0.2`) et mesurées le 24/11/2026 : `cpu.weight`
+passe à **100 × la normale** (10 000) et `dmem.low` reçoit **la capacité de
+chaque GPU** (`/sys/fs/cgroup/dmem.capacity`, 8 Gio ici) — la VRAM de
+l'application active n'est donc plus la première que le noyau récupère. La
+fenêtre précédente est remise au défaut. Rien d'autre : ni quota CPU, ni poids
+disque (`io.weight` n'est jamais écrit), ni `memory.low`.
 """
 
 from PySide6.QtCore import Qt
@@ -23,6 +33,11 @@ class ForegroundBoosterDialog(QDialog):
     `~/.config/kcgroupsrc` (réglage persistant, relu à chaque ouverture de
     session) et le service utilisateur `plasma-foreground-booster` est relancé
     ou arrêté. Aucun privilège, aucun redémarrage de la machine.
+
+    Ce que le service fait vraiment : priorité **CPU** (`cpu.weight` ×100) et
+    **VRAM** (`dmem.low` = capacité des GPU) pour l'application de la fenêtre
+    active — voir la docstring du module ; la formulation « priorité CPU » seule
+    était incomplète.
     """
 
     def __init__(self, parent=None, host: dict | None = None):
@@ -73,7 +88,8 @@ class ForegroundBoosterDialog(QDialog):
         top.addStretch(1)
         frame_layout.addLayout(top)
         detail = QLabel(
-            "La fenêtre active passe prioritaire sur les tâches de fond. À "
+            "La fenêtre active passe prioritaire sur le processeur (×100) et "
+            "garde sa mémoire vidéo ; les tâches de fond cèdent d'abord. À "
             "couper si vous compilez ou encodez en arrière-plan.",
             frame,
         )
@@ -177,7 +193,8 @@ class ForegroundBoosterDialog(QDialog):
             self, "Optimiser au premier plan",
             ("Activer l'optimisation au premier plan ?" if enabled
              else "Désactiver l'optimisation au premier plan ?") + "\n\n"
-            + ("La fenêtre active passe prioritaire." if enabled else
+            + ("La fenêtre active passe prioritaire (CPU ×100 et mémoire "
+               "vidéo)." if enabled else
                "Les tâches de fond retrouvent leur part."),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )

@@ -809,8 +809,8 @@ enum Entree {
     SousMenu(&'static str, Cat),
     /// style visuel (NU / DECK / BREEZE), appliqué à chaud
     Style,
-    /// optimiser au premier plan : booster cgroup de Plasma (priorité CPU à la
-    /// fenêtre active), basculé par A
+    /// optimiser au premier plan : booster cgroup de Plasma (CPU ×100 et VRAM
+    /// réservée à la fenêtre active), basculé par A
     Booster,
     // --- capture (réglages de `gpad-rec`, fichier recorder.conf) ---
     Codec,
@@ -949,8 +949,8 @@ impl Cat {
     /// ligne annonçant « INACTIF » n'apprend rien).
     fn entrees(self, dispo: Dispo) -> Vec<Entree> {
         match self {
-            // `PERF` a été absorbé : HUD, limite de FPS, VRR et priorité CPU
-            // sont le même sujet (ce qu'on voit, et à quelle vitesse)
+            // `PERF` a été absorbé : HUD, limite de FPS, VRR et priorité
+            // CPU/VRAM sont le même sujet (ce qu'on voit, et à quelle vitesse)
             Cat::Affichage => vec![
                 Entree::Fenetre,
                 Entree::Fps,

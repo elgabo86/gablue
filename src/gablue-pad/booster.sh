@@ -1,6 +1,9 @@
 #!/usr/bin/bash
 # booster.sh - « optimiser au premier plan » : le booster cgroup de Plasma
-# donne la priorité CPU/IO à la fenêtre active, ou le laisse éteint.
+# donne à la fenêtre active cpu.weight = 100 x la normale (10 000) et lui
+# réserve la mémoire vidéo (dmem.low = capacité de chaque GPU), ou le laisse
+# éteint. Rien d'autre : ni quota CPU, ni poids disque (mesuré le 24/11/2026,
+# source amont pixelcluster/kcgroups tag booster-dmemcg-experimental-0.2).
 #
 #   ./booster.sh status   "actif" / "inactif"  (pour l'affichage)
 #   ./booster.sh get      "booster=on|off"     (machine-lisible)
