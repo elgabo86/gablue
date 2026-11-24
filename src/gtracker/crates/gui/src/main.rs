@@ -6204,8 +6204,22 @@ fn update(tx: &Sender<Msg>) -> Result<()> {
         let _ = tx2.send(Msg::Progress(p));
         let _ = tx2.send(Msg::Status(format!("Mise à jour joshw.info… {done}/{total}")));
     });
-    let added = joshw::update(&mut db, cb)?;
-    let _ = tx.send(Msg::Status(format!("{added} nouvelles archives")));
+    let report = joshw::update(&mut db, cb)?;
+    for url in &report.failed {
+        eprintln!("catalogue : dossier non récupéré {url}");
+    }
+    let tail = if report.failed.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {} dossiers non récupérés, relancer la mise à jour",
+            report.failed.len()
+        )
+    };
+    let _ = tx.send(Msg::Status(format!(
+        "{} nouvelles archives{tail}",
+        report.inserted
+    )));
     let _ = tx.send(Msg::ReloadDb);
     Ok(())
 }

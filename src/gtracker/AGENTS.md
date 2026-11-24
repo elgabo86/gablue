@@ -159,7 +159,7 @@ restent acceptés en repli. Les exports déjà présents dans
 
 ```
 ./build.sh                      # dev local : génère .build/alsa/alsa.pc (en-têtes de brew) puis cargo build --release
-cargo test -p gtracker-core  # loopdetect, tempo, m3u, liens joshw (26 tests)
+cargo test -p gtracker-core  # loopdetect, tempo, m3u, liens et noms joshw
 cargo test -p gtracker       # pads, longueurs de découpe, dépôt dans le montage,
                              # coquille (shell) et gestes simulés sans écran
 ./check.sh                   # moteur + GTracker, doit finir par OK
@@ -189,6 +189,19 @@ et le nombre de tours en quelques centaines de ms.
   `CentralPanel::show(ui, ..)`.
 - Le dossier `folder` de la base est la source de l'URL (`a`…`z`, `0-9`, `zzz_*`) ;
   recalculer la première lettre casse les entrées `zzz_*` (bug de la version Go).
+- **Mise à jour du catalogue : un dossier raté cachait des jeux entiers.** `joshw::update`
+  lançait un thread par site (24 requêtes d'un coup, timeout 15 s) et avalait tout
+  `Err` (`if let Ok(…)`) : un passage laissait des **sites entiers** absents (GBS, SMD,
+  Wii…) et des dossiers tronqués, sans un mot — « il ne trouve pas Yoshi's Island sur
+  SNES » (vécu 24/11 : base à 25 329 lignes au lieu de 39 646, dossier `spc/s` à 87
+  entrées sur 410). Règles : un **404** est un dossier absent du site (tous n'ont pas
+  `zzz_prototypes`) → `Ok("")`, pas un raté ; toute autre erreur **remet le dossier en
+  fin de file** (5 tentatives, pause croissante, 4 requêtes à la fois — l'IPv6 de
+  joshw.info est injoignable d'ici, `ureq` sort parfois « Network is unreachable »,
+  constaté 24/11) ; `UpdateReport` porte `inserted` **et** `failed`, l'UI affiche
+  « N dossiers non récupérés, relancer la mise à jour » et les URL partent sur stderr.
+  Mesure après correction : 0 raté sur 696 dossiers, 128 s. L'update est **additif**
+  (`INSERT OR IGNORE`, rien n'est supprimé) : le relancer ne coûte que le réseau.
 - Cache : `~/.cache/gtracker/{gtracker.db,archives/<id>,bin}` — compatible avec la
   base de l'ancienne version (mêmes tables `files`). Les échantillons décodés ne vont
   pas sur le disque : cache mémoire (`GTRACKER_RAM_MB`, 512 Mo par défaut).
