@@ -825,40 +825,86 @@ enum Entree {
     AutoReplay,
 }
 
-/// L'accueil : les catégories, dans l'ordre du quotidien (le jeu d'abord, le
-/// système en dernier — c'est le coin des actions irréversibles). En **tête**,
-/// la bascule jeu ⇄ app quand elle est possible : c'est le geste du quotidien
-/// et il ne doit pas se chercher dans une catégorie (demandé le 23/11/2026).
-fn accueil_items(bascule: bool) -> Vec<Entree> {
-    let mut items = Vec::with_capacity(9);
-    if bascule {
+/// Nom de session posé par `wayland-sessions/gablue-gaming.desktop`
+/// (`DesktopNames`) : la session console = KWin nu, sans plasmashell. Même
+/// règle et même nom que `glauncher::mode` — ne pas en inventer une seconde.
+const SESSION_CONSOLE: &str = "GablueGaming";
+
+/// Session console déduite de l'environnement (cœur testable).
+fn est_session_console(session: Option<&str>, current: Option<&str>) -> bool {
+    let nommee = |v: &str| v.split([':', ';']).any(|n| n.trim() == SESSION_CONSOLE);
+    session.is_some_and(nommee) || current.is_some_and(nommee)
+}
+
+/// Robinet de banc d'essai : `GPAD_MODE=console|desktop` (comme
+/// `GLAUNCHER_MODE` du launcher).
+fn session_console() -> bool {
+    match std::env::var("GPAD_MODE").ok().as_deref() {
+        Some("console") => return true,
+        Some("desktop") => return false,
+        _ => {}
+    }
+    est_session_console(
+        std::env::var("XDG_SESSION_DESKTOP").ok().as_deref(),
+        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+    )
+}
+
+/// L'accueil : **les gestes du quotidien à plat**, puis les réglages en
+/// catégories. Un domaine d'une ou deux lignes n'a pas de page (aller dans un
+/// sous-menu pour un geste coûte un appui) : ses lignes sont ici. Une
+/// catégorie ne reste que si elle porte au moins trois lignes propres
+/// (demandé le 24/11/2026).
+///
+/// Ordre = fréquence d'usage en jeu : la fenêtre, la bascule jeu ⇄ app, puis
+/// fermer / pointer / saisir / plein écran, les volumes, la capture, et
+/// seulement ensuite les réglages (qu'on change une fois).
+fn accueil_items(dispo: Dispo) -> Vec<Entree> {
+    let mut items = vec![Entree::Fenetre];
+    // le geste du quotidien (regarder une vidéo à côté du jeu) : en tête, il
+    // ne doit pas se chercher dans une catégorie (demandé le 23/11/2026)
+    if dispo.bascule {
         items.push(Entree::Basculer);
     }
-    items.extend(vec![
-        Entree::SousMenu("JEU", Cat::Jeu),
-        Entree::SousMenu("FENETRES", Cat::Fenetres),
-        Entree::SousMenu("PERF", Cat::Perf),
-        Entree::SousMenu("CAPTURE", Cat::Capture),
-        Entree::SousMenu("SON", Cat::Son),
+    items.push(Entree::Action("FERMER"));
+    items.push(Entree::Action("MODE SOURIS"));
+    items.push(Entree::Action("CLAVIER VIRTUEL"));
+    // bascule de plein écran : elle n'a aucun sens en session console, où
+    // tout est plein écran par nature (demandé le 24/11/2026)
+    if !dispo.console {
+        items.push(Entree::Action("PLEIN ECRAN"));
+    }
+    // le seul réglage qu'on touche en jouant : il est sur l'accueil
+    items.push(Entree::Volume);
+    if dispo.jeu {
+        items.push(Entree::VolumeJeu);
+    }
+    if dispo.app {
+        items.push(Entree::VolumeApp);
+    }
+    items.push(Entree::Action("CAPTURE ECRAN"));
+    items.push(Entree::Action("ENREGISTRER UNE VIDEO"));
+    items.push(Entree::Action("REPLAY"));
+    if dispo.replay {
+        items.push(Entree::Action("SAUVER REPLAY"));
+    }
+    items.extend([
         Entree::SousMenu("AFFICHAGE", Cat::Affichage),
-        Entree::SousMenu("MANETTE", Cat::Manette),
+        Entree::SousMenu("CAPTURE", Cat::Capture),
         Entree::SousMenu("SYSTEME", Cat::Systeme),
     ]);
     items
 }
 
-/// Catégories de l'accueil : un sous-menu par domaine. Le contenu est le même
-/// dans les deux sessions pour l'instant ; les différences bureau / console
-/// viendront avec le sélecteur du mode jeu (jeu ⇄ application compagne).
+/// Catégories de l'accueil : **une page seulement pour les domaines qui en
+/// valent une** (au moins trois lignes propres). `JEU`, `FENETRES`, `SON`,
+/// `PERF` et `MANETTE` ont disparu le 24/11/2026 : leurs lignes sont des
+/// gestes de l'accueil, et `PERF` a été absorbé par `AFFICHAGE` (VRR, HUD et
+/// limite de FPS sont le même sujet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cat {
-    Jeu,
-    Fenetres,
     Affichage,
-    Perf,
     Capture,
-    Son,
-    Manette,
     Systeme,
 }
 
@@ -869,126 +915,66 @@ enum Cible {
     App,
 }
 
-/// Ce qui existe au moment où une catégorie est construite : une ligne dont
-/// l'objet n'existe pas (pas de replay, pas de manette BT, pas de flux audio)
-/// n'est pas proposée du tout.
+/// Ce qui existe au moment où une liste est construite (accueil et
+/// catégories) : une ligne dont l'objet n'existe pas (pas de replay, pas de
+/// flux audio, pas d'app compagne) n'est pas proposée du tout.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Dispo {
     replay: bool,
-    manette: bool,
     jeu: bool,
     app: bool,
     /// une application compagne est ouverte à côté du jeu : le sélecteur
     bascule: bool,
-    /// session console (KWin nu) : le menu propose de revenir au bureau au
-    /// lieu d'y passer
+    /// session console (`GablueGaming`, KWin nu) : le menu propose de revenir
+    /// au bureau au lieu d'y passer, et la bascule de plein écran disparaît
+    /// (tout y est plein écran)
     console: bool,
 }
 
 impl Cat {
     fn nom(self) -> &'static str {
         match self {
-            Cat::Jeu => "JEU",
-            Cat::Fenetres => "FENETRES",
             Cat::Affichage => "AFFICHAGE",
-            Cat::Perf => "PERF",
             Cat::Capture => "CAPTURE",
-            Cat::Son => "SON",
-            Cat::Manette => "MANETTE",
             Cat::Systeme => "SYSTEME",
         }
     }
 
     /// Les lignes de la catégorie, dans l'ordre d'affichage. L'en-tête de
-    /// fenêtre est en tête de CHAQUE catégorie : il garde sa hauteur nulle et
-    /// sa ligne propre, mais le curseur doit pouvoir s'y poser partout (A y
-    /// ouvre les actions de la fenêtre active).
+    /// fenêtre est en tête de la page : il garde sa hauteur nulle et sa ligne
+    /// propre, mais le curseur doit pouvoir s'y poser (A y ouvre les actions de
+    /// la fenêtre active).
     ///
     /// `Dispo` décide des lignes conditionnelles (même règle qu'avant : une
     /// ligne annonçant « INACTIF » n'apprend rien).
     fn entrees(self, dispo: Dispo) -> Vec<Entree> {
         match self {
-            Cat::Jeu => {
-                let mut v = vec![Entree::Fenetre];
-                // le geste du quotidien (regarder une vidéo à côté du jeu) :
-                // en tête de JEU, là où le panneau s'ouvre — la ligne
-                // n'existait que dans FENETRES, donc introuvable (signalé le
-                // 23/11 : « pas de bouton pour basculer »)
-                if dispo.bascule {
-                    v.push(Entree::Basculer);
-                }
-                v.push(Entree::Action("FERMER"));
-                v.push(Entree::Action("PLEIN ECRAN"));
-                v.push(Entree::Action("TOUT FERMER"));
-                v
-            }
-            // le sélecteur jeu ⇄ application compagne passe avant la liste :
-            // c'est le geste du quotidien (regarder une vidéo à côté du jeu)
-            Cat::Fenetres => {
-                let mut v = vec![Entree::Fenetre];
-                if dispo.bascule {
-                    v.push(Entree::Basculer);
-                }
-                v.push(Entree::Action("CHOISIR FENETRE"));
-                v
-            }
+            // `PERF` a été absorbé : HUD, limite de FPS, VRR et priorité CPU
+            // sont le même sujet (ce qu'on voit, et à quelle vitesse)
             Cat::Affichage => vec![
                 Entree::Fenetre,
+                Entree::Fps,
+                Entree::Mango,
                 Entree::Action("VRR"),
+                Entree::Booster,
                 Entree::Style,
             ],
-            Cat::Perf => vec![
+            // plus que des réglages : les actions (enregistrer, capture,
+            // replay) sont sur l'accueil, à un appui d'ouverture
+            Cat::Capture => vec![
                 Entree::Fenetre,
-                Entree::Mango,
-                Entree::Fps,
-                Entree::Booster,
+                Entree::Qualite,
+                Entree::Codec,
+                Entree::Reso,
+                Entree::FpsRec,
+                Entree::Curseur,
+                Entree::ShotFormat,
+                Entree::ShotQualite,
+                Entree::Duree,
+                Entree::AutoReplay,
             ],
-            Cat::Capture => {
-                let mut v = vec![
-                    Entree::Fenetre,
-                    Entree::Action("ENREGISTRER UNE VIDEO"),
-                    Entree::Action("CAPTURE ECRAN"),
-                    Entree::Action("REPLAY"),
-                ];
-                if dispo.replay {
-                    v.push(Entree::Action("SAUVER REPLAY"));
-                }
-                v.extend([
-                    Entree::Duree,
-                    Entree::AutoReplay,
-                    Entree::Qualite,
-                    Entree::Codec,
-                    Entree::ShotFormat,
-                    Entree::ShotQualite,
-                    Entree::Reso,
-                    Entree::FpsRec,
-                    Entree::Curseur,
-                ]);
-                v
-            }
-            // le général d'abord, puis le jeu et l'app compagne : trois flux
-            // distincts, chacun réglable sans toucher aux autres
-            Cat::Son => {
-                let mut v = vec![Entree::Fenetre, Entree::Volume];
-                if dispo.jeu {
-                    v.push(Entree::VolumeJeu);
-                }
-                if dispo.app {
-                    v.push(Entree::VolumeApp);
-                }
-                v
-            }
-            Cat::Manette => {
-                let mut v = vec![
-                    Entree::Fenetre,
-                    Entree::Action("MODE SOURIS"),
-                    Entree::Action("CLAVIER VIRTUEL"),
-                ];
-                if dispo.manette {
-                    v.push(Entree::Action("DECONNECTER LA MANETTE"));
-                }
-                v
-            }
+            // `TOUT FERMER` reste ici **et** dans le menu système (Home
+            // maintenu) : deux chemins voulus (décidé le 24/11/2026)
             Cat::Systeme => vec![
                 Entree::Fenetre,
                 // la veille est la seule action RÉVERSIBLE de la page : elle
@@ -997,6 +983,7 @@ impl Cat {
                 // le mode d'à côté : changer de session n'est pas sortir, la
                 // ligne reste donc AU-DESSUS des sorties (demandé le 23/11)
                 Entree::Action(if dispo.console { "MODE BUREAU" } else { "MODE JEU" }),
+                Entree::Action("TOUT FERMER"),
                 Entree::Action("FERMER LA SESSION"),
                 Entree::Action("REDEMARRER"),
                 Entree::Action("ETEINDRE"),
@@ -1413,6 +1400,9 @@ struct App {
     /// vue « menu système » (Home maintenu) : petit panneau centré, pas de
     /// réglages — le drapeau CLI reste `--console`
     console: bool,
+    /// session console (`GablueGaming`) : lue une fois depuis
+    /// `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP`, jamais un réglage
+    session_console: bool,
     /// dernière application lancée : un appui répété pendant le démarrage ne
     /// doit pas ouvrir une seconde instance
     derniere_appli: Option<(String, Instant)>,
@@ -1780,13 +1770,18 @@ fn chrono(secs: u64) -> String {
 
 impl App {
     fn new(qh: QueueHandle<App>) -> Self {
+        // lue avant la première liste : l'accueil en dépend (basculer de plein
+        // écran n'existe qu'au bureau)
+        let session_console = session_console();
         Self {
             qh,
             running: true,
-            // ACCUEIL : un sous-menu par domaine (le détail vit dans la
-            // catégorie, plus de page à rallonge) ; l'en-tête de fenêtre est
-            // dans chaque catégorie, hauteur nulle.
-            accueil: accueil_items(false),
+            // ACCUEIL : les gestes du quotidien à plat, puis trois catégories
+            // de réglages (une page seulement si le domaine en vaut une)
+            accueil: accueil_items(Dispo {
+                console: session_console,
+                ..Dispo::default()
+            }),
             cat_items: Vec::new(),
             cap: capture::Conf::lire(),
             reg_top: 0,
@@ -1859,6 +1854,7 @@ impl App {
             logo: None,
             logo_cle: String::new(),
             console: false,
+            session_console,
             derniere_appli: None,
             bus: String::new(),
             inst: String::new(),
@@ -1870,11 +1866,16 @@ impl App {
             icones: HashMap::new(),
             fenetres: Vec::new(),
             fen_items: Vec::new(),
-            fen_menu: vec![
-                Entree::Action("FERMER"),
-                Entree::Action("PLEIN ECRAN"),
-                Entree::Action("CHOISIR FENETRE"),
-            ],
+            fen_menu: {
+                // le plein écran d'une fenêtre ne se bascule pas en session
+                // console : tout y est plein écran (demandé le 24/11/2026)
+                let mut v = vec![Entree::Action("FERMER")];
+                if !session_console {
+                    v.push(Entree::Action("PLEIN ECRAN"));
+                }
+                v.push(Entree::Action("CHOISIR FENETRE"));
+                v
+            },
             stick_x_latched: false,
             stick_y_latched: false,
             touches_tenues: [false; 0x140],
@@ -2347,7 +2348,7 @@ impl App {
     /// `replay_active` ; le curseur est ramené dans les bornes si la ligne
     /// qu'il visait a disparu.
     fn maj_accueil(&mut self) {
-        self.accueil = accueil_items(self.bascule_app.is_some());
+        self.accueil = accueil_items(self.dispo());
         if let Page::Categorie(cat) = self.page {
             self.cat_items = cat.entrees(self.dispo());
         }
@@ -3689,33 +3690,6 @@ impl App {
     /// `cat_items` — l'ancienne serait dessinée avec le contenu de la
     /// nouvelle (deux menus mélangés).
     fn entrer_categorie(&mut self, cat: Cat) {
-        // les flux audio changent à chaque lancement de jeu ou de vidéo :
-        // on relit à l'entrée de la catégorie qui les propose
-        if cat == Cat::Fenetres {
-            self.refresh_bascule();
-        }
-        if cat == Cat::Son {
-            if std::env::var_os("GPAD_SON_DEMO").is_some() {
-                // crochet de banc : deux flux factices, pour photographier les
-                // trois lignes sans lancer un jeu et une vidéo
-                self.son_jeu = Some(audio::Flux {
-                    index: 9001,
-                    pid: 1,
-                    nom: "gwine".to_string(),
-                    pourcent: 80,
-                    mute: false,
-                });
-                self.son_app = Some(audio::Flux {
-                    index: 9002,
-                    pid: 2,
-                    nom: "VacuumTube".to_string(),
-                    pourcent: 35,
-                    mute: false,
-                });
-            } else {
-                self.refresh_sons();
-            }
-        }
         let items = cat.entrees(self.dispo());
         self.cat_items = items;
         self.page = Page::Categorie(cat);
@@ -3735,11 +3709,10 @@ impl App {
     fn dispo(&self) -> Dispo {
         Dispo {
             replay: self.replay_active,
-            manette: self.pad_bt.is_some(),
             jeu: self.son_jeu.is_some(),
             app: self.son_app.is_some(),
             bascule: self.bascule_app.is_some(),
-            console: self.console,
+            console: self.session_console,
         }
     }
 
@@ -3951,6 +3924,25 @@ impl App {
     }
 
     fn refresh_sons(&mut self) {
+        // crochet de banc : deux flux factices, pour photographier les lignes
+        // de volume sans lancer un jeu et une vidéo (`GPAD_SON_DEMO=1`)
+        if std::env::var_os("GPAD_SON_DEMO").is_some() {
+            self.son_jeu = Some(audio::Flux {
+                index: 9001,
+                pid: 1,
+                nom: "gwine".to_string(),
+                pourcent: 80,
+                mute: false,
+            });
+            self.son_app = Some(audio::Flux {
+                index: 9002,
+                pid: 2,
+                nom: "VacuumTube".to_string(),
+                pourcent: 35,
+                mute: false,
+            });
+            return;
+        }
         let mut pids: Vec<i32> = Vec::new();
         if let Some(jeu) = self.jeu_actif() {
             for racine in jeu.pids.clone() {
@@ -7922,16 +7914,18 @@ fn main() {
         // avec la ligne déjà choisie (les réglages ont quitté la page
         // « RÉGLAGES » à plat pour les sous-menus)
         let cible = match f.as_str() {
-            "fps" => Some((Cat::Perf, Entree::Fps)),
-            "mango" => Some((Cat::Perf, Entree::Mango)),
-            "volume" => Some((Cat::Son, Entree::Volume)),
+            // ligne d'une CATÉGORIE (Some) ou de l'ACCUEIL (None) : le volume
+            // et la bascule ont quitté les catégories le 24/11/2026
+            "fps" => Some((Some(Cat::Affichage), Entree::Fps)),
+            "mango" => Some((Some(Cat::Affichage), Entree::Mango)),
+            "volume" => Some((None, Entree::Volume)),
             // section CAPTURE (enregistreur / replay) : banc visuel
-            "capture" => Some((Cat::Capture, Entree::Qualite)),
+            "capture" => Some((Some(Cat::Capture), Entree::Qualite)),
             // sélecteur jeu ⇄ app compagne (banc : GPAD_BASCULE_DEMO=1)
-            "bascule" => Some((Cat::Fenetres, Entree::Basculer)),
+            "bascule" => Some((None, Entree::Basculer)),
             // dernière ligne de la catégorie la plus longue : vérifie le bas
             // de liste (défilement)
-            "fin" => Some((Cat::Capture, Entree::Curseur)),
+            "fin" => Some((Some(Cat::Capture), Entree::AutoReplay)),
             _ => None,
         };
         if f == "accueil" {
@@ -7944,7 +7938,17 @@ fn main() {
             app.dirty = true;
             focus_force = true;
         } else if let Some((cat, c)) = cible {
-            app.entrer_categorie(cat);
+            match cat {
+                Some(cat) => app.entrer_categorie(cat),
+                None => {
+                    // ligne de l'accueil : les flux et la bascule sont relus
+                    // avant de construire la liste, sinon la ligne visée
+                    // n'existe pas encore
+                    app.refresh_bascule();
+                    app.refresh_sons();
+                    app.maj_accueil();
+                }
+            }
             if let Some(i) = app.liste().iter().position(|e| *e == c) {
                 app.selected = i;
             }
@@ -8319,9 +8323,12 @@ fn main() {
             app.refresh_vrr();
             app.refresh_booster();
             // jeu et application compagne ouverts : la bascule apparaît en tête
-            // de l'accueil. Relu après la première image, comme le reste
-            // (`lister.js` prend jusqu'à 400 ms).
+            // de l'accueil, et les volumes du jeu / de l'app sont des lignes de
+            // l'accueil (plus une catégorie SON depuis le 24/11/2026). Relu
+            // après la première image, comme le reste (`lister.js` prend
+            // jusqu'à 400 ms).
             app.refresh_bascule();
+            app.refresh_sons();
             app.maj_accueil();
             app.dirty = true;
         }
@@ -8825,27 +8832,38 @@ mod tests {
         );
     }
 
-    /// L'accueil est le menu des catégories : chacune une seule fois, toutes
-    /// avec un contenu, et l'en-tête de fenêtre en tête — il a une hauteur
-    /// nulle mais le curseur doit pouvoir s'y poser partout (A y ouvre les
-    /// actions de la fenêtre active).
+    /// L'accueil mêle les **gestes du quotidien** (à plat) et trois catégories
+    /// de réglages : une catégorie ne reste que si elle porte au moins trois
+    /// lignes propres (un sous-menu pour un geste = un appui perdu).
     #[test]
-    fn accueil_est_le_menu_des_categories() {
-        let accueil = accueil_items(false);
-        // la bascule jeu ⇄ app n'apparaît qu'avec un jeu ET une app compagne :
-        // en tête, et elle ne prend pas la place d'une catégorie
-        let avec_bascule = accueil_items(true);
-        assert_eq!(avec_bascule.first(), Some(&Entree::Basculer));
-        assert_eq!(avec_bascule.len(), accueil.len() + 1);
+    fn accueil_gestes_puis_categories() {
+        let accueil = accueil_items(Dispo::default());
+        // l'en-tête de fenêtre est en tête de l'accueil comme des catégories
+        assert_eq!(accueil.first(), Some(&Entree::Fenetre));
+        for geste in [
+            Entree::Action("FERMER"),
+            Entree::Action("MODE SOURIS"),
+            Entree::Action("CLAVIER VIRTUEL"),
+            Entree::Action("PLEIN ECRAN"),
+            Entree::Volume,
+            Entree::Action("CAPTURE ECRAN"),
+            Entree::Action("ENREGISTRER UNE VIDEO"),
+            Entree::Action("REPLAY"),
+        ] {
+            assert!(accueil.contains(&geste), "{geste:?} doit être sur l'accueil");
+        }
         let cats: Vec<Cat> = accueil
             .iter()
-            .map(|e| match e {
-                Entree::SousMenu(_, cat) => *cat,
-                autre => panic!("entrée {autre:?} à l'accueil : ce n'est pas une catégorie"),
+            .filter_map(|e| match e {
+                Entree::SousMenu(_, cat) => Some(*cat),
+                _ => None,
             })
             .collect();
-        assert_eq!(cats.len(), 8, "une catégorie par domaine");
-
+        assert_eq!(
+            cats,
+            vec![Cat::Affichage, Cat::Capture, Cat::Systeme],
+            "trois catégories, dans cet ordre"
+        );
         for cat in &cats {
             let items = cat.entrees(Dispo::default());
             assert_eq!(
@@ -8853,43 +8871,70 @@ mod tests {
                 Some(&Entree::Fenetre),
                 "{cat:?} doit commencer par l'en-tête de fenêtre"
             );
-            assert!(items.len() >= 2, "{cat:?} sans aucune action");
+            assert!(
+                items.len() >= 3,
+                "{cat:?} : moins de trois lignes, elle n'a pas à être une page"
+            );
             assert!(!cat.nom().is_empty(), "{cat:?} sans libellé");
             assert!(
                 items.iter().all(|e| e.selectionnable()),
                 "{cat:?} : une ligne non sélectionnable"
             );
         }
-
-        // une catégorie ne doit pas apparaître deux fois (le retour depuis une
-        // catégorie retrouve son entrée par ce libellé)
-        let mut uniques: Vec<String> = cats.iter().map(|c| format!("{c:?}")).collect();
-        uniques.sort();
-        uniques.dedup();
-        assert_eq!(uniques.len(), cats.len(), "catégorie en double");
+        // une entrée de l'accueil n'apparaît qu'une fois : le retour depuis une
+        // catégorie retrouve son libellé, et deux « FERMER » se contrediraient
+        let mut noms: Vec<&str> = accueil.iter().map(|e| e.nom()).collect();
+        let total = noms.len();
+        noms.sort();
+        noms.dedup();
+        assert_eq!(noms.len(), total, "ligne en double sur l'accueil");
     }
 
-    /// Présence conditionnelle : `SAUVER REPLAY` seulement quand le buffer
-    /// tourne, la déconnexion seulement quand une manette Bluetooth est connue.
+    /// Présence conditionnelle sur l'accueil : bascule seulement avec une app
+    /// compagne, `SAUVER REPLAY` seulement avec le buffer, les volumes du jeu
+    /// et de l'app seulement avec leur flux, et **pas de bascule de plein
+    /// écran en session console** (demandé le 24/11/2026).
     #[test]
-    fn entrees_conditionnelles_des_categories() {
-        let sauvable = |replay| {
-            Cat::Capture
-                .entrees(Dispo {
-                    replay,
-                    ..Dispo::default()
-                })
-                .contains(&Entree::Action("SAUVER REPLAY"))
-        };
-        assert!(!sauvable(false), "pas de ligne morte au repos");
-        assert!(sauvable(true));
+    fn accueil_conditionnel() {
+        let avec_bascule = accueil_items(Dispo {
+            bascule: true,
+            ..Dispo::default()
+        });
+        // juste après l'en-tête : c'est le geste du quotidien
+        assert_eq!(avec_bascule.get(1), Some(&Entree::Basculer));
+        assert_eq!(
+            avec_bascule.len(),
+            accueil_items(Dispo::default()).len() + 1
+        );
 
-        // la veille est proposée en tête du menu système : seule action
-        // réversible de la page (demandé le 23/11)
-        // (la ligne 0 est l'en-tête de fenêtre, commune à toutes les pages)
+        let bureau = accueil_items(Dispo::default());
+        assert!(bureau.contains(&Entree::Action("PLEIN ECRAN")));
+        let console = accueil_items(Dispo {
+            console: true,
+            ..Dispo::default()
+        });
+        assert!(!console.contains(&Entree::Action("PLEIN ECRAN")));
+
+        assert!(!bureau.contains(&Entree::Action("SAUVER REPLAY")));
+        assert!(!bureau.contains(&Entree::VolumeJeu));
+        let plein = accueil_items(Dispo {
+            replay: true,
+            jeu: true,
+            app: true,
+            ..Dispo::default()
+        });
+        assert!(plein.contains(&Entree::Action("SAUVER REPLAY")));
+        assert!(plein.contains(&Entree::VolumeJeu));
+        assert!(plein.contains(&Entree::VolumeApp));
+    }
+
+    /// `TOUT FERMER` reste dans SYSTEME **et** dans le menu système (décidé le
+    /// 24/11/2026) ; le mode d'à côté dépend de la session, jamais les deux ;
+    /// `AFFICHAGE` a absorbé `PERF` (VRR, HUD, FPS : le même sujet).
+    #[test]
+    fn categories_et_session() {
         let systeme = Cat::Systeme.entrees(Dispo::default());
         assert_eq!(systeme.get(1), Some(&Entree::Action("MISE EN VEILLE")));
-        // le mode d'à côté dépend de la session courante, jamais les deux
         assert_eq!(systeme.get(2), Some(&Entree::Action("MODE JEU")));
         let console = Cat::Systeme.entrees(Dispo {
             console: true,
@@ -8899,16 +8944,31 @@ mod tests {
         assert!(!console.contains(&Entree::Action("MODE JEU")));
         assert!(!systeme.contains(&Entree::Action("MODE BUREAU")));
         assert!(systeme.contains(&Entree::Action("ETEINDRE")));
+        assert!(systeme.contains(&Entree::Action("TOUT FERMER")));
+        assert!(console.contains(&Entree::Action("TOUT FERMER")));
 
-        let deconnectable = |pad| {
-            Cat::Manette
-                .entrees(Dispo {
-                    manette: pad,
-                    ..Dispo::default()
-                })
-                .contains(&Entree::Action("DECONNECTER LA MANETTE"))
-        };
-        assert!(!deconnectable(false));
-        assert!(deconnectable(true));
+        let affichage = Cat::Affichage.entrees(Dispo::default());
+        for ligne in [
+            Entree::Fps,
+            Entree::Mango,
+            Entree::Action("VRR"),
+            Entree::Booster,
+            Entree::Style,
+        ] {
+            assert!(affichage.contains(&ligne), "{ligne:?} doit être dans AFFICHAGE");
+        }
+    }
+
+    /// Session console déduite de l'environnement, même règle que
+    /// `glauncher::mode` : `GablueGaming` dans le nom de session.
+    #[test]
+    fn session_console_par_environnement() {
+        assert!(est_session_console(Some("GablueGaming"), None));
+        assert!(est_session_console(None, Some("GablueGaming:KDE")));
+        assert!(est_session_console(None, Some("GablueGaming;KDE")));
+        assert!(!est_session_console(Some("KDE"), Some("KDE")));
+        assert!(!est_session_console(None, None));
+        // un nom qui CONTIENT le nôtre ne compte pas
+        assert!(!est_session_console(None, Some("NotGablueGaming")));
     }
 }

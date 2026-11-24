@@ -6,20 +6,24 @@ buffer shm (aucun toolkit). Deux habillages : **RETRO** (police bitmap 5×7
 embarquée) et **MODERNE** (Noto Sans TTF + glyphes de manette Xelu, embarqués
 dans `assets/`). Contrat des gestes et liste des composants : `AGENTS.md` racine.
 
-## Réglages (catégories du menu)
+## Réglages : l'accueil, puis trois catégories
 
-Le menu **est** le panneau : aucune fenêtre secondaire. Les réglages vivent
-dans les **catégories** de l'accueil (`JEU`, `FENETRES`, `PERF`, `CAPTURE`,
-`SON`, `AFFICHAGE`, `MANETTE`, `SYSTEME`), une page par domaine. On navigue
+Le menu **est** le panneau : aucune fenêtre secondaire. L'accueil porte **les
+gestes du quotidien à plat** (fermer, mode souris, clavier, plein écran,
+volumes, capture écran / enregistrement / replay) puis **trois catégories** de
+réglages : `AFFICHAGE`, `CAPTURE`, `SYSTEME`. Une catégorie n'existe que si
+elle porte **au moins trois lignes propres** — un domaine d'une ou deux lignes
+n'a pas de page, ses lignes sont sur l'accueil (réorganisé le 24/11/2026 :
+`JEU`, `FENETRES`, `SON`, `PERF` et `MANETTE` ont disparu). On navigue
 (haut/bas, D-pad **ou** stick gauche), `A` ouvre une catégorie, `B` revient à
 l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliquée
 **immédiatement** — rien à valider.
 
 | Section / ligne | Curseur | Effet |
 |---|---|---|
-| `SON` / `VOLUME GENERAL` | 21 crans, 0..100 % | ±5 % par cran (`pactl`, sink par défaut) ; **A = muet / non muet** (le niveau est conservé) |
-| `SON` / `VOLUME JEU` | idem, sur le flux du jeu | visible seulement si le jeu émet du son : flux dont `application.process.id` appartient aux PID du paquet (lanceur + descendants), donc indépendant du général |
-| `SON` / `VOLUME APP` | idem, sur l'application compagne | visible seulement si une vidéo à côté émet du son (`VacuumTube`, `Jellyfin`, `tvqt`/`gablue-tv`, `YouTube` — `audio::est_compagne`) |
+| `ACCUEIL` / `VOLUME GENERAL` | 21 crans, 0..100 % | ±5 % par cran (`pactl`, sink par défaut) ; **A = muet / non muet** (le niveau est conservé) |
+| `ACCUEIL` / `VOLUME JEU` | idem, sur le flux du jeu | visible seulement si le jeu émet du son : flux dont `application.process.id` appartient aux PID du paquet (lanceur + descendants), donc indépendant du général |
+| `ACCUEIL` / `VOLUME APP` | idem, sur l'application compagne | visible seulement si une vidéo à côté émet du son (`VacuumTube`, `Jellyfin`, `tvqt`/`gablue-tv`, `YouTube` — `audio::est_compagne`) |
 | `AFFICHAGE` / `MANGOHUD` | 3 positions, `MASQUE` **à gauche** → `PAR DEFAUT` → `HORIZONTAL` | `mangohud.sh set-vue` — **même source que le dialogue « MangoHud… » de Gablue Manager** (`~/.config/MangoHud/MangoHud.conf`), voir plus bas |
 | `AFFICHAGE` / `FPS` | 7 positions, `30` → `48` → `60` → `90` → `120` → `165` → `INF` | `mangohud.sh set-fps` ; une limite **hors crans** (MangoJuice, dialogue « MangoHud… » de Gablue Manager) est affichée **telle quelle** et le curseur se pose sur le cran le plus proche — le premier gauche/droite repart de la vraie valeur (`refresh_mangohud` → `fps_reel`) |
 | `AFFICHAGE` / `VRR` | **interrupteur** (A) | VRR **automatique** (Adaptive Sync de KWin) sur toutes les sorties capables ↔ désactivé : `vrr.sh toggle` → `kscreen-doctor output.<nom>.vrrpolicy.automatic\|never` |
@@ -28,13 +32,15 @@ l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliqué
 | `CAPTURE` / `RESOLUTION` | 4 positions, `720P` → `1080P` → `1440P` → **`SOURCE`** | `resolution` (`1280x720`, `1920x1080`, `2560x1440`, `source`) ; `SOURCE` par défaut (natif), les tailles fixes servent au partage léger |
 | `CAPTURE` / `FPS REC` | 4 positions, **`60`** → `120` → `144` → `FLIPS` | `fps` (plafond d'émission ; `flips` = taux réel des flips) |
 | `CAPTURE` / `CURSEUR` | 2 positions, **`MASQUE`** → `AFFICHE` | `curseur` (affiché = v2, non implémenté) |
-| `REPLAY` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | `replay_sec` dans `recorder.conf` (le démon relit le fichier seul) |
-| `REPLAY` / `REPLAY AUTO` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
-| `PERFORMANCE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
-| `INTERFACE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
+| `CAPTURE` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | `replay_sec` dans `recorder.conf` (le démon relit le fichier seul) |
+| `CAPTURE` / `REPLAY AUTO` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
+| `AFFICHAGE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : le booster cgroup de Plasma donne la priorité CPU/IO à la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
+| `AFFICHAGE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
 
-Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
-(Home maintenu), avec les autres actions qui ne se réparent pas.
+`AFFICHAGE` **a absorbé `PERF`** (24/11/2026) : HUD, limite de FPS, VRR,
+priorité CPU et style sont le même sujet — ce qu'on voit, et à quelle vitesse.
+`TOUT FERMER` reste dans `SYSTEME` **et** dans le **menu système** (Home
+maintenu) : deux chemins voulus, décidé le 24/11/2026.
 
 - Les lignes `CAPTURE` et `REPLAY` écrivent `~/.config/gablue/recorder.conf` :
   le démon en **surveille le `mtime`** (poll 500 ms), donc aucune socket à
@@ -44,7 +50,8 @@ Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
   à l'échelle 3 la police bitmap avance de 6 × échelle, donc **18 caractères**
   tiennent dans les 340 px utiles et `text_fit` **tronque** (il ne réduit pas) —
   le libellé exact demandé (24 caractères) finissait en « OPTIMISER AU PREMI.. ».
-  La section `PERFORMANCE` dit le domaine, la ligne dit l'effet.
+  Le nom reste court depuis que `PERF` a été absorbé par `AFFICHAGE` : une
+  ligne ne fait pas une phrase, le libellé dit l'effet.
 - **MangoHud n'a qu'une source** : `~/.config/MangoHud/MangoHud.conf`, réglée
   ici ou par le dialogue « MangoHud… » de Gablue Manager (mêmes trois vues,
   mêmes clés `no_display` / `horizontal` / `fps_limit`). Les lanceurs gwine et
@@ -87,14 +94,17 @@ Plus d'entrée `TOUT FERMER` ici : elle est passée dans le **menu système**
   demandé est « dans le menu même » : ne pas y revenir). Marge layer-shell :
   **positive honorée** (bordure mesurée à x=1600 pour `--test-margin 480`),
   **négative ignorée** par KWin → le panneau glisse par décalage du **dessin**.
-- `GPAD_SON_DEMO=1` : deux flux audio factices (jeu 80 %, app 35 %) injectés à
-  l'entrée de la catégorie SON — banc visuel des trois volumes sans lancer un
-  jeu et une vidéo.
-- `FOCUS fps|mango|volume|capture|fin|accueil` : le panneau s'ouvre **dans la
-  catégorie** de la ligne, curseur dessus (c'est ce que passe le combo
-  Home+bas). Mesuré : `FOCUS fps` → catégorie `PERF`, `FPS` sélectionné.
+- `GPAD_SON_DEMO=1` : deux flux audio factices (jeu 80 %, app 35 %) posés par
+  `refresh_sons` — banc visuel des trois volumes de l'accueil sans lancer un jeu
+  et une vidéo.
+- `FOCUS fps|mango|volume|capture|fin|bascule|accueil` : le panneau s'ouvre
+  sur la ligne visée, curseur dessus (`fps`/`mango`/`capture`/`fin` dans leur
+  **catégorie**, `volume`/`bascule` sur l'**accueil** depuis le 24/11/2026).
+  Mesuré : `FOCUS fps` → catégorie `AFFICHAGE`, `FPS` sélectionné.
   Mesuré aussi : `FOCUS mango` puis stick droite → `vue=horizontal` ;
-  `FOCUS accueil` photographie le menu des catégories (banc).
+  `FOCUS accueil` photographie l'accueil (banc).
+- `GPAD_MODE=console|desktop` force le mode de session (banc) ; sans lui, il
+  vient de `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP` comme dans le launcher.
 
 Mesuré : `VOLUME` 50 → 60 → 55 % (`pactl`), `A` → `MUTE true` puis
 `MUTE false` ; `MANGOHUD` gauche → `vue=masque` ; `FPS` gauche → `fps=165` ;
@@ -107,9 +117,9 @@ défaut) et `APPLICATIONS`. **R1 avance, L1 recule** (elles allaient dans le
 même sens) ; une catégorie et la liste des fenêtres sont des **allers-retours** :
 `B` (ou `L1`/`R1`) en sort vers la page qui l'a ouverte au lieu de fermer le
 panneau, et activer une fenêtre y revient aussi (`fen_retour`). La sélection est propre à chaque page, la liste
-affichée est celle de la page courante (`liste()`), et les séparateurs de
-section ne sont jamais sélectionnés (`pas_selectable()` saute les
-`Entree::Groupe`). Deux sous-pages hors cycle : **FENETRE** (actions de la
+affichée est celle de la page courante (`liste()`), et la navigation saute les
+entrées non sélectionnables (`pas_selectable()` ; aujourd'hui toutes le sont,
+l'en-tête compris). Deux sous-pages hors cycle : **FENETRE** (actions de la
 fenêtre active) et **FENETRES** (liste) — on y entre par l'en-tête ou par
 `CHOISIR FENETRE`, on en sort par `B`.
 
@@ -121,8 +131,9 @@ l'animation, avec `self.page` permuté entre les deux. Le `poll` descend à 8 ms
 tant que `pdep` tourne.
 
 **Titre de page** : sous le nom de la fenêtre (18 px plus bas, avec de l'air
-avant la liste), le nom de la page **centré** en échelle 3 (`ACTIONS`,
-`RÉGLAGES`, `APPLIS`, `FENÊTRE`, `FENÊTRES`) avec un **filet d'accent dégradé
+avant la liste), le nom de la page **centré** en échelle 3 (`MENU`,
+`AFFICHAGE`, `CAPTURE`, `SYSTEME`, `APPLIS`, `FENÊTRE`, `FENÊTRES`) avec un
+**filet d'accent dégradé
 de chaque côté** (`filet_fondu_inv` à gauche, `filet_fondu` à droite), **2 px
 d'épaisseur** et alpha 0xBB : à 1 px et 0x66 le filet disparaissait sur le
 papier peint (constaté « pas assez visible »). Pas de pastille dans le titre.
@@ -134,26 +145,36 @@ le suivi reste, en ronds (demandé). Ni une catégorie ni les sous-pages
 `FENÊTRE`/`FENÊTRES` n'ont de rond à elles : c'est la page qui les a ouvertes
 qui reste allumée (`page_cycle()`).
 
-**Page `MENU` (accueil) — des catégories, plus une page à rallonge.** Le menu
-latéral ne montrait plus qu'une liste de 15 lignes ; il ouvre désormais un
-sous-menu par domaine, avec un chevron au bord droit :
+**Page `MENU` (accueil) — un tableau de bord, plus un sommaire de catégories.**
+L'accueil portait huit sous-menus, dont trois à une ou deux lignes : un appui
+pour un geste. Depuis le 24/11/2026 il mêle **les gestes du quotidien à plat**
+et trois catégories de réglages (chevron au bord droit) :
 
 ```
-JEU        FERMER · PLEIN ECRAN · TOUT FERMER
-FENETRES   CHOISIR FENETRE · BASCULER JEU / APP  (BASCULER : seulement si une app compagne est ouverte)
-PERF       MANGOHUD · FPS MAX · PRIORITE ACTIVE
-CAPTURE    ENREGISTRER · CAPTURE ECRAN · REPLAY · SAUVER REPLAY · DUREE · REPLAY AUTO · QUALITE · CODEC · RESOLUTION · FPS · CURSEUR
-SON        VOLUME GENERAL · VOLUME JEU · VOLUME APP  (les deux derniers : seulement si le flux existe)
-AFFICHAGE  VRR · STYLE
-MANETTE    MODE SOURIS · CLAVIER VIRTUEL · DECONNECTER LA MANETTE
-SYSTEME    MISE EN VEILLE · FERMER LA SESSION · REDEMARRER · ETEINDRE
+[en-tête fenêtre active]
+BASCULER JEU / APP   (seulement si une app compagne est ouverte)
+FERMER · MODE SOURIS · CLAVIER VIRTUEL · PLEIN ECRAN (bureau seulement)
+VOLUME GENERAL · VOLUME JEU · VOLUME APP   (les deux derniers : si le flux existe)
+CAPTURE ECRAN · ENREGISTRER · REPLAY · SAUVER REPLAY (si le buffer tourne)
+AFFICHAGE ▸  FPS MAX · MANGOHUD · VRR · PRIORITE ACTIVE · STYLE
+CAPTURE   ▸  QUALITE · CODEC · RESOLUTION · FPS REC · CURSEUR · FORMAT PHOTO · QUALITE PHOTO · DUREE REPLAY · REPLAY AUTO
+SYSTEME   ▸  MISE EN VEILLE · MODE JEU|BUREAU · TOUT FERMER · FERMER LA SESSION · REDEMARRER · ETEINDRE
 ```
+
+Pourquoi : `FERMER`, `MODE SOURIS`, `CAPTURE ECRAN` et `ENREGISTRER` sont des
+**gestes de partie**, pas des réglages — ils ne doivent pas coûter un sous-menu.
+`PLEIN ECRAN` **disparaît en session console** (`GablueGaming` : tout y est
+plein écran par nature, demandé le 24/11/2026), sur l'accueil comme dans la page
+`FENETRE` ; le mode est déduit de `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP`
+(`GPAD_MODE` pour le banc), jamais d'un réglage.
+`CHOISIR FENETRE` n'est **pas** sur l'accueil : la liste reste un aller-retour
+depuis l'en-tête (A) et le cyclage L2/R2, ce qui suffit.
 
 Mécanique : `Entree::SousMenu(libellé, Cat)` + `Page::Categorie(Cat)` ;
 `A` ouvre, `B` revient à l'accueil **le curseur sur la catégorie quittée**,
 `L1`/`R1` sortent d'une catégorie vers la page de premier niveau. Le contenu
-est figé dans `cat_items` à l'entrée (reconstruit par `maj_accueil` : `SAUVER
-REPLAY` n'existe qu'avec le buffer, la déconnexion qu'avec une manette connue),
+est figé dans `cat_items` à l'entrée ; l'accueil, lui, est reconstruit par
+`maj_accueil` (bascule, `SAUVER REPLAY`, volumes : rien de mort sur la page),
 et **l'entrée d'une catégorie ne glisse pas** : l'animation de `aller_page`
 rejoue l'ancienne liste en changeant `page`, or toutes les catégories partagent
 `cat_items` — l'ancienne serait peinte avec le contenu de la nouvelle.
@@ -203,10 +224,10 @@ grâce : le script pousse depuis le démarrage de la session, attendre ne
 servirait qu'à montrer la page ACTIONS par défaut pendant que le panneau est
 déjà visible, puis à basculer sèchement sur APPLIS (vécu gen1 20/11/2026,
 script `wininfo` jamais chargé).
-Ordre retenu : la fenêtre active d'abord, puis ses actions, puis la session
-(manette en main) ; réglages en dernier (on les change une fois). Un séparateur
-fait 52 px (titre 2×, filet de 1 px jusqu'au bord), il ne reçoit ni curseur `>`
-ni surbrillance.
+Ordre retenu : la fenêtre active, ses gestes (fermer, pointer, capturer), les
+volumes — la seule chose qu'on règle en jouant —, puis les réglages (on les
+change une fois). Aucun séparateur sur l'accueil : les catégories se
+reconnaissent à leur chevron et à leur hauteur.
 
 **Page `APPLICATIONS`** — voir ci-dessous.
 
@@ -528,7 +549,7 @@ un fond qu'il fallait assombrir/éclaircir sans fin).
 | Entrée | Effet |
 |---|---|
 | `FERMER` | A **arme** (ligne et rappel `CONFIRMER` en rouge) ; un second A envoie **SIGKILL** au pid **et à tous ses descendants** |
-| `PLEIN ECRAN` | A bascule le plein écran de la fenêtre active (interrupteur), immédiatement |
+| `PLEIN ECRAN` | A bascule le plein écran de la fenêtre active (interrupteur), immédiatement — ligne **absente en session console** (tout y est plein écran) |
 | `CHOISIR FENETRE` | ouvre la liste des fenêtres |
 
 - `B` revient sur **la page d'origine** (`fen_page_retour`), le panneau reste
@@ -759,7 +780,10 @@ lignes VOLUME JEU / VOLUME APP n'apparaissent jamais » :
   jamais au paquet du jeu ni à une app compagne. Un flux n'existe que **pendant la lecture** : une
 app ouverte mais muette n'a pas de ligne, et c'est voulu (pas de ligne morte).
 Après chaque réglage, les flux sont relus : `pactl` peut borner ou refuser, et
-l'écran ne doit jamais afficher un chiffre inventé. Le libellé « VOLUME
+l'écran ne doit jamais afficher un chiffre inventé. Depuis que les volumes sont
+sur l'accueil (24/11/2026), les flux sont aussi relus à **chaque ouverture**
+(`a_rafraichir`, après la première image) : il n'y a plus d'entrée de catégorie
+pour les rafraîchir. Le libellé « VOLUME
 GENERAL » évite la confusion avec les deux autres.
 
 ## Enregistrement et replay : deux pistes indépendantes
@@ -1023,7 +1047,7 @@ nettoyer à la main.
 | `--resident` | survit entre deux ouvertures (surface mappée transparente hors écran) ; `open`/`close` arrivent par `--ipc` |
 | `--ipc <socket>` | socket de commande du déclencheur (`open <node> <cibles…>`, `kbd <node>`, `close`) |
 | `--fullscreen` | surface plein écran (banc) |
-| `--focus fps\|mango\|volume\|capture\|fin\|accueil` | ouvre la catégorie de la ligne, curseur dessus (`accueil` = le menu des catégories) |
+| `--focus fps\|mango\|volume\|capture\|fin\|bascule\|accueil` | ouvre la page de la ligne, curseur dessus (`volume`/`bascule` sur l'accueil, `accueil` = le tableau de bord) |
 | `--style retro\|moderne` | style visuel (prioritaire sur `PAD_STYLE` et le fichier) |
 | `--test-margin N` | marge layer-shell positive (banc) |
 | `--no-kwin` | n'installe pas le script d'info de fenêtre |
@@ -1040,6 +1064,7 @@ nettoyer à la main.
 | `PAD_SONY`, `PAD_BT_MAC` | forcent famille / transport (banc, manette virtuelle) |
 | `GPAD_TRIGGER_PID` | pid de `gpad-trigger` à prévenir sur Home maintenu |
 | `PAD_STYLE` | style de démarrage (banc, sans écrire de fichier) |
+| `GPAD_MODE` | `console`\|`desktop` : force le mode de session (banc ; sinon `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP`) |
 | `PAD_FONDU_MS` | durée du fondu du menu système (défaut 140 ms ; banc : ralentir pour le mesurer) |
 | `PAD_PANNEAU_DELAI_MS` | attente avant le glissement d'entrée du panneau (défaut 200 ms : `animationTime(200)` de l'effet `Scale` de KWin ; banc) |
 | `PAD_NO_KWIN`, `PAD_ICONE_TEST` | banc : sans KWin, test de résolution d'icône |
@@ -1057,4 +1082,4 @@ nettoyer à la main.
 | style | `--style truc` → `STYLE RETRO (retro) police=bitmap` ; `A` sur `STYLE` → `STYLE MODERNE (moderne) police=ttf` + fichier + bascule à chaud |
 | vrr | `A` sur `VRR` → `VRR desactive` puis `kscreen-doctor -o` montre `Vrr: Never` sur chaque sortie ; second `A` → `Vrr: Automatic` (mesuré, `vrr=auto`) |
 | glyphes | `GLYPHES 11 (xbox)` au premier dessin MODERNE ; manette Sony → `(ps)` |
-| booster | catégorie `PERF`, 2 « bas » depuis `MANGOHUD` → `SELECT PRIORITE ACTIVE` ; `A` → `BOOSTER actif` puis `BOOSTER inactif`, avec `kwriteconfig6 … autostart true\|false` + `systemctl --user restart\|stop plasma-foreground-booster.service` (HOME et `systemctl` factices) |
+| booster | catégorie `AFFICHAGE`, 3 « bas » depuis `FPS` (FPS → MANGOHUD → VRR → PRIORITE ACTIVE) → `SELECT PRIORITE ACTIVE` ; `A` → `BOOSTER actif` puis `BOOSTER inactif`, avec `kwriteconfig6 … autostart true\|false` + `systemctl --user restart\|stop plasma-foreground-booster.service` (HOME et `systemctl` factices) |

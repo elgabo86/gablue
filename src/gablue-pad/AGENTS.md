@@ -253,8 +253,8 @@ les fenêtres au lieu de passer à l'app.
 
 **Bascule en tête de l'accueil** : quand un jeu tourne **et** qu'une app
 compagne est ouverte, `BASCULER JEU / APP` est la première ligne de l'accueil
-du panneau, pas seulement celle des pages JEU et FENETRES — la ligne vit dans
-`accueil_items(bascule)` et `refresh_bascule` est relu après la première image
+du panneau — juste après l'en-tête de fenêtre, il n'y a plus de pages `JEU` /
+`FENETRES` : la ligne vit dans `accueil_items(dispo)` et `refresh_bascule` est relu après la première image
 (à l'ouverture), jamais avant : `lister.js` prend jusqu'à 400 ms.
 
 **Captures d'écran : format et qualité** (page CAPTURE, `FORMAT PHOTO` /
@@ -283,15 +283,16 @@ sessions ; un `start` sur une unité déjà `active` ne rafraîchit pas son
 
 L'overlay est un **client de la socket** de `gpad-rec` (`capture::etat()`) : il
 n'imagine jamais l'état, il lit `recording`/`replay`/`pending` au moment de
-dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
+dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
+(catégorie `CAPTURE`) :
 
 | Page | Ligne | Effet |
 |---|---|---|
-| ACTIONS | `ENREGISTRER UNE VIDEO` | `recorder.sh start`/`stop` (bascule, même ligne quand ça tourne) |
-| ACTIONS | `REPLAY` | interrupteur du buffer (`replay.sh start`/`stop`), usable pendant une capture |
-| ACTIONS | `SAUVER REPLAY` | `replay.sh save` ; la ligne **n'existe pas** quand le buffer est arrêté (elle apparaît dès qu'il tourne) |
-| RÉGLAGES | `CAPTURE` | Qualité, Codec, Résolution, FPS REC, Curseur |
-| RÉGLAGES | `REPLAY AUTO` | interrupteur `auto_replay` (défaut **off**), écrit `recorder.conf` |
+| ACCUEIL | `ENREGISTRER UNE VIDEO` | `recorder.sh start`/`stop` (bascule, même ligne quand ça tourne) |
+| ACCUEIL | `REPLAY` | interrupteur du buffer (`replay.sh start`/`stop`), usable pendant une capture |
+| ACCUEIL | `SAUVER REPLAY` | `replay.sh save` ; la ligne **n'existe pas** quand le buffer est arrêté (elle apparaît dès qu'il tourne) |
+| CAPTURE | `QUALITE`, `CODEC`, `RESOLUTION`, `FPS REC`, `CURSEUR`, `FORMAT PHOTO`, `QUALITE PHOTO` | les réglages de l'enregistreur et des captures d'écran |
+| CAPTURE | `DUREE REPLAY`, `REPLAY AUTO` | profondeur du buffer et son démarrage automatique |
 
 - **Défauts choisis pour que le fichier s'ouvre partout** : H.264 (compatibilité
   seule), résolution `SOURCE` (natif), qualité 3, 60 fps, curseur masqué —
@@ -304,10 +305,12 @@ dessiner. Trois lignes d'action (page ACTIONS) et une section de réglages :
   suffit.
 - **Pas de bip** quand le replay démarre tout seul (`GPAD_SANS_BIP=1` posé par
   `grec`/le lancement automatique) : le son ne confirme qu'un geste manette.
-- **Lignes compactes + défilement** : la page RÉGLAGES a maintenant sept lignes
-  hautes ; `hauteur()` les resserre et `reg_top` fait défiler avec une barre de
-  position quand ça dépasse (~sous 1200 px de haut, vu avec
-  `GPAD_TEST_BUDGET`). La sélection reste visible en défilant.
+- **Lignes compactes + défilement** : la catégorie `CAPTURE` porte neuf lignes
+  hautes (les actions sont sur l'accueil depuis le 24/11/2026) ; `hauteur()` les
+  resserre et `reg_top` fait défiler avec une barre de position quand ça dépasse
+  (~sous 1100 px de haut, vu avec `GPAD_TEST_BUDGET`). La sélection reste
+  visible en défilant. L'accueil lui-même tient en 1080p (mesuré le 24/11/2026,
+  1920×1080 : seize lignes, pied de page visible, aucun défilement).
 
 ## Clavier virtuel à la demande (`gpad-clavier`)
 
