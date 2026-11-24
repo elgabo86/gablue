@@ -113,8 +113,8 @@ processus laissé derrière au logout. À revérifier après une montée de vers
 de plasmalogin (le mécanisme `Before=` + `kdeglobals` n'est pas un contrat
 public).
 
-Le déclenchement du clavier visuel par le **premier mouvement** (21/11/2026) est
-validé au banc seulement — `gpad-login` et le pont réels, manette virtuelle
+Le déclenchement du clavier visuel par le **premier mouvement** (21/11/2026) a
+d'abord été validé au banc — `gpad-login` et le pont réels, manette virtuelle
 `vpad`, `busctl`/`udevadm` en stubs : rien au repos ni au branchement, SIGUSR1
 au stick comme à l'appui de touche, aucun signal sans `GPAD_LOGIN_NOTIFY_PID`,
 `mode i 2` + `forceActivate`, maintien pendant une activité régulière,
@@ -122,13 +122,13 @@ au stick comme à l'appui de touche, aucun signal sans `GPAD_LOGIN_NOTIFY_PID`,
 `1` puis `0` au débranchement, `gpad-login` arrêté à la sortie. La fermeture a
 été **mesurée sur un KWin réel** (banc uinput + `spectacle`, 24/11/2026) :
 `0` seul laisse le panneau affiché, `1` le referme, `1` puis `0` le referme et
-laisse le mode sûr. **Reste à vérifier sur
-l'écran de connexion réel** : que KWin du greeter ouvre bien le clavier sur le
-signal avec la manette physique (un SIGUSR1 séparé interrompt le `sleep 1` du
-pont, donc aucune latence ajoutée), et qu'aucun état relu à l'ouverture
-(certaines manettes renvoient leur état complet à l'`open`) ne déclenche
-l'ouverture sans mouvement (banc : `evgrab/` + copie coupant `emit()`, jamais de
-pointeur réel).
+laisse le mode sûr. **Validé sur l'écran de connexion réel** (gen1,
+24/11/2026, DualSense en USB), journal à l'appui : manette vue et rebranchée
+sans aucun clavier, `mouvement manette → clavier visuel affiché` (`i 2`) avec
+un appui réel, puis `10 s sans mouvement → clavier visuel fermé`. Mesure
+complémentaire au banc : **0 signal** pendant l'énumération USB (l'état complet
+relu à l'`open` est ignoré par `NOTIFY_SETTLE`), **1** au geste suivant — donc
+l'ouverture ne dépend que d'un vrai mouvement.
 
 Le démon ne garde aucune cible périmée : l'overlay envoie `clear` puis `target`
 pour chaque node js/hidraw à chaque ouverture (les `dev_t` changent à la
