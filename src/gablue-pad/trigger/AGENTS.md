@@ -16,6 +16,14 @@ reçu l'appui. Rien ne permet de le retirer. Comportement actuel, voulu :
 Un « double appui = Home pour le jeu, pas de menu » a été implémenté puis
 **retiré** (16/11/2026) : le menu doit s'ouvrir à chaque appui.
 
+**Home+L3 = Home laissé au jeu, rien chez nous** (24/11/2026) : certains jeux
+ouvrent leur propre menu (ou l'overlay Steam) sur Home, et l'appui ouvrait donc
+les deux. **L3** (`BTN_THUMBL`) tenu pendant Home marque le combo et supprime
+**notre seule réaction** : aucun panneau au relâchement, aucun menu système au
+maintien. Rien n'est filtré — Home et L3 partent au jeu comme avant (lecture
+sans grab, aucun grab n'est pris). Sous l'option `shortcuts`, comme les autres
+combos Home+bouton : `shortcuts=off` rend Home+L3 identique à Home seul.
+
 Les mesures qui ferment le sujet « que le jeu ne voie rien sur un appui
 simple » (16/11/2026, à revérifier si le noyau évolue) :
 
@@ -122,6 +130,7 @@ se filme jamais dans le clip.
 | Home + bas | **arrête** le replay s'il tourne (`replay.sh stop`) ; sinon ouvre le panneau sur la ligne **FPS** (geste d'origine, aucune fonction perdue) |
 | Home + R2 | **bascule jeu ⇄ application compagne** sans ouvrir le panneau (vers l'app) ; au bureau, fenêtre **suivante** de la pile |
 | Home + L2 | même bascule en sens inverse (vers le jeu) ; au bureau, fenêtre **précédente** |
+| Home + L3 | **rien de notre côté** : Home part au jeu (menu/overlay du jeu), le panneau ne s'ouvre pas et le maintien n'ouvre pas le menu système |
 
 Les deux gâchettes lisent `BTN_TR2`/`BTN_TL2` — le bouton **numérique** que le
 noyau émet au seuil, pas `ABS_RZ`/`ABS_Z` : aucun seuil à choisir, et les

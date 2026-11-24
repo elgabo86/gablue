@@ -582,7 +582,8 @@ static int overlay_kbd_remote(const char *node)
  * Home seul ouvre le panneau au relâchement ; Home maintenu = menu système ;
  * Home+gauche = bascule de l'enregistrement ; Home+droite = capture d'écran ;
  * Home+haut = replay (démarre, ou sauvegarde s'il tourne) ; Home+bas = arrête
- * le replay, sinon ouvre le panneau sur la ligne FPS. */
+ * le replay, sinon ouvre le panneau sur la ligne FPS ; Home+L3 = rien chez
+ * nous (Home part au jeu, aucun panneau). */
 /* Home tenu = menu système (comme une vraie console) ; appui court = panneau
  * latéral, ouvert au relâchement. Aucune fenêtre de grâce : puisqu'un maintien
  * n'ouvre plus rien de suite, un combo n'a plus de course avec le panneau. */
@@ -597,6 +598,8 @@ static char home_node[64];
 static int home_down;
 static int combo_done;
 static int console_done;
+/* L3 (BTN_THUMBL) tenu : Home+L3 = « Home pour le jeu », aucun panneau. */
+static int l3_down;
 static struct timespec home_at;
 
 static long ms_since(const struct timespec *t)
@@ -1108,10 +1111,20 @@ int main(int argc, char **argv)
                 if (ev.type == EV_KEY && ev.code == BTN_MODE) {
                     if (ev.value == 1) {
                         home_down = 1;
-                        combo_done = 0;
+                        /* L3 déjà tenu = Home+L3 : le geste « Home pour le
+                         * jeu ». Aucun panneau au relâchement, aucun menu
+                         * système au maintien — mais Home et L3 partent
+                         * quand même au jeu, la lecture n'étant pas grabée. */
+                        combo_done = (opt_shortcuts && l3_down) ? 1 : 0;
                         console_done = 0;
                         clock_gettime(CLOCK_MONOTONIC, &home_at);
                         snprintf(home_node, sizeof home_node, "%s", paths[i]);
+                        if (combo_done) {
+                            fprintf(stderr,
+                                    "[gpad-trigger] COMBO Home+L3 -> Home"
+                                    " laisse au jeu (pas de panneau)\n");
+                            fflush(stderr);
+                        }
                     } else {
                         home_down = 0;
                         /* relâché sans combo : on ouvre tout de suite. Le
@@ -1122,6 +1135,22 @@ int main(int argc, char **argv)
                                 launch(argv, argc, first_free, home_node);
                             combo_done = 1;
                         }
+                    }
+                } else if (ev.type == EV_KEY && ev.code == BTN_THUMBL) {
+                    /* Home+L3 : le jeu a déjà reçu Home (lecture sans grab) et
+                     * en fait ce qu'il veut — overlay Steam, menu du jeu. Nous
+                     * ne faisons rien, et le combo_done posé ici empêche le
+                     * panneau de s'ouvrir au relâchement comme le menu système
+                     * de s'ouvrir au maintien. C'est le geste des jeux dont le
+                     * menu Home se superpose au nôtre. */
+                    l3_down = ev.value != 0;
+                    if (opt_shortcuts && ev.value == 1 && home_down &&
+                        !combo_done && child < 0) {
+                        combo_done = 1;
+                        fprintf(stderr,
+                                "[gpad-trigger] COMBO Home+L3 -> Home laisse"
+                                " au jeu (pas de panneau)\n");
+                        fflush(stderr);
                     }
                 } else if (ev.type == EV_KEY && ev.value == 1
                            && (ev.code == BTN_SELECT || ev.code == BTN_START

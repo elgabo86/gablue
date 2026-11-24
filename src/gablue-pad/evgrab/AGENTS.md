@@ -12,7 +12,8 @@ Manette virtuelle pilotée par signaux (aucun matériel requis) :
 `SIGALRM`=B, `SIGRTMIN+1`=Home+gauche, `+2`=Home+droite, `+3/+4/+5/+6`=stick
 gauche/droite/haut/bas, `+7/+8`=Home+haut/bas, `+14`=L1, `+15`=R1,
 `+20/+21`=Home appui/relâche (pour tester un **maintien**), `+22`=**un seul pas
-vers le haut** (`BTN_NORTH`). Le stick (`+5`) émet deux pas d'un coup, ce qui
+vers le haut** (`BTN_NORTH`), `+23`=**Home+L3** (`BTN_THUMBL`). Le stick (`+5`)
+émet deux pas d'un coup, ce qui
 interdit de se poser sur l'en-tête : utiliser `+22` pour la navigation fine. `VPAD_NOM=<nom>` change le nom du
 périphérique : indispensable quand le `gpad-trigger` de l'utilisateur tourne, son
 scan filtrant les noms contenant « gamepad »/« controller » — un nom neutre

@@ -50,6 +50,7 @@ static volatile sig_atomic_t pending_hat;    /* -1 D-pad gauche, 1 droite */
 static volatile sig_atomic_t pending_combo;  /* 1 SELECT, 2 START, 3 TRIANGLE */
 static volatile sig_atomic_t pending_page;   /* 1 = L1, 2 = R1 */
 static volatile sig_atomic_t pending_combo2; /* 1 = Home+R3, 2 = Home+carré */
+static volatile sig_atomic_t pending_combo_l3; /* Home+L3 (BTN_THUMBL) */
 static volatile sig_atomic_t pending_gachette; /* -1 = L2, 1 = R2 */
 static volatile sig_atomic_t pending_home_state; /* 1 = appui, 2 = relâche */
 static volatile sig_atomic_t pending_up_key;  /* BTN_NORTH : un pas vers le haut */
@@ -82,6 +83,8 @@ static void on_rtmin21(int s) { (void)s; pending_home_state = 2; }
 /* un seul pas « haut » fiable : le stick (RTMIN+5) émet deux pas d'un coup,
  * ce qui interdit de se poser sur l'en-tête depuis le premier choix */
 static void on_rtmin22(int s) { (void)s; pending_up_key = 1; }
+/* Home+L3 : Home part au jeu, le nôtre ne doit rien ouvrir */
+static void on_rtmin23(int s) { (void)s; pending_combo_l3 = 1; }
 static void on_quit(int s) { (void)s; stream = !stream; }
 static void on_term(int s) { (void)s; stop = 1; }
 
@@ -237,6 +240,7 @@ int main(void)
     ioctl(ufd, UI_SET_KEYBIT, BTN_WEST);
     ioctl(ufd, UI_SET_KEYBIT, BTN_TL);
     ioctl(ufd, UI_SET_KEYBIT, BTN_THUMBR);
+    ioctl(ufd, UI_SET_KEYBIT, BTN_THUMBL);
     ioctl(ufd, UI_SET_KEYBIT, BTN_TR);
     ioctl(ufd, UI_SET_KEYBIT, BTN_TL2);
     ioctl(ufd, UI_SET_KEYBIT, BTN_TR2);
@@ -331,6 +335,8 @@ int main(void)
     sigaction(SIGRTMIN + 21, &sa, NULL);
     sa.sa_handler = on_rtmin22;
     sigaction(SIGRTMIN + 22, &sa, NULL);
+    sa.sa_handler = on_rtmin23;
+    sigaction(SIGRTMIN + 23, &sa, NULL);
     sa.sa_handler = on_term;
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
@@ -413,6 +419,20 @@ int main(void)
             emit(EV_KEY, BTN_MODE, 0);
             emit(EV_SYN, SYN_REPORT, 0);
             printf("HOME_DOWN_EMIS\n");
+            fflush(stdout);
+        }
+        if (pending_combo_l3) {
+            /* Home+L3 tel que la manette l'envoie : Home tenu, L3 pressé */
+            pending_combo_l3 = 0;
+            emit(EV_KEY, BTN_MODE, 1);
+            emit(EV_SYN, SYN_REPORT, 0);
+            emit(EV_KEY, BTN_THUMBL, 1);
+            emit(EV_SYN, SYN_REPORT, 0);
+            emit(EV_KEY, BTN_THUMBL, 0);
+            emit(EV_SYN, SYN_REPORT, 0);
+            emit(EV_KEY, BTN_MODE, 0);
+            emit(EV_SYN, SYN_REPORT, 0);
+            printf("COMBO_L3_EMIS\n");
             fflush(stdout);
         }
         if (pending_combo2) {

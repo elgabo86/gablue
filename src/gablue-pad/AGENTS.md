@@ -185,6 +185,7 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 | Home + droite | capture d'écran |
 | Home + haut | **replay** : démarre le buffer, ou **sauvegarde** s'il tourne |
 | Home + bas | **arrête** le replay ; buffer arrêté → ouvre le panneau sur la ligne FPS |
+| Home + L3 | **Home laissé au jeu** : ni panneau, ni menu système — pour les jeux dont le menu Home se superpose au nôtre |
 | Home + SELECT / START / carré / R3 | `killthemall` / `openes` / clavier virtuel / mode souris |
 | **L2 / R2** | fenêtre active précédente / suivante (ordre d'écran, ancré sur l'UUID) |
 | **L1 / R1** | page précédente / suivante (contenu qui glisse, en-tête fixe) |
