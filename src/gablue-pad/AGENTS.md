@@ -50,6 +50,17 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   l'overlay **une fois** en résident et l'ouvre par le socket
   `$XDG_RUNTIME_DIR/gablue/gpad-<pid>.sock`. Activé pour tous les comptes par
   l'image (`systemctl --global enable`).
+- **Socket Wayland vérifié au démarrage** : `gpad-trigger` teste la connexion
+  au `WAYLAND_DISPLAY` hérité ; s'il est mort, il adopte un `wayland-*` du
+  dossier runtime qui accepte la connexion et l'exporte (overlay,
+  `kscreen-doctor`, captures en héritent à l'`exec`). Indispensable parce que
+  la session console écrit `gablue-gaming` dans le gestionnaire utilisateur
+  **partagé** : un service relancé avant que Plasma ne réécrive cet
+  environnement gardait le socket mort — overlay invisible et `kscreen-doctor`
+  qui plante à chaque Home (constaté le 24/11/2026). Vérifié le même jour avec
+  un `WAYLAND_DISPLAY=gablue-gaming` mort : « adopté wayland-1 », overlay
+  résident mappé et menu visible ; avec un environnement valide, aucune
+  adoption (rien n'est touché).
 - `gablue-login-theme.service` (**utilisateur**, greeter, `Type=oneshot`) :
   `login-bridge.sh theme`, **`Before=plasma-login-kwin_wayland.service`** — le
   KWin du greeter lit le `kdeglobals` de `plasmalogin` à son démarrage, donc le

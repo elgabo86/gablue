@@ -82,14 +82,14 @@ if [ -x "$GABLUE_DISPLAY" ]; then
         || log "écran : préférence non appliquée (session inchangée)"
 fi
 
-# Disques externes : Plasma les monte par son propre service (module KDED
-# `solid_device_automounter`), absent d'une session console. Le helper balaie
-# au démarrage puis à chaque branchement ; il tient un verrou, donc une
-# relance du launcher après un plantage n'en démarre pas un second.
-GABLUE_REMOVABLE=${GABLUE_REMOVABLE:-/usr/libexec/gablue-gaming-removable}
-if [ -x "$GABLUE_REMOVABLE" ]; then
-    setsid "$GABLUE_REMOVABLE" </dev/null >/dev/null 2>&1 &
-fi
+# Disques externes : c'est `gablue-disk-automount.service` qui s'en charge
+# (unité utilisateur, démarrée par `gablue-gaming-session`, montage en LECTURE
+# SEULE). L'ancien helper lancé ici (`gablue-gaming-removable`) est retiré : il
+# restait dans le scope de la session console après la sortie du launcher, donc
+# la session ne finissait JAMAIS de se fermer (« closing » sans fin, gestionnaire
+# utilisateur maintenu avec son `WAYLAND_DISPLAY` de console — l'overlay du
+# bureau pointait ensuite sur un socket mort, constaté le 24/11/2026). Il
+# montait aussi en écriture, contre la décision du 23/11 (lecture seule).
 
 while :; do
     "$GLAUNCHER"

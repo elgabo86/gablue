@@ -69,18 +69,14 @@
   démarrage de l'unité attend le socket (30 s au plus, en fond). Il `exec`
   ensuite KWin avec `--exit-with-session /usr/libexec/gablue-gaming-launcher`.
   Jamais `set -e` : un service absent n'est pas une panne de session.
-- **gablue-gaming-removable** : monte les **disques externes** de la session
-  console. Sur le bureau c'est le service KDED `solid_device_automounter` de
-  Plasma qui s'en charge ; sans plasmashell, rien ne les montait. Balayage
-  idempotent (`lsblk` : amovible ou hotplug, système de fichiers connu, pas
-  déjà monté) au démarrage puis à chaque `Added` vu par `udisksctl monitor`
-  (client D-Bus, aucun privilège ni `udevadm` root). `--no-user-interaction`
-  est **obligatoire** : sans plasmashell il n'y a aucun agent PolicyKit dans
-  la session, une demande d'authentification ne recevrait pas de réponse — le
-  montage est autorisé à la session active (`allow_active=yes`). Les disques
-  internes (RM=0, HOTPLUG=0), le chiffrement (LUKS), le swap et les agrégats
-  RAID/LVM/ZFS ne sont jamais touchés. Une seule instance par session
-  (`flock`), et `GABLUE_LSBLK`/`GABLUE_UDISKSCTL` servent au banc.
+- ~~**gablue-gaming-removable**~~ : **retiré le 24/11/2026**. Ce helper lancé
+  par `gablue-gaming-launcher` montait les disques en écriture (contre la
+  décision du 23/11 : lecture seule) et, surtout, restait dans le scope de la
+  session console après la sortie du launcher : la session ne finissait jamais
+  de se fermer (`closing`), le gestionnaire utilisateur survivait avec son
+  `WAYLAND_DISPLAY=gablue-gaming`, et l'overlay du bureau pointait sur un
+  socket mort. `gablue-disk-automount.service` (unité utilisateur) couvre le
+  besoin, en lecture seule.
 - **gablue-display** : préférence d'**écran du jeu**, appliquée au démarrage de
   la session console (par `gablue-gaming-launcher`, qui tourne dans KWin donc
   a un compositeur à qui parler). `plasma` (défaut) ne touche à rien : KWin
@@ -103,8 +99,7 @@
   démarre donc l'application flatpak sans code spécial), respecte
   `Hidden`/`X-GNOME-Autostart-enabled`/`OnlyShowIn`, retire les codes de champ
   et ne double pas une instance déjà lancée (`flatpak ps`). Il applique aussi
-  la préférence d'écran du jeu (`gablue-display`) et lance le monteur de
-  disques externes (`gablue-gaming-removable`). C'est le bon endroit et non
+  la préférence d'écran du jeu (`gablue-display`). C'est le bon endroit et non
   `gablue-gaming-session` : ce script tourne **dans** KWin, donc
   `WAYLAND_DISPLAY`, le bus utilisateur et le compositeur existent déjà.
 - **gablue-session-mode** : bascule de session demandée depuis le menu Home

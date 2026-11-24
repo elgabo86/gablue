@@ -880,9 +880,84 @@ static void inventaire_nodes(void)
     pclose(f);
 }
 
+/* Socket Wayland réellement vivant.
+ *
+ * La session console écrit `WAYLAND_DISPLAY=gablue-gaming` dans le gestionnaire
+ * utilisateur PARTAGÉ (ses unités doivent trouver son compositeur). En revenant
+ * au bureau, un service relancé avant que Plasma ne réécrive cet environnement
+ * hérite du socket mort : l'overlay ne peut plus se mapper et chaque Home fait
+ * planter `kscreen-doctor` (« Failed to create wl_display », dialogue d'erreur)
+ * — constaté le 24/11/2026. On teste donc la connexion ; si elle échoue, on
+ * adopte un `wayland-*` du dossier runtime qui accepte, et on l'exporte (les
+ * enfants — overlay, kscreen-doctor, captures — héritent du bon socket).
+ */
+static int wayland_repond(const char *runtime, const char *nom)
+{
+    if (!nom || !*nom)
+        return 0;
+    char chemin[512];
+    snprintf(chemin, sizeof chemin, "%s/%s", runtime, nom);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return 0;
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", chemin);
+    int ok = connect(fd, (struct sockaddr *)&addr, sizeof addr) == 0;
+    close(fd);
+    return ok;
+}
+
+static void adopter_wayland(void)
+{
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    const char *actuel = getenv("WAYLAND_DISPLAY");
+    if (!runtime || !*runtime || wayland_repond(runtime, actuel))
+        return;
+
+    DIR *d = opendir(runtime);
+    if (!d)
+        return;
+    char choisi[128] = "";
+    struct timespec meilleur = {0, 0};
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (strncmp(e->d_name, "wayland-", 8) != 0)
+            continue;
+        if (n > 5 && strcmp(e->d_name + n - 5, ".lock") == 0)
+            continue;
+        char chemin[512];
+        snprintf(chemin, sizeof chemin, "%s/%s", runtime, e->d_name);
+        struct stat st;
+        if (stat(chemin, &st) < 0 || !S_ISSOCK(st.st_mode))
+            continue;
+        /* le plus RÉCENT parmi ceux qui répondent : en cas de deux
+         * compositeurs vivants (session qui se ferme), le nouveau est le bon */
+        if (!wayland_repond(runtime, e->d_name))
+            continue;
+        if (st.st_mtim.tv_sec > meilleur.tv_sec ||
+            (st.st_mtim.tv_sec == meilleur.tv_sec &&
+             st.st_mtim.tv_nsec > meilleur.tv_nsec)) {
+            meilleur = st.st_mtim;
+            snprintf(choisi, sizeof choisi, "%s", e->d_name);
+        }
+    }
+    closedir(d);
+    if (!choisi[0])
+        return;
+    fprintf(stderr, "[gpad-trigger] WAYLAND_DISPLAY=%s mort, adopté %s\n",
+            (actuel && *actuel) ? actuel : "(vide)", choisi);
+    fflush(stderr);
+    setenv("WAYLAND_DISPLAY", choisi, 1);
+}
+
 int main(int argc, char **argv)
 {
     snprintf(own_pid, sizeof own_pid, "%d", (int)getpid());
+
+    /* avant tout lancement d'enfant : l'environnement est hérité à l'exec */
+    adopter_wayland();
 
     if (argc < 2) {
         fprintf(stderr, "usage: %s [node] <binaire-overlay> [args...]\n", argv[0]);
