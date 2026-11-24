@@ -927,6 +927,22 @@ glissement `panel_w → 0` sur 200 ms.
 - **Fenêtre invisible mais jamais détruite** : la fenêtre layer-shell n'apparaît
   pas dans `workspace.windowList()` de KWin (vérifié le 19/11/2026) — ni barre
   des tâches, ni liste FENÊTRES.
+- **Écran : celui qui a le focus** (double écran, 24/11/2026). Layer-shell
+  **fige l'écran à la création** de la surface : un résident mappé une fois
+  restait sur l'écran du démarrage et le panneau s'ouvrait à côté du jeu. Le
+  nom de la sortie active vient de KWin
+  (`org.kde.KWin.activeOutputName` par zbus, ~1 ms, mesuré) ; il est comparé à
+  celui de la surface courante et, **seulement s'il a changé**, la surface est
+  détruite et recréée sur le `wl_output` correspondant (nom lu par l'événement
+  `wl_output.name`, v4 — `sorties` dans `App`, écrans branchés à chaud liés par
+  le `wl_registry`). Le résident garde donc sa surface mappée tant qu'on ne
+  change pas d'écran : aucune animation de KWin à repayer à chaque Home. Sortie
+  connue de KWin mais pas encore annoncée par Wayland = on **ne bouge pas**.
+  `--console` et les vues jetables visent l'écran au focus **à leur démarrage**
+  (pas de `kbus`). Mesuré le 24/11/2026 avec un seul écran : `ECRAN …` au
+  démarrage et à chaque `open`, et bascule à chaud (destruction + recréation de
+  la surface) vérifiée en forçant le changement — panneau redessiné, visible,
+  sans animation supplémentaire.
 - **Caché = presque mort** : pas de manette, gate refermé, aucun scan `/proc` ni
   lecture de `running.txt`, aucun dessin ; `poll` à **1 s** (pas `-1` :
   `signal()` installe `SA_RESTART`, un `poll(-1)` serait repris après SIGTERM et

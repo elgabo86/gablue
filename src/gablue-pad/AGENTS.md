@@ -61,6 +61,10 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   un `WAYLAND_DISPLAY=gablue-gaming` mort : « adopté wayland-1 », overlay
   résident mappé et menu visible ; avec un environnement valide, aucune
   adoption (rien n'est touché).
+- **Écran du panneau** : en double écran, le résident vise l'écran **qui a le
+  focus** (`org.kde.KWin.activeOutputName`) et ne recrée sa surface que si
+  l'écran change — layer-shell fige l'écran à la création, donc un résident
+  mappé une fois restait à côté du jeu (détail et mesures → `gpad/AGENTS.md`).
 - `gablue-login-theme.service` (**utilisateur**, greeter, `Type=oneshot`) :
   `login-bridge.sh theme`, **`Before=plasma-login-kwin_wayland.service`** — le
   KWin du greeter lit le `kdeglobals` de `plasmalogin` à son démarrage, donc le

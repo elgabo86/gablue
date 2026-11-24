@@ -23,11 +23,11 @@ use std::os::unix::net::UnixListener;
 use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{
-    wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_region, wl_registry, wl_seat, wl_shm,
-    wl_shm_pool, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_output, wl_region, wl_registry, wl_seat,
+    wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{
-    globals::{registry_queue_init, GlobalListContents},
+    globals::{registry_queue_init, GlobalList, GlobalListContents},
     Connection, Dispatch, QueueHandle,
 };
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -1384,6 +1384,14 @@ struct App {
     win_etat: Option<Arc<Mutex<Partage>>>,
     /// pilotage KWin (scripts plein écran / info)
     kbus: Option<KBus>,
+    /// Sorties Wayland connues par leur nom KWin (« DP-1 », « HDMI-A-1 »…) :
+    /// layer-shell fige l'écran à la création de la surface, il faut donc
+    /// pouvoir viser la bonne sortie (double écran → écran au focus).
+    sorties: HashMap<String, wl_output::WlOutput>,
+    /// nom de l'écran où vit la surface courante ("" = pas encore résolu)
+    ecran: String,
+    /// banc : marge posée sur la surface (`--test-margin`)
+    test_margin: i32,
     /// nom de l'entrée irréversible armée (FERMER, déco BT, redémarrer,
     /// éteindre) : le second A exécute, bouger dans la liste désarme
     arme: Option<String>,
@@ -1839,6 +1847,9 @@ impl App {
             win: WinInfo::default(),
             win_etat: None,
             kbus: None,
+            sorties: HashMap::new(),
+            ecran: String::new(),
+            test_margin: 0,
             arme: None,
             rec_start: None,
             rec_secs: 0,
@@ -4452,6 +4463,88 @@ impl App {
         }
     }
 
+    /// Crée la surface du panneau sur l'écran `sortie` (None = KWin choisit).
+    /// Layer-shell **fige l'écran à la création** : changer d'écran impose une
+    /// nouvelle surface, d'où cette méthode (démarrage et bascule de focus).
+    fn creer_surface(&mut self, sortie: Option<&wl_output::WlOutput>) {
+        let (Some(compositor), Some(layer_shell)) =
+            (self.compositor.clone(), self.layer_shell.clone())
+        else {
+            eprintln!("surface: compositeur absent");
+            return;
+        };
+        let surface = compositor.create_surface(&self.qh, ());
+        let layer = layer_shell.get_layer_surface(
+            &surface,
+            sortie,
+            zwlr_layer_shell_v1::Layer::Overlay,
+            "gpad".to_string(),
+            &self.qh,
+            (),
+        );
+        if self.side {
+            // panneau latéral droit, pleine hauteur, largeur fixe
+            layer.set_anchor(
+                zwlr_layer_surface_v1::Anchor::Top
+                    | zwlr_layer_surface_v1::Anchor::Bottom
+                    | zwlr_layer_surface_v1::Anchor::Right,
+            );
+            layer.set_size(self.panel_w as u32, 0);
+        } else {
+            layer.set_anchor(
+                zwlr_layer_surface_v1::Anchor::Top
+                    | zwlr_layer_surface_v1::Anchor::Bottom
+                    | zwlr_layer_surface_v1::Anchor::Left
+                    | zwlr_layer_surface_v1::Anchor::Right,
+            );
+            layer.set_size(0, 0); // 0 = toute la surface disponible
+        }
+        if self.test_margin != 0 {
+            // banc : position du panneau par marge (test de faisabilité seulement)
+            layer.set_margin(0, self.test_margin, 0, 0);
+        }
+        layer.set_exclusive_zone(-1); // ne réserve aucune place aux fenêtres
+        layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+        // région d'entrée vide => la souris traverse l'overlay
+        let region = compositor.create_region(&self.qh, ());
+        surface.set_input_region(Some(&region));
+        region.destroy();
+        self.configured = false;
+        self.off = self.panel_w;
+        surface.commit();
+        self.wl_surface = Some(surface);
+        self.layer = Some(layer);
+    }
+
+    /// Double écran : le panneau s'ouvre sur l'écran qui a le focus. On
+    /// **recrée** la surface seulement quand l'écran a changé — sinon le
+    /// résident garde la sienne, mappée, donc aucune animation de KWin à
+    /// repayer à chaque Home.
+    fn sur_ecran_actif(&mut self) {
+        // --console et les vues jetables n'ont pas de `kbus` : elles ont déjà
+        // visé le bon écran à leur démarrage.
+        let Some(kbus) = &self.kbus else { return };
+        let Some(nom) = kbus.ecran_focus() else { return };
+        if nom == self.ecran {
+            return;
+        }
+        let Some(sortie) = self.sorties.get(&nom).cloned() else {
+            // KWin connaît l'écran, Wayland ne l'a pas annoncé : ne pas viser
+            // une sortie inconnue, on reste où l'on est.
+            eprintln!("ECRAN {nom}: sortie wayland inconnue, panneau non deplace");
+            return;
+        };
+        if let Some(l) = self.layer.take() {
+            l.destroy();
+        }
+        if let Some(s) = self.wl_surface.take() {
+            s.destroy();
+        }
+        self.ecran = nom.clone();
+        self.creer_surface(Some(&sortie));
+        println!("ECRAN {nom}");
+    }
+
     /// Ouvre le panneau demandé par le déclencheur : manette du node, cibles du
     /// gate, état neuf, **glissement immédiat**. La surface est mappée depuis
     /// le démarrage (transparente, hors écran) : KWin ne rejoue pas son
@@ -4462,6 +4555,9 @@ impl App {
         if self.visible || self.kbd_ouvert {
             return;
         }
+        // double écran : la surface doit être sur l'écran au focus AVANT de
+        // glisser (layer-shell l'y fige à la création)
+        self.sur_ecran_actif();
         if !node.is_empty() {
             self.detecter_manette(node);
             self.grab_pad(node);
@@ -5723,13 +5819,55 @@ impl App {
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     fn event(
         _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
         _: &GlobalListContents,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        // Écran branché à chaud : on le lie pour apprendre son nom, sinon le
+        // panneau ne pourrait pas y aller avant un redémarrage de l'overlay.
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
+            if interface == "wl_output" {
+                let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for App {
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        // v4 : le nom est celui que KWin rend par D-Bus (`activeOutputName`)
+        if let wl_output::Event::Name { name: nom } = event {
+            state.sorties.insert(nom, output.clone());
+        }
     }
+}
+
+/// Lie toutes les sorties déjà annoncées par le compositeur. Leur **nom**
+/// n'arrive qu'après un aller-retour (événement `wl_output.name`) : à appeler
+/// avant toute création de surface, qui est liée à un écran.
+fn lier_sorties(globals: &GlobalList, qh: &QueueHandle<App>) {
+    globals.contents().with_list(|liste| {
+        for g in liste {
+            if g.interface == "wl_output" {
+                let _: wl_output::WlOutput =
+                    globals.registry().bind(g.name, g.version.min(4), qh, ());
+            }
+        }
+    });
 }
 
 macro_rules! ignore_events {
@@ -6828,11 +6966,34 @@ struct KBus {
     conn: zbus::blocking::Connection,
 }
 
+/// Nom de l'écran qui a le focus, vu par KWin : sortie de la fenêtre active,
+/// ou celle sous le pointeur quand aucune fenêtre n'est active. None = KWin
+/// injoignable ou méthode absente (aucun déplacement, comportement d'avant).
+fn nom_ecran_focus(conn: &zbus::blocking::Connection) -> Option<String> {
+    let r = conn
+        .call_method(
+            Some("org.kde.KWin"),
+            "/KWin",
+            Some("org.kde.KWin"),
+            "activeOutputName",
+            &(),
+        )
+        .ok()?;
+    r.body()
+        .deserialize::<String>()
+        .ok()
+        .filter(|n| !n.is_empty())
+}
+
 impl KBus {
     fn nouveau() -> Option<Self> {
         zbus::blocking::Connection::session()
             .ok()
             .map(|conn| Self { conn })
+    }
+
+    fn ecran_focus(&self) -> Option<String> {
+        nom_ecran_focus(&self.conn)
     }
 
     fn charger(&self, chemin: &str, nom: &str) -> Option<i32> {
@@ -7529,18 +7690,8 @@ fn main() {
         .bind(&qh, 1..=4, ())
         .expect("zwlr_layer_shell_v1");
     app.shm = Some(shm);
-    app.compositor = Some(compositor.clone());
-    app.layer_shell = Some(layer_shell.clone());
-
-    let surface = compositor.create_surface(&qh, ());
-    let layer = layer_shell.get_layer_surface(
-        &surface,
-        None,
-        zwlr_layer_shell_v1::Layer::Overlay,
-        "gpad".to_string(),
-        &qh,
-        (),
-    );
+    app.compositor = Some(compositor);
+    app.layer_shell = Some(layer_shell);
     // déchets des instances tuées brutalement (mesure : 40+ copies)
     nettoyer_scripts_temp();
 
@@ -7560,6 +7711,9 @@ fn main() {
     app.panel_w = arg_value(&args, "--width")
         .and_then(|v| v.parse::<i32>().ok())
         .unwrap_or(480);
+    app.test_margin = arg_value(&args, "--test-margin")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(0);
     if let Some(v) = arg_value(&args, "--idle").and_then(|v| v.parse::<u64>().ok()) {
         app.inactivite = Duration::from_secs(v);
     }
@@ -7567,36 +7721,18 @@ fn main() {
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0); // 0 = valeurs par défaut (180 entrée / 140 sortie)
 
-    if fullscreen || app.console {
-        layer.set_anchor(
-            zwlr_layer_surface_v1::Anchor::Top
-                | zwlr_layer_surface_v1::Anchor::Bottom
-                | zwlr_layer_surface_v1::Anchor::Left
-                | zwlr_layer_surface_v1::Anchor::Right,
-        );
-        layer.set_size(0, 0); // 0 = toute la surface disponible
-    } else {
-        // panneau latéral droit, pleine hauteur, largeur fixe
-        layer.set_anchor(
-            zwlr_layer_surface_v1::Anchor::Top
-                | zwlr_layer_surface_v1::Anchor::Bottom
-                | zwlr_layer_surface_v1::Anchor::Right,
-        );
-        layer.set_size(app.panel_w as u32, 0);
+    // Écran du panneau : celui qui a le focus (double écran). Le nom d'une
+    // sortie n'arrive qu'après un aller-retour, et la surface est liée à son
+    // écran dès sa création : on résout donc AVANT.
+    lier_sorties(&globals, &qh);
+    let _ = queue.roundtrip(&mut app);
+    let nom_ecran = KBus::nouveau().and_then(|k| k.ecran_focus());
+    if let Some(n) = &nom_ecran {
+        app.ecran = n.clone();
+        println!("ECRAN {n}");
     }
-    // banc : position du panneau par marge (test de faisabilité seulement)
-    if let Some(m) = arg_value(&args, "--test-margin").and_then(|v| v.parse::<i32>().ok()) {
-        layer.set_margin(0, m, 0, 0);
-    }
-    layer.set_exclusive_zone(-1); // ne réserve aucune place aux fenêtres
-    layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
-    // région d'entrée vide => la souris traverse l'overlay
-    let region = compositor.create_region(&qh, ());
-    surface.set_input_region(Some(&region));
-    region.destroy();
-    surface.commit();
-    app.wl_surface = Some(surface);
-    app.layer = Some(layer);
+    let sortie = nom_ecran.and_then(|n| app.sorties.get(&n).cloned());
+    app.creer_surface(sortie.as_ref());
 
     // La police ne sert qu'au premier dessin (après le `configure`) : la
     // charger ici laisse KWin préparer la surface en parallèle — ~15 ms
