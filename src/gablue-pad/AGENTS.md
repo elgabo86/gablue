@@ -24,7 +24,7 @@ d'animation KWin à attendre. Mesuré : premier tampon 6 ms, panneau en place
 | `gpad/assets/` | embarqués dans le binaire : `NotoSans-Regular.ttf`, `glyphes/{ps,xbox}/` | — (dans le binaire) |
 | `trigger/` | déclencheur : Home → overlay, combos, menu système, rescan des manettes, inhibition d'écran | `/usr/bin/gpad-trigger` |
 | `gate/` | démon root + programme BPF LSM qui coupe les lectures `hidraw`/`js` pendant le menu, et `padnodes.sh` (inventaire js/hidraw par périphérique physique) | `/usr/libexec/gablue-pad/gpad-gate` (+ `.bpf.o`, `gate/padnodes.sh`) |
-| `mouse/` | mode souris/clavier (Home+R3) | `/usr/bin/gpad-mouse` |
+| `mouse/` | mode souris/clavier (Home+R3) : **grabbe** le node evdev de la manette et **coupe** ses nodes js/hidraw par le gate, pour que le jeu ne la reçoive plus pendant qu'on pointe | `/usr/bin/gpad-mouse` |
 | `login/` | écran de connexion : pointeur manette (`gpad-login`) et pont du greeter (`login-bridge.sh` : thème sombre, clavier visuel ouvert **au premier mouvement** d'une manette, jamais à son simple branchement) | `/usr/bin/gpad-login`, `/usr/libexec/gablue-pad/login-bridge.sh` |
 | `inhibit/` | inhibition de l'écran tant qu'une manette est connectée ; en session console, tenue en permanence (`GPAD_INHIBIT_TOUJOURS=1`, lancée par `gablue-gaming-session`) | `/usr/bin/gpad-inhibit` |
 | `rumble/` | impulsion FF_RUMBLE (confirmation de sauvegarde de replay) | `/usr/bin/gpad-rumble` |
@@ -79,10 +79,21 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   permanence. Déclencheurs d'ouverture : appui de
   touche (`EV_KEY` valeur 1), stick **hors zone morte** (un état relu à
   l'ouverture, manette au repos, ne suffit donc pas), D-pad (`ABS_HAT0*` ≠ 0).
-  Ouverture `mode 2` + `forceActivate`, fermeture franche `mode 0 → 1` quand la
-  manette part (`kwinrc` persiste le mode, ne jamais le laisser à `2`). Aucun
-  privilège : tout se passe dans la session du greeter, ce qui évite les
-  franchissements SELinux. Un verrou
+  Ouverture `mode 2` + `forceActivate`, fermeture **`1` puis `0`** quand la
+  manette part. Les deux crans sont nécessaires, et l'ordre compte (mesuré sur
+  KWin 6.8.3 le 24/11/2026) : `0` **seul ne referme pas** un panneau déjà
+  mappé (le clavier restait affiché), `1` le referme, et **finir sur `0`**
+  empêche KWin de le rouvrir tout seul sur un évènement tactile — le pavé
+  tactile d'une DualSense branchée en USB en émet un à l'énumération, d'où le
+  clavier qui s'affichait au simple branchement (signalé le 24/11/2026).
+  L'ancien ordre (`0` puis `1`) refermait bien mais laissait le mode qui
+  rouvre. Le `1` intermédiaire est immédiat : aucune fenêtre utile pour qu'un
+  toucher le rouvre.
+  `gpad-login` ignore en plus les 0,6 s qui suivent l'ouverture du node
+  (`NOTIFY_SETTLE`) : certaines manettes y renvoient leur état complet (axes
+  hors zone morte, pavé tactile, boutons), ce qui n'est pas un geste de
+  l'utilisateur. Aucun privilège : tout se passe dans la session du greeter, ce
+  qui évite les franchissements SELinux. Un verrou
   `flock` (dans `$XDG_RUNTIME_DIR`) empêche deux ponts de tourner ensemble —
   deux `gpad-login` donneraient deux pointeurs virtuels, donc un mouvement
   doublé.
@@ -95,7 +106,9 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
 Validé sur gen1 le 19/11/2026 (plasma-login-manager 6.8.3, Plasma 6.8) :
 `theme` **finit** avant que `plasma-login-kwin_wayland.service` ne démarre
 (journal : `Finished gablue-login-theme` puis `Starting …kwin_wayland`),
-`VirtualKeyboardMode` reste à `1` après fermeture, aucun AVC SELinux, aucun
+`VirtualKeyboardMode` finit à `0` (Never) après fermeture depuis le 24/11
+(il restait à `1` auparavant, ce qui laissait la réouverture automatique),
+aucun AVC SELinux, aucun
 processus laissé derrière au logout. À revérifier après une montée de version
 de plasmalogin (le mécanisme `Before=` + `kdeglobals` n'est pas un contrat
 public).
@@ -105,8 +118,11 @@ validé au banc seulement — `gpad-login` et le pont réels, manette virtuelle
 `vpad`, `busctl`/`udevadm` en stubs : rien au repos ni au branchement, SIGUSR1
 au stick comme à l'appui de touche, aucun signal sans `GPAD_LOGIN_NOTIFY_PID`,
 `mode i 2` + `forceActivate`, maintien pendant une activité régulière,
-**fermeture à 10 s sans mouvement puis réouverture au geste suivant**, `mode 0 →
-1` au débranchement, `gpad-login` arrêté à la sortie. **Reste à vérifier sur
+**fermeture à 10 s sans mouvement puis réouverture au geste suivant**,
+`1` puis `0` au débranchement, `gpad-login` arrêté à la sortie. La fermeture a
+été **mesurée sur un KWin réel** (banc uinput + `spectacle`, 24/11/2026) :
+`0` seul laisse le panneau affiché, `1` le referme, `1` puis `0` le referme et
+laisse le mode sûr. **Reste à vérifier sur
 l'écran de connexion réel** : que KWin du greeter ouvre bien le clavier sur le
 signal avec la manette physique (un SIGUSR1 séparé interrompt le `sleep 1` du
 pont, donc aucune latence ajoutée), et qu'aucun état relu à l'ouverture
@@ -160,6 +176,21 @@ l'emporte sur l'activation de l'image) ; un masque posé sur l'ancien service
 
 Pas de Home+triangle (retiré) : YouTube s'ouvre par la page Applications.
 Détail des gestes et des pages : `gpad/AGENTS.md`.
+
+**Mode souris (Home+R3)** : pendant le mode, la manette **n'appartient qu'au
+pointeur**. Deux verrous, les mêmes que l'overlay quand son panneau est ouvert :
+`EVIOCGRAB` sur le node evdev (les jeux SDL/Wine ne voient plus stick ni
+boutons) et le **gate BPF** sur les nodes `js`/`hidraw` (le trou que le grab ne
+ferme pas), que `gpad-trigger` transmet au binaire (`--gate <socket>
+--gate-target <node>`, nodes de `padnodes.sh` recalculés à chaud). Sans eux, le
+jeu continuait de recevoir la manette : déplacer le pointeur faisait aussi
+marcher le personnage (signalé le 24/11/2026). Le binaire n'envoie **jamais**
+`clear` au démon (il viderait les cibles de l'overlay) : `target` s'accumule,
+le démon est idempotent, et un `open` attache le hook. À la sortie — Home+R3,
+`SIGTERM`/`SIGINT`/`SIGHUP`, ou manette débranchée — il envoie **`close`** puis
+relâche le grab : sans ça la manette resterait coupée pour tout le monde
+jusqu'au prochain `close`. La boucle attend en `nanosleep` (interruptible par
+un signal), pas en `usleep`, pour que l'arrêt soit immédiat.
 
 **Changement de session** (`MODE JEU` sur le bureau, `MODE BUREAU` en console) :
 la ligne vit dans SYSTEME, entre la veille et les sorties — elle passe par

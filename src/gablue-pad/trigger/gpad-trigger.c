@@ -778,7 +778,9 @@ static void do_script(const char *geste, const char *fichier)
 }
 
 /* Home+R3 : mode souris (s'il ne tourne pas déjà — gpad-mouse sort tout seul
- * sur Home+R3, c'est aussi la façon de le désactiver). */
+ * sur Home+R3, c'est aussi la façon de le désactiver). La gate et ses cibles
+ * (nodes js/hidraw) sont passées au binaire : le mode souris coupe la manette
+ * pour les autres applications comme le fait l'overlay (grab evdev + gate). */
 static void do_mouse(void)
 {
     if (system("pgrep -x gpad-mouse > /dev/null 2>&1") == 0) {
@@ -786,10 +788,21 @@ static void do_mouse(void)
         fflush(stderr);
         return;
     }
-    char cmd[700];
+    char cmd[1400];
+    int len = snprintf(cmd, sizeof cmd, "setsid '%s'", g_mouse);
+    if (len < 0 || len >= (int)sizeof cmd - 2)
+        len = (int)strlen(cmd);
+    if (gate_sock[0]) {
+        len += snprintf(cmd + len, sizeof cmd - (size_t)len, " --gate '%s'", gate_sock);
+        for (int i = 0; i < n_gate && len > 0 && len < (int)sizeof cmd - 90; i++)
+            len += snprintf(cmd + len, sizeof cmd - (size_t)len,
+                            " --gate-target '%s'", gate_nodes[i]);
+    }
+    if (len < 0 || len >= (int)sizeof cmd - 45)
+        len = (int)strlen(cmd);
+    snprintf(cmd + len, sizeof cmd - (size_t)len, " > /dev/null 2>&1 < /dev/null &");
     fprintf(stderr, "[gpad-trigger] COMBO Home+R3 -> mode souris\n");
     fflush(stderr);
-    snprintf(cmd, sizeof cmd, "setsid '%s' > /dev/null 2>&1 < /dev/null &", g_mouse);
     run_cmd(cmd);
 }
 

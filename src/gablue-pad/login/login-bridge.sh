@@ -130,9 +130,15 @@ done
 
 vkm() { busctl --user set-property org.kde.KWin /VirtualKeyboard \
             org.kde.kwin.VirtualKeyboard mode i "$1"; }
-# Fermeture franche : Never(0) puis Touch-and-Tablet(1) ; sans le 0, un
-# panneau déjà mappé reste visible (même mécanique que l'overlay manette).
-hide_osk() { vkm 0; vkm 1; }
+# Clavier fermé = Never(0), mais 0 SEUL ne referme pas un panneau déjà mappé
+# (mesuré sur KWin 6.8.3 le 24/11/2026 : le clavier reste affiché). On repasse
+# donc par Touch-and-Tablet(1), qui referme, puis on FINIT sur 0 : l'ordre
+# inverse (l'ancien 0 puis 1) laissait KWin ouvrir le clavier tout seul sur un
+# évènement tactile, et le pavé tactile d'une DualSense branchée en USB en
+# émet un à l'énumération — le clavier s'affichait au simple branchement
+# (signalé le 24/11/2026). Le 1 intermédiaire est immédiat, aucune fenêtre
+# utile pour qu'un toucher le rouvre.
+hide_osk() { vkm 1; vkm 0; }
 show_osk() { vkm 2 && busctl --user call org.kde.KWin /VirtualKeyboard \
                             org.kde.kwin.VirtualKeyboard forceActivate; }
 pad_present() {

@@ -13,13 +13,20 @@
 //   - Carre / Triangle   : Retour arriere / F4
 //   - Home + R3          : quitter (gere aussi par gamepadshortcuts)
 //
-// Le binaire est lance/arrete par gamepadshortcuts (Home + R3).
+// Le binaire est lance/arrete par gpad-trigger (Home + R3).
+//
+// PENDANT LE MODE, LA MANETTE N'APPARTIENT QU'AU POINTEUR : le noeud evdev est
+// grabbe (EVIOCGRAB) et les nodes js/hidraw sont coupes par le gate BPF du
+// pack — les memes deux verrous que l'overlay quand son panneau est ouvert.
+// Sans ca, le jeu continuait de recevoir stick et boutons : deplacer le
+// pointeur faisait aussi marcher le personnage (signale le 24/11/2026).
 
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
 #include <math.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,8 +34,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -44,6 +53,63 @@
 // Sons : surchargeables par environnement, sinon ceux du banc (importés).
 #define START_SOUND_DEFAUT "clic.wav"
 #define EXIT_SOUND_DEFAUT  "noclic.wav"
+
+// =============================================================================
+// SORTIE PROPRE ET GATE
+// =============================================================================
+
+static volatile sig_atomic_t running = 1;
+static void on_signal(int sig) { (void)sig; running = 0; }
+
+// Nodes js/hidraw des manettes (donnes par le declencheur : `padnodes.sh`).
+static const char *gate_targets[8];
+static int n_gate_targets;
+static const char *gate_socket;
+static bool gate_ouvert;
+
+/* Une commande par connexion, aucune reponse (protocole du demon) : `target`
+ * resout le node en dev_t et l'ajoute, `open` attache le hook. On n'envoie
+ * JAMAIS `clear` (il viderait les cibles de l'overlay) : le demon est
+ * idempotent, plusieurs `target` s'accumulent. */
+static bool gate_cmd(const char *sock, const char *message)
+{
+    if (!sock || !*sock)
+        return false;
+
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return false;
+
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sock);
+
+    // connexion bornee a 500 ms : un demon bloque ne fige pas le mode souris
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    bool ok = false;
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+        ok = true;
+    } else if (errno == EINPROGRESS) {
+        struct pollfd p = {.fd = fd, .events = POLLOUT};
+        ok = poll(&p, 1, 500) > 0;
+    }
+    if (ok) {
+        char ligne[256];
+        int n = snprintf(ligne, sizeof(ligne), "%s\n", message);
+        ok = n > 0 && write(fd, ligne, (size_t)n) == n;
+    }
+    close(fd);
+    return ok;
+}
+
+static void gate_fermer(void)
+{
+    if (gate_ouvert) {
+        gate_cmd(gate_socket, "close");
+        gate_ouvert = false;
+    }
+}
 
 // =============================================================================
 // DETECTION DE LA MANETTE
@@ -317,13 +383,30 @@ static struct button_map buttons[] = {
 // BOUCLE PRINCIPALE
 // =============================================================================
 
-int main(void)
+int main(int argc, char **argv)
 {
     // Reaper automatique des enfants (ffplay)
     struct sigaction sa = {0};
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = SA_NOCLDWAIT;
     sigaction(SIGCHLD, &sa, NULL);
+
+    // arret sur signal : la gate DOIT etre refermee (sinon la manette reste
+    // coupee pour tout le monde jusqu'au prochain `close` du demon)
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+    signal(SIGHUP, on_signal);
+
+    // --gate <socket> et --gate-target <node> (un par node js/hidraw), donnes
+    // par gpad-trigger : les memes cibles que l'overlay.
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--gate") == 0 && i + 1 < argc) {
+            gate_socket = argv[++i];
+        } else if (strcmp(argv[i], "--gate-target") == 0 && i + 1 < argc &&
+                   n_gate_targets < (int)(sizeof(gate_targets) / sizeof(gate_targets[0]))) {
+            gate_targets[n_gate_targets++] = argv[++i];
+        }
+    }
 
     const char *device_path = find_controller();
     if (!device_path)
@@ -333,6 +416,23 @@ int main(void)
     if (ctrl < 0) {
         perror("open controller");
         return 1;
+    }
+
+    // evdev nous seul : les jeux (SDL/wine) ne voient plus stick ni boutons
+    if (ioctl(ctrl, EVIOCGRAB, 1) < 0)
+        fprintf(stderr, "[WARN] grab refusé (%s) : le jeu verra encore evdev\n",
+                strerror(errno));
+
+    // js/hidraw : le trou que le grab ne ferme pas, coupe par le gate BPF
+    if (gate_socket && n_gate_targets > 0) {
+        for (int i = 0; i < n_gate_targets; i++) {
+            char commande[300];
+            snprintf(commande, sizeof(commande), "target %s", gate_targets[i]);
+            gate_cmd(gate_socket, commande);
+        }
+        gate_ouvert = gate_cmd(gate_socket, "open");
+        if (!gate_ouvert)
+            fprintf(stderr, "[WARN] gate %s : open refusé\n", gate_socket);
     }
 
     // Plages reelles du stick droit
@@ -366,7 +466,7 @@ int main(void)
     double last_time = now_seconds();
     const double update_interval = 1.0 / UPDATE_RATE;
 
-    while (true) {
+    while (running) {
         double loop_start = now_seconds();
 
         // Vidage des evenements en attente : mise a jour des etats
@@ -377,9 +477,11 @@ int main(void)
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     break;
                 fprintf(stderr, "[ERREUR] Manette deconnectee.\n");
+                gate_fermer();
+                ioctl(ctrl, EVIOCGRAB, 0);
+                close(ctrl);
                 ioctl(ufd, UI_DEV_DESTROY);
                 close(ufd);
-                close(ctrl);
                 return 1;
             }
             if (bytes != sizeof(ev))
@@ -480,15 +582,29 @@ int main(void)
             fprintf(stderr, "[INFO] Bouton Home/Guide et R3 presses : arret.\n");
             play_sound(getenv("NOCLIC_WAV") ? getenv("NOCLIC_WAV") : EXIT_SOUND_DEFAUT);
             usleep(700000);
-            ioctl(ufd, UI_DEV_DESTROY);
-            close(ufd);
-            close(ctrl);
-            return 0;
+            running = 0;
+            break;
         }
 
         // Cadence a 120 Hz
         double elapsed = now_seconds() - loop_start;
-        if (elapsed < update_interval)
-            usleep((useconds_t)((update_interval - elapsed) * 1e6));
+        if (elapsed < update_interval) {
+            struct timespec pause = {
+                .tv_sec = 0,
+                .tv_nsec = (long)((update_interval - elapsed) * 1e9),
+            };
+            // nanosleep (pas usleep) : un signal l'interrompt et la boucle
+            // sort par `running`
+            nanosleep(&pause, NULL);
+        }
     }
+
+    // Sortie : on rend la manette et on referme la gate, toujours.
+    gate_fermer();
+    fprintf(stderr, "[INFO] mode souris : manette rendue (grab relâché).\n");
+    ioctl(ctrl, EVIOCGRAB, 0);
+    close(ctrl);
+    ioctl(ufd, UI_DEV_DESTROY);
+    close(ufd);
+    return 0;
 }

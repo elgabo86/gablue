@@ -106,11 +106,18 @@ static void axis_read(int fd, int code, struct axis *a) {
  * le réveil du shell à 120 Hz serait du gâchis pur. */
 static char notify_pid[32];
 static double last_notify;          /* CLOCK_MONOTONIC, 0 = jamais */
+static double opened_at;            /* idem, au démarrage du pointeur */
 #define NOTIFY_MIN_INTERVAL 0.5
+/* Délai de stabilisation : à l'ouverture du node, une manette peut renvoyer son
+ * état complet (axes hors zone morte, pavé tactile, boutons). Ces évènements ne
+ * sont pas un geste de l'utilisateur : sans cette garde, le clavier visuel du
+ * greeter s'ouvrait au branchement d'une manette (signalé le 24/11/2026). */
+#define NOTIFY_SETTLE 0.6
 
 static void notify_input(void) {
     if (!notify_pid[0]) return;
     double now = now_seconds();
+    if (opened_at > 0.0 && now - opened_at < NOTIFY_SETTLE) return;
     if (last_notify > 0.0 && now - last_notify < NOTIFY_MIN_INTERVAL) return;
     last_notify = now;
     pid_t parent = getppid();
@@ -212,6 +219,8 @@ int main(void) {
 
     double carry_x = 0.0, carry_y = 0.0;
     double last_time = now_seconds();
+    // la fenêtre de stabilisation part de l'ouverture du périphérique
+    opened_at = last_time;
 
     while (running) {
         struct timespec tick = { 0, 1000000000L / UPDATE_RATE };
