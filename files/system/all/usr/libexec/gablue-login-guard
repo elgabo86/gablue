@@ -1,0 +1,103 @@
+#!/usr/bin/bash
+
+# gablue-login-guard — rattraper un autologin que plasmalogin n'a pas su
+# lancer.
+#
+# Pourquoi : plasmalogin (fork SDDM) démarre TOUJOURS son écran de connexion,
+# puis demande sa fin pour ouvrir la session autologin. Le serveur d'affichage
+# du greeter (`kwin_wayland`, compte système `plasmalogin`) ne meurt pas quand
+# sa session logind se termine : il garde `/dev/tty1`, et l'autologin échoue en
+# boucle avec
+#   plasmalogin-helper: Failed to take control of "/dev/tty1" ("root"):
+#   Operation not permitted
+# — écran noir, aucune session, ~25 tentatives par seconde (constaté sur gen1
+# le 25/11/2026, après bascule comme au démarrage). C'est le bug amont
+# sddm#1844 (PR sddm#1969 : « if autologin is used, avoid starting a display
+# server for the greeter »), non corrigé dans ce fork : il ne faut donc pas
+# attendre un correctif pour que `MODE JEU` / `MODE BUREAU` marchent.
+#
+# Le garde ne fait RIEN sans autologin armé (fichier absent) : sur l'écran de
+# connexion, un utilisateur doit garder son greeter. Avec autologin, il attend
+# la session du compte visé et, s'il n'en vient aucune, achève l'écran de
+# connexion resté en vie puis attend de nouveau (le démon réessaie seul dès que
+# la VT est libre) ; en dernier recours il redémarre plasmalogin.
+#
+# Appelé par `gablue-login-guard.service` au démarrage et par
+# `gablue-session-mode` après chaque redémarrage de plasmalogin.
+
+set -uo pipefail   # jamais -e : chaque étape est facultative, ce garde ne doit
+                   # pas laisser la machine sans session
+
+CONF=/etc/plasmalogin.conf.d/zz-gablue-session.conf
+# le compte système qui porte l'écran de connexion
+GREETER_USER=plasmalogin
+# secondes d'attente d'une session à chaque tentative
+ATTENTE=40
+
+log() { printf 'gablue-login-guard: %s\n' "$*" >&2; }
+
+sessions_siege() {   # $1 = compte, sessions actives sur seat0
+    loginctl list-sessions --no-legend 2>/dev/null |
+        awk -v u="$1" '$3 == u && $4 == "seat0" { print $1 }'
+}
+
+attendre_session() {   # $1 = secondes ; 0 dès qu'une session du compte existe
+    local i
+    for i in $(seq 1 $(($1 * 4))); do
+        [ -n "$(sessions_siege "$UTILISATEUR")" ] && return 0
+        sleep 0.25
+    done
+    [ -n "$(sessions_siege "$UTILISATEUR")" ]
+}
+
+# Achève l'écran de connexion resté en vie : sa session logind est terminée,
+# mais ses processus (kwin_wayland en tête) ne sortent pas et gardent la VT.
+# UNIQUEMENT le compte du greeter — jamais celui de l'utilisateur, jamais un
+# `pkill` large : les mêmes binaires tournent dans la session de l'utilisateur.
+achever_greeter() {
+    local id
+    for id in $(sessions_siege "$GREETER_USER"); do
+        loginctl terminate-session "$id" >/dev/null 2>&1 || true
+        loginctl kill-session "$id" -s SIGKILL >/dev/null 2>&1 || true
+    done
+    pkill -9 -u "$GREETER_USER" >/dev/null 2>&1 || true
+    # son gestionnaire de compte aussi : les unités du greeter y vivent, et
+    # `stop` sans blocage (le KWin ignorait SIGTERM, d'où le SIGKILL ci-dessus)
+    systemctl stop --no-block "user@$(id -u "$GREETER_USER").service" \
+        >/dev/null 2>&1 || true
+}
+
+# --- pas d'autologin armé : rien à faire, et surtout ne pas toucher au greeter
+[ -f "$CONF" ] || exit 0
+UTILISATEUR=$(sed -n 's/^[[:space:]]*User=//p' "$CONF" | head -1)
+[ -n "$UTILISATEUR" ] || exit 0
+
+# au démarrage, cette unité peut partir avant plasmalogin : l'attendre (20 s)
+for _ in $(seq 1 80); do
+    systemctl is-active --quiet plasmalogin.service && break
+    sleep 0.25
+done
+
+if attendre_session "$ATTENTE"; then
+    exit 0
+fi
+
+log "aucune session $UTILISATEUR après ${ATTENTE}s : l'écran de connexion garde la VT, je l'achève"
+achever_greeter
+
+# le démon réessaie seul son autologin dès que la VT est libre
+if attendre_session "$ATTENTE"; then
+    log "session $UTILISATEUR ouverte après reprise de l'écran de connexion"
+    exit 0
+fi
+
+# dernier recours : le démon lui-même, une fois
+log "toujours aucune session : redémarrage de plasmalogin"
+systemctl restart plasmalogin.service
+if attendre_session "$ATTENTE"; then
+    log "session $UTILISATEUR ouverte après redémarrage de plasmalogin"
+    exit 0
+fi
+
+log "ÉCHEC : aucune session $UTILISATEUR — la machine reste sur l'écran de connexion"
+exit 1

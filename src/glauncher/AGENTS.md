@@ -191,6 +191,15 @@ manette n'était libre.
   commentaires et clés inconnues préservés (`src/recorder.rs`, même contrat que
   `save_game_dirs`). Un `~` littéral n'est jamais écrit : les chemins viennent
   du navigateur, donc absolus.
+- **Audio** (25/11/2026) : deux lignes ouvrent le bloc « Son » — *Sortie
+  audio* et *Entrée audio* — réglées au **gauche/droite**, appliquées tout de
+  suite par `pactl set-default-sink|source` (`src/audio.rs`). C'est le
+  remplacement de l'applet audio de Plasma, absent en session console : le
+  casque, la TV et le micro se changent sans quitter la session. La liste est
+  relue à chaque ouverture des Réglages (`pactl list sinks|sources`, monitors
+  écartés côté entrée) et la description de l'appareil est affichée ; le choix
+  **survit** aux sessions, WirePlumber retenant le défaut par utilisateur —
+  aucun fichier du launcher n'est écrit pour ça.
 - **Son** : deux lignes entre la sortie et l'affichage. *Musique de fond* —
   `Croix` coupe ou relance, appliqué **tout de suite** (couper envoie `Stop` au
   fil de lecture, qui garde sa position : relancer reprend la piste où elle
@@ -665,9 +674,13 @@ grille : un fond noir opaque l'aurait effacée.
   `Options ▸`, dessinées comme dans l'overlay (interrupteur ou valeur, pas de
   texte « Croix = … ») — **Lancer dans gamescope**, **Résolution forcée**
   (cycle Croix : celle du jeu → 1080 → 900 → 720 → 480 → retour) et, **pour un
-  `.wgp` seulement**, **Manettes en mode Xbox** (`gwine --xbox`, filtre
-  `all` = toutes les manettes ; `lgplaunch` n'a pas d'équivalent, la ligne
-  n'existe donc pas pour un `.lgp`). Les bascules **ne referment pas le menu** :
+  `.wgp` seulement**, **Manettes en mode Xbox**. La **Résolution forcée
+  n'apparaît que si gamescope est activé** (25/11/2026) : hors de lui le jeu
+  prend la résolution de l'écran, la ligne n'aurait aucun effet ; la couper
+  remet aussi la résolution à « celle du jeu » (`resolution = None`). Pour un
+  `.wgp` seulement, **Manettes en mode Xbox** (`gwine --xbox`, filtre `all` =
+  toutes les manettes ; `lgplaunch` n'a pas d'équivalent, la ligne n'existe
+  donc pas pour un `.lgp`). Les bascules **ne referment pas le menu** :
   l'état se voit changer sous les yeux. Elles sont écrites tout de suite dans
   `~/.local/share/glauncher/games.txt` (`src/pergame.rs`, une ligne par jeu
   `<slug>\tgamescope=1\tres=1080\txbox=1`), **jamais dans `assets/`** : ce

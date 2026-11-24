@@ -217,13 +217,16 @@ autologin est armé** (fichier `zz-gablue-session.conf` présent) : une simple
 déconnexion relancerait la même session (plasmalogin garde `Session=` en
 mémoire, bug KDE 522181). Détail et pièges → `files/system/AGENTS.md`.
 
-**Bascule jeu ⇄ application compagne** (`BASCULER JEU / APP`, page JEU en tête
-quand une app compagne est ouverte, page FENETRES, et L2/R2 panneau ouvert) :
+**Bascule jeu ⇄ application compagne** (`BASCULER`, accueil et L2/R2 panneau
+ouvert) :
 elle ne se contente pas d'activer la fenêtre. Celle du jeu est **plein écran**,
 donc dans une couche au-dessus des fenêtres normales — l'app restait derrière
 et l'écran semblait revenir au jeu (constaté le 23/11/2026 avec Gablue TV et
-Jellyfin). Le plein écran du jeu est retiré en allant vers l'app et remis en
-revenant (`script_bascule`, testé), `keepAbove` levé au passage, et
+Jellyfin). Le jeu est **minimisé** et son plein écran retiré en allant vers
+l'app, les deux remis en revenant (`script_bascule`, testé — minimiser est
+indispensable : un jeu Wine/XWayland reprenait le focus aussitôt et l'app
+n'était vue qu'une fraction de seconde, 25/11/2026), `keepAbove` levé au
+passage, et
 l'activation part dans le **même** script KWin (deux chargements se
 marcheraient dessus). Un seul jeu à la fois : c'est le modèle du launcher
 (`running: Option<String>`), il n'y a donc jamais de choix entre deux jeux.
@@ -252,10 +255,14 @@ fenêtre active — app au premier plan = aucun jeu reconnu, et la bascule cycla
 les fenêtres au lieu de passer à l'app.
 
 **Bascule en tête de l'accueil** : quand un jeu tourne **et** qu'une app
-compagne est ouverte, `BASCULER JEU / APP` est la première ligne de l'accueil
-du panneau — juste après l'en-tête de fenêtre, il n'y a plus de pages `JEU` /
-`FENETRES` : la ligne vit dans `accueil_items(dispo)` et `refresh_bascule` est relu après la première image
-(à l'ouverture), jamais avant : `lister.js` prend jusqu'à 400 ms.
+compagne est ouverte, `BASCULER` est le **premier geste** de l'accueil, juste
+après le nom de la fenêtre et ses trois volumes au bureau ; en **console** il
+suit `FERMER` et précède les volumes (25/11/2026) —
+il n'y a plus de pages `JEU` / `FENETRES` : la ligne vit dans
+`accueil_items(dispo)` et `refresh_bascule` est relu après la première image
+(à l'ouverture), jamais avant : `lister.js` prend jusqu'à 400 ms. Sans jeu
+mais avec une app compagne, la bascule va et vient entre l'app et
+**glauncher** — pas de cyclage de fenêtres au hasard.
 
 **Captures d'écran : format et qualité** (page CAPTURE, `FORMAT PHOTO` /
 `QUALITE PHOTO`) sont écrits dans `~/.config/gablue/recorder.conf`
@@ -310,7 +317,8 @@ dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
   resserre et `reg_top` fait défiler avec une barre de position quand ça dépasse
   (~sous 1100 px de haut, vu avec `GPAD_TEST_BUDGET`). La sélection reste
   visible en défilant. L'accueil lui-même tient en 1080p (mesuré le 24/11/2026,
-  1920×1080 : seize lignes, pied de page visible, aucun défilement).
+  1920×1080 : seize lignes, pied de page visible, aucun défilement ; quatorze
+  depuis le retrait de `FERMER` et `PLEIN ECRAN`, le 25/11/2026).
 
 ## Clavier virtuel à la demande (`gpad-clavier`)
 

@@ -6,12 +6,15 @@ buffer shm (aucun toolkit). Deux habillages : **RETRO** (police bitmap 5×7
 embarquée) et **MODERNE** (Noto Sans TTF + glyphes de manette Xelu, embarqués
 dans `assets/`). Contrat des gestes et liste des composants : `AGENTS.md` racine.
 
-## Réglages : l'accueil, puis trois catégories
+## Réglages : l'accueil, puis deux catégories
 
 Le menu **est** le panneau : aucune fenêtre secondaire. L'accueil porte **les
-gestes du quotidien à plat** (fermer, mode souris, clavier, plein écran,
-volumes, capture écran / enregistrement / replay) puis **trois catégories** de
-réglages : `AFFICHAGE`, `CAPTURE`, `SYSTEME`. Une catégorie n'existe que si
+gestes du quotidien à plat** (volumes, mode souris, clavier, capture écran /
+enregistrement / replay) puis **deux catégories** de réglages : `OPTIONS
+D'AFFICHAGE`, `OPTIONS DE CAPTURE`. `SYSTEME` a été **retirée le 25/11/2026**
+(demande de l'utilisateur) : ses lignes vivent dans le **menu système** (Home
+maintenu) et deux chemins pour les mêmes sorties n'apportaient rien. Une
+catégorie n'existe que si
 elle porte **au moins trois lignes propres** — un domaine d'une ou deux lignes
 n'a pas de page, ses lignes sont sur l'accueil (réorganisé le 24/11/2026 :
 `JEU`, `FENETRES`, `SON`, `PERF` et `MANETTE` ont disparu). On navigue
@@ -39,8 +42,8 @@ l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliqué
 
 `AFFICHAGE` **a absorbé `PERF`** (24/11/2026) : HUD, limite de FPS, VRR,
 priorité CPU et style sont le même sujet — ce qu'on voit, et à quelle vitesse.
-`TOUT FERMER` reste dans `SYSTEME` **et** dans le **menu système** (Home
-maintenu) : deux chemins voulus, décidé le 24/11/2026.
+Les sorties (`TOUT FERMER`, modes de session, extinction) ne vivent plus que
+dans le **menu système** (Home maintenu, `menu_systeme`).
 
 `PRIORITE ACTIVE` n'est pas du CPU seul (vérifié le 24/11/2026 sur
 `foreground_booster`, variante *dmemcg* : `cpu.weight` 100 → **10 000** et
@@ -143,7 +146,7 @@ tant que `pdep` tourne.
 
 **Titre de page** : sous le nom de la fenêtre (18 px plus bas, avec de l'air
 avant la liste), le nom de la page **centré** en échelle 3 (`MENU`,
-`AFFICHAGE`, `CAPTURE`, `SYSTEME`, `APPLIS`, `FENÊTRE`, `FENÊTRES`) avec un
+`OPTIONS D'AFFICHAGE`, `OPTIONS DE CAPTURE`, `APPLIS`, `FENÊTRE`, `FENÊTRES`) avec un
 **filet d'accent dégradé
 de chaque côté** (`filet_fondu_inv` à gauche, `filet_fondu` à droite), **2 px
 d'épaisseur** et alpha 0xBB : à 1 px et 0x66 le filet disparaissait sur le
@@ -162,24 +165,43 @@ pour un geste. Depuis le 24/11/2026 il mêle **les gestes du quotidien à plat**
 et trois catégories de réglages (chevron au bord droit) :
 
 ```
-[en-tête fenêtre active]
-BASCULER JEU / APP   (seulement si une app compagne est ouverte)
-FERMER · MODE SOURIS · CLAVIER VIRTUEL · PLEIN ECRAN (bureau seulement)
+BUREAU
+[en-tête fenêtre active]   (bouton : ouvre la page FENETRE)
 VOLUME GENERAL · VOLUME JEU · VOLUME APP   (les deux derniers : si le flux existe)
-CAPTURE ECRAN · ENREGISTRER · REPLAY · SAUVER REPLAY (si le buffer tourne)
-AFFICHAGE ▸  FPS MAX · MANGOHUD · VRR · PRIORITE ACTIVE · STYLE
-CAPTURE   ▸  QUALITE · CODEC · RESOLUTION · FPS REC · CURSEUR · FORMAT PHOTO · QUALITE PHOTO · DUREE REPLAY · REPLAY AUTO
-SYSTEME   ▸  MISE EN VEILLE · MODE JEU|BUREAU · TOUT FERMER · FERMER LA SESSION · REDEMARRER · ETEINDRE
+BASCULER   (seulement si une app compagne est ouverte)
+MODE SOURIS · CLAVIER VIRTUEL
+CAPTURE ECRAN · ENREGISTRER · ACTIVER LE REPLAY · SAUVER REPLAY (si le buffer tourne)
+OPTIONS D'AFFICHAGE ▸  FPS MAX · MANGOHUD · VRR · PRIORITE ACTIVE · STYLE
+OPTIONS DE CAPTURE  ▸  QUALITE · CODEC · RESOLUTION · FPS REC · CURSEUR · FORMAT PHOTO · QUALITE PHOTO · DUREE REPLAY · REPLAY AUTO
+
+CONSOLE (GablueGaming)
+FERMER
+BASCULER   (seulement si une app compagne est ouverte)
+VOLUME GENERAL · VOLUME JEU · VOLUME APP   (curseur posé ICI à l'ouverture)
+MODE SOURIS · CLAVIER VIRTUEL
+CAPTURE ECRAN · ENREGISTRER · ACTIVER LE REPLAY · SAUVER REPLAY (si le buffer tourne)
+OPTIONS D'AFFICHAGE ▸ …   OPTIONS DE CAPTURE ▸ …
+(les sorties sont dans le menu système, Home maintenu : plus de catégorie SYSTEME)
 ```
 
-Pourquoi : `FERMER`, `MODE SOURIS`, `CAPTURE ECRAN` et `ENREGISTRER` sont des
-**gestes de partie**, pas des réglages — ils ne doivent pas coûter un sous-menu.
-`PLEIN ECRAN` **disparaît en session console** (`GablueGaming` : tout y est
-plein écran par nature, demandé le 24/11/2026), sur l'accueil comme dans la page
-`FENETRE` ; le mode est déduit de `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP`
-(`GPAD_MODE` pour le banc), jamais d'un réglage.
-`CHOISIR FENETRE` n'est **pas** sur l'accueil : la liste reste un aller-retour
-depuis l'en-tête (A) et le cyclage L2/R2, ce qui suffit.
+Pourquoi : `MODE SOURIS`, `CAPTURE ECRAN` et `ENREGISTRER` sont des **gestes
+de partie**, pas des réglages — ils ne doivent pas coûter un sous-menu. Les
+**volumes ouvrent la liste**, juste sous le nom de la fenêtre : c'est le seul
+réglage qu'on touche en jouant (demandé le 25/11/2026).
+`FERMER` et `PLEIN ECRAN` **ne sont plus sur l'accueil du BUREAU** (demandé le
+25/11/2026) : ce sont des actions de la fenêtre, elles vivent dans la page
+`FENETRE` (A sur l'en-tête) — sans fenêtre active, l'accueil n'a ainsi aucune
+ligne sans cible. En **console** (`GablueGaming`), l'en-tête n'est PAS un
+bouton (page sans objet en jeu) et `FERMER` monte sur la première ligne ;
+`PLEIN ECRAN` et `CHOISIR FENETRE` n'y existent pas (tout est plein écran, et
+la liste des fenêtres n'apporte rien). Le mode est déduit de
+`XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP` (`GPAD_MODE` pour le banc), jamais
+d'un réglage.
+
+**Toutes les lignes d'une valeur ont la même hauteur** (46 px ; seuls les
+réglages à curseur montent à 86) : les catégories étaient à 56, d'où un écart entre elles qui ne ressemblait à aucune
+autre ligne (constaté le 25/11/2026). Une catégorie se reconnaît à son
+**chevron**, pas à sa hauteur.
 
 Mécanique : `Entree::SousMenu(libellé, Cat)` + `Page::Categorie(Cat)` ;
 `A` ouvre, `B` revient à l'accueil **le curseur sur la catégorie quittée**,
@@ -190,7 +212,8 @@ et **l'entrée d'une catégorie ne glisse pas** : l'animation de `aller_page`
 rejoue l'ancienne liste en changeant `page`, or toutes les catégories partagent
 `cat_items` — l'ancienne serait peinte avec le contenu de la nouvelle.
 L'en-tête de fenêtre (`Entree::Fenetre`, hauteur nulle) est en tête de CHAQUE
-catégorie : il reste sélectionnable partout. Le gate BPF suit le **panneau**,
+catégorie du bureau : il reste sélectionnable là (en console il n'existe pas).
+Le gate BPF suit le **panneau**,
 jamais la profondeur du menu : entrer dans une catégorie ne rouvre rien. Le menu
 système (`--console`, Home maintenu) reste une liste plate : ses cinq actions
 irréversibles n'ont pas besoin de sous-menus.
@@ -235,10 +258,11 @@ grâce : le script pousse depuis le démarrage de la session, attendre ne
 servirait qu'à montrer la page ACTIONS par défaut pendant que le panneau est
 déjà visible, puis à basculer sèchement sur APPLIS (vécu gen1 20/11/2026,
 script `wininfo` jamais chargé).
-Ordre retenu : la fenêtre active, ses gestes (fermer, pointer, capturer), les
-volumes — la seule chose qu'on règle en jouant —, puis les réglages (on les
-change une fois). Aucun séparateur sur l'accueil : les catégories se
-reconnaissent à leur chevron et à leur hauteur.
+Ordre retenu : la fenêtre active, **ses volumes** — la seule chose qu'on règle
+en jouant —, ses gestes (pointer, capturer), puis les réglages (on les change
+une fois). Ses actions destructrices (`FERMER`, `PLEIN ECRAN`) sont dans sa
+page, pas ici (25/11/2026). Aucun séparateur sur l'accueil : les catégories se
+reconnaissent à leur chevron, et toutes les lignes ont la même hauteur.
 
 **Page `APPLICATIONS`** — voir ci-dessous.
 
@@ -557,6 +581,10 @@ liste des fenêtres — même présentation, même retour (une boîte flottante 
 essayée puis abandonnée : deux langages visuels pour le même genre de choix, et
 un fond qu'il fallait assombrir/éclaircir sans fin).
 
+C'est le **seul** endroit où vivent `FERMER` et `PLEIN ECRAN` depuis le
+25/11/2026 (ils étaient aussi sur l'accueil) : ce sont des actions de la
+fenêtre, et sans fenêtre active l'accueil n'a plus de ligne sans cible.
+
 | Entrée | Effet |
 |---|---|
 | `FERMER` | A **arme** (ligne et rappel `CONFIRMER` en rouge) ; un second A envoie **SIGKILL** au pid **et à tous ses descendants** |
@@ -619,7 +647,10 @@ Quand la fenêtre active est celle d'un jeu lancé, le **logo du jeu** (visuel
 SteamGridDB) s'affiche **au-dessus de l'en-tête de fenêtre**, dans une bande
 pleine largeur ; l'en-tête, le titre de page et la liste descendent d'autant
 (`logo_taille` → `decalage_logo`, répercuté dans `fen_visibles`). L'en-tête
-lui-même prend le **nom du paquet** et **son icône**.
+lui-même prend le **nom du paquet** et **son icône**. Visible **aussi en
+session console** : la garde `self.console` de `logo_taille`, présente depuis
+l'introduction, le masquait justement là où il sert de repère (retirée le
+25/11/2026 sur signalement : « plus de logo du jeu dans l'overlay »).
 
 - **Deux publications, même format** (`lire_jeux_actifs`) : le cache de
   glauncher (`<cache>/running.txt` : `slug=`, `nom=`, `pids=`, `logo=`,
@@ -722,10 +753,30 @@ lieu de la page APPLICATIONS (vécu 18/11/2026).
 côté du jeu (`bascule_app`, relue à chaque appui), la gâchette **bascule jeu ⇄
 app** au lieu de faire défiler les fenêtres — c'est le geste du quotidien
 (regarder une vidéo à côté du jeu), et il referme le panneau comme la ligne
-`BASCULER`. Sans app compagne, le cyclage reprend son cours. Vérifié au banc
+`BASCULER`. Sans jeu mais avec une app compagne, la bascule va et vient
+entre l'app et **glauncher** (25/11/2026 : revenir à la bibliothèque au lieu
+de cycler des fenêtres au hasard). Sans app compagne, le cyclage reprend son
+cours. Vérifié au banc
 (manette virtuelle `evgrab/vpad`, KWin virtuel) : `GPAD_BASCULE_DEMO=1` +
 R2 → script `kwin-activer-…` chargé et panneau fermé ; sans la démo, R2 →
 `CYCLE 1 ok=true`.
+
+**VRR coupé pendant l'overlay** (25/11/2026) : sous Adaptive Sync le panneau
+scintille (signalé). À l'ouverture, `suspendre_vrr` lit `vrr.sh get` et, si le
+réglage est `auto`, lance `vrr.sh off` en fond (asynchrone, jamais bloquant) ;
+`reprendre_vrr` remet `on` à la fermeture (`cacher`, ou sortie du processus non
+résident). Un réglage `never`/`mixte` n'est pas touché. Contrepartie : le
+passage par `kscreen-doctor` **écrit** la politique dans
+`kwinoutputconfig.json` — un gpad tué au SIGKILL pendant que l'overlay est
+ouvert laisse donc le VRR sur « jamais » jusqu'à la ligne `VRR` du panneau.
+
+**La bascule met le jeu en icône** (25/11/2026) : retirer `fullScreen` ne
+suffit pas pour un jeu XWayland/Proton, qui garde la taille de l'écran et
+reprend le focus aussitôt (`SetForegroundWindow` de Wine) — l'app apparaissait
+une fraction de seconde puis le jeu revenait (signalé par l'utilisateur). Le
+script KWin minimise donc la fenêtre du jeu en allant vers l'app
+(`w.minimized = true`), la restaure au retour, et dé-minimise la cible avant de
+l'activer.
 
 **Cyclage L2/R2** (`cycler_fenetre`) : script KWin **généré** à chaque appui
 (`CYCLE_JS`), ancré sur l'**UUID** de la fenêtre active (poussé par `wininfo.js`)
@@ -807,7 +858,7 @@ de gpu-screen-recorder (deux processus, deux encodeurs) n'a plus lieu d'être.
 | Ligne (page ACTIONS) | Ce qu'elle fait |
 |---|---|
 | `ENREGISTRER UNE VIDEO` | bascule l'enregistrement, un seul sens ; pendant la capture le libellé devient `STOP ENREGISTRER` avec un compteur `MM:SS` (`H:MM:SS` au-delà de l'heure) |
-| `REPLAY` | interrupteur du buffer, **manipulable pendant une capture** : c'est le seul chemin du panneau pour arrêter le replay |
+| `ACTIVER LE REPLAY` | interrupteur du buffer, **manipulable pendant une capture** : c'est le seul chemin du panneau pour arrêter le replay. Libellé explicite depuis le 25/11/2026 (« REPLAY » seul ne disait pas qu'on l'activait) |
 | `SAUVER REPLAY` | sauvegarde les N dernières secondes ; la valeur à droite dit la profondeur du buffer (`30s`). **La ligne est absente quand le buffer est arrêté** (demandé le 21/11/2026 : une ligne grisée « INACTIF » n'apprend rien), la page ACCUEIL est reconstruite à chaque changement de `replay_active` (`maj_accueil`, curseur ramené dans les bornes) |
 
 - **`ENREGISTRER UNE VIDEO` ferme le panneau AVANT de filmer** : au démarrage,
@@ -883,6 +934,18 @@ sombre la montée courte ne se voyait pas. Le fondu d'entrée part de la **premi
 !slid_in`), jamais du début du processus : le démarrage — wayland, script KWin,
 icônes — prend **138 ms** mesurés, donc un fondu lancé trop tôt était quasiment
 terminé quand la surface paraissait (constaté : « ça ne fait pas la fondue »).
+
+**Première image JAMAIS entièrement transparente** (25/11/2026, Plasma 6.8) :
+KWin ne libère pas les tampons d'une surface layer-shell qu'il considère
+invisible — une image dont tous les pixels sont à alpha 0 (panneau dessiné
+hors de la surface, `off = panel_w`, ou `opacite = 0`) n'en reçoit plus
+(`wl_buffer::Release` espacé de ~9 s, mesuré au banc avec `WAYLAND_DEBUG`), et
+comme le dessin suivant attend un tampon libre, le panneau restait invisible
+pendant des minutes. En session **console** KWin libère normalement, d'où un
+banc qui ne voyait rien. Donc : entrée transparente + glissement réservées à
+`app.console` ; au **bureau**, la première image est opaque et en place
+(`off = 0`), puis plus aucun état transparent n'est envoyé — l'ouverture est
+franche, comme un panneau Plasma.
 
 **Calibrage** (enregistrement 60 fps + moyenne d'un patch sur la pastille de la
 première ligne) : à 160 ms, la montée ne durait que **~100 ms** à l'écran (5

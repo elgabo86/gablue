@@ -79,6 +79,13 @@ chmod +x /usr/libexec/gablue-ryzenadj
 chmod +x /usr/libexec/gablue-avahi
 chmod +x /usr/libexec/gablue-hwinfo
 chmod +x /usr/libexec/gablue-dx-groups
+# Bascule de session du menu Home (MODE JEU / MODE BUREAU) : lancé par pkexec,
+# qui exige un fichier EXÉCUTABLE — absent de cette liste, le script restait en
+# 644 et l'appui ne faisait RIEN, en silence (constaté le 25/11/2026).
+chmod +x /usr/libexec/gablue-session-mode
+# Garde d'autologin (rattrape un greeter de plasmalogin resté en vie) : unité
+# systemd oneshot, même règle que tout helper lancé par systemd/pkexec.
+chmod +x /usr/libexec/gablue-login-guard
 
 # Rendre exécutables les scripts supplémentaires Gablue
 chmod +x /usr/share/ublue-os/gablue/scripts/*.sh

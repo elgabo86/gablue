@@ -2,6 +2,7 @@
 
 mod app;
 mod assets;
+mod audio;
 mod config;
 mod covers;
 mod cursor;

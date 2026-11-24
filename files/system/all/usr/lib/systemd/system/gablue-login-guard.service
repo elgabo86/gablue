@@ -1,0 +1,18 @@
+[Unit]
+Description=Gablue Login Guard (rattrape un autologin bloqué par le greeter de plasmalogin)
+Documentation=man:plasmalogin(1)
+# plasmalogin peut rester bloqué sur son écran de connexion (bug amont
+# sddm#1844 : le serveur d'affichage du greeter survit et garde la VT). Le
+# garde attend, achève le greeter et laisse le démon réessayer.
+After=plasmalogin.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gablue-login-guard
+# l'attente est bornée (3 × 40 s) : la marge laisse le temps aux reprises.
+# Clé de [Service], PAS de [Unit] — dans [Unit] systemd l'ignore en silence
+# (« Unknown key 'TimeoutStartSec' in section [Unit] », vu au banc 25/11/2026).
+TimeoutStartSec=240
+
+[Install]
+WantedBy=graphical.target

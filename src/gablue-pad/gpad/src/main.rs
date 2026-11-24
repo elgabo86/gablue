@@ -856,25 +856,30 @@ fn session_console() -> bool {
 /// catégorie ne reste que si elle porte au moins trois lignes propres
 /// (demandé le 24/11/2026).
 ///
-/// Ordre = fréquence d'usage en jeu : la fenêtre, la bascule jeu ⇄ app, puis
-/// fermer / pointer / saisir / plein écran, les volumes, la capture, et
-/// seulement ensuite les réglages (qu'on change une fois).
+/// Ordre = fréquence d'usage en jeu : la fenêtre, ses volumes, la bascule
+/// jeu ⇄ app, puis pointer / saisir, la capture, et seulement ensuite les
+/// réglages (qu'on change une fois).
+///
+/// `FERMER` et `PLEIN ECRAN` n'y sont **plus** (demandé le 25/11/2026) : ce
+/// sont des actions de la fenêtre, elles vivent dans la page de l'en-tête
+/// (A sur le nom de la fenêtre) — et sans fenêtre active l'accueil n'a donc
+/// aucune ligne qui ne pourrait pas s'appliquer.
 fn accueil_items(dispo: Dispo) -> Vec<Entree> {
-    let mut items = vec![Entree::Fenetre];
-    // le geste du quotidien (regarder une vidéo à côté du jeu) : en tête, il
-    // ne doit pas se chercher dans une catégorie (demandé le 23/11/2026)
-    if dispo.bascule {
-        items.push(Entree::Basculer);
-    }
-    items.push(Entree::Action("FERMER"));
-    items.push(Entree::Action("MODE SOURIS"));
-    items.push(Entree::Action("CLAVIER VIRTUEL"));
-    // bascule de plein écran : elle n'a aucun sens en session console, où
-    // tout est plein écran par nature (demandé le 24/11/2026)
-    if !dispo.console {
-        items.push(Entree::Action("PLEIN ECRAN"));
-    }
-    // le seul réglage qu'on touche en jouant : il est sur l'accueil
+    // CONSOLE : pas d'en-tête cliquable (il ouvrait une page sans objet en
+    // jeu) — `FERMER` prend la première ligne, `BASCULER` le suit, AU-DESSUS
+    // des volumes (demandé le 25/11/2026). BUREAU : l'en-tête reste un bouton
+    // (page de la fenêtre active) et les volumes gardent leur place sous lui.
+    let mut items = if dispo.console {
+        let mut v = vec![Entree::Action("FERMER")];
+        if dispo.bascule {
+            v.push(Entree::Basculer);
+        }
+        v
+    } else {
+        vec![Entree::Fenetre]
+    };
+    // les volumes d'abord, juste sous le nom de la fenêtre : c'est le seul
+    // réglage qu'on touche en jouant (demandé le 25/11/2026)
     items.push(Entree::Volume);
     if dispo.jeu {
         items.push(Entree::VolumeJeu);
@@ -882,30 +887,77 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     if dispo.app {
         items.push(Entree::VolumeApp);
     }
+    // le geste du quotidien (regarder une vidéo à côté du jeu) : en tête, il
+    // ne doit pas se chercher dans une catégorie (demandé le 23/11/2026) ;
+    // en console il est déjà passé sous `FERMER`
+    if dispo.bascule && !dispo.console {
+        items.push(Entree::Basculer);
+    }
+    items.push(Entree::Action("MODE SOURIS"));
+    items.push(Entree::Action("CLAVIER VIRTUEL"));
     items.push(Entree::Action("CAPTURE ECRAN"));
     items.push(Entree::Action("ENREGISTRER UNE VIDEO"));
-    items.push(Entree::Action("REPLAY"));
+    items.push(Entree::Action("ACTIVER LE REPLAY"));
     if dispo.replay {
         items.push(Entree::Action("SAUVER REPLAY"));
     }
     items.extend([
-        Entree::SousMenu("AFFICHAGE", Cat::Affichage),
-        Entree::SousMenu("CAPTURE", Cat::Capture),
-        Entree::SousMenu("SYSTEME", Cat::Systeme),
+        Entree::SousMenu("OPTIONS D'AFFICHAGE", Cat::Affichage),
+        Entree::SousMenu("OPTIONS DE CAPTURE", Cat::Capture),
     ]);
     items
+}
+
+/// Menu système (Home maintenu, `--console`) : la veille d'abord — c'est la
+/// seule action réversible — puis le mode de **l'autre** session, « tout
+/// fermer », et les sorties. Deux chemins voulus avec la page `SYSTEME`
+/// (décidé le 24/11/2026).
+///
+/// Le sens du mode suit la session courante : depuis le bureau on passe en
+/// console (`MODE JEU`), depuis la console on revient au bureau. Il était écrit
+/// `MODE BUREAU` en dur, donc le menu annonçait « MODE BUREAU » alors qu'on y
+/// était déjà, et ne proposait jamais la console (constaté le 25/11/2026).
+fn menu_systeme(console: bool, manette_bt: bool) -> Vec<Entree> {
+    let mut v = vec![
+        Entree::Action("MISE EN VEILLE"),
+        Entree::Action(if console { "MODE BUREAU" } else { "MODE JEU" }),
+        Entree::Action("TOUT FERMER"),
+    ];
+    if manette_bt {
+        v.push(Entree::Action("DECONNECTER LA MANETTE"));
+    }
+    v.push(Entree::Action("FERMER LA SESSION"));
+    v.push(Entree::Action("REDEMARRER"));
+    v.push(Entree::Action("ETEINDRE"));
+    v
+}
+
+/// Page `FENETRE` (A sur l'en-tête) : les actions de la fenêtre active. Elles
+/// ne sont **pas** sur l'accueil (demandé le 25/11/2026) — `FERMER` et
+/// `PLEIN ECRAN` sans fenêtre n'auraient aucune cible, et l'en-tête ouvre
+/// directement la liste quand il n'y a rien à fermer.
+fn fenetre_items(console: bool) -> Vec<Entree> {
+    let mut v = vec![Entree::Action("FERMER")];
+    // en console, la page n'est plus atteignable (l'en-tête n'est pas un
+    // bouton) et la liste des fenêtres n'apporte rien : un jeu est devant
+    if !console {
+        v.push(Entree::Action("PLEIN ECRAN"));
+        v.push(Entree::Action("CHOISIR FENETRE"));
+    }
+    v
 }
 
 /// Catégories de l'accueil : **une page seulement pour les domaines qui en
 /// valent une** (au moins trois lignes propres). `JEU`, `FENETRES`, `SON`,
 /// `PERF` et `MANETTE` ont disparu le 24/11/2026 : leurs lignes sont des
 /// gestes de l'accueil, et `PERF` a été absorbé par `AFFICHAGE` (VRR, HUD et
-/// limite de FPS sont le même sujet).
+/// limite de FPS sont le même sujet). `SYSTEME` a disparu le 25/11/2026 : ses
+/// lignes vivent dans le menu système (Home maintenu), deux chemins pour les
+/// mêmes sorties n'apportaient rien (demandé par l'utilisateur).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Cat {
     Affichage,
     Capture,
-    Systeme,
 }
 
 /// Quel flux audio une ligne de volume pilote.
@@ -926,17 +978,16 @@ struct Dispo {
     /// une application compagne est ouverte à côté du jeu : le sélecteur
     bascule: bool,
     /// session console (`GablueGaming`, KWin nu) : le menu propose de revenir
-    /// au bureau au lieu d'y passer, et la bascule de plein écran disparaît
-    /// (tout y est plein écran)
+    /// au bureau au lieu d'y passer, et la page FENETRE n'offre pas la bascule
+    /// de plein écran (tout y est plein écran)
     console: bool,
 }
 
 impl Cat {
     fn nom(self) -> &'static str {
         match self {
-            Cat::Affichage => "AFFICHAGE",
-            Cat::Capture => "CAPTURE",
-            Cat::Systeme => "SYSTEME",
+            Cat::Affichage => "OPTIONS D'AFFICHAGE",
+            Cat::Capture => "OPTIONS DE CAPTURE",
         }
     }
 
@@ -947,7 +998,7 @@ impl Cat {
     ///
     /// `Dispo` décide des lignes conditionnelles (même règle qu'avant : une
     /// ligne annonçant « INACTIF » n'apprend rien).
-    fn entrees(self, dispo: Dispo) -> Vec<Entree> {
+    fn entrees(self, _dispo: Dispo) -> Vec<Entree> {
         match self {
             // `PERF` a été absorbé : HUD, limite de FPS, VRR et priorité
             // CPU/VRAM sont le même sujet (ce qu'on voit, et à quelle vitesse)
@@ -972,21 +1023,6 @@ impl Cat {
                 Entree::ShotQualite,
                 Entree::Duree,
                 Entree::AutoReplay,
-            ],
-            // `TOUT FERMER` reste ici **et** dans le menu système (Home
-            // maintenu) : deux chemins voulus (décidé le 24/11/2026)
-            Cat::Systeme => vec![
-                Entree::Fenetre,
-                // la veille est la seule action RÉVERSIBLE de la page : elle
-                // passe avant les sorties (demandé le 23/11)
-                Entree::Action("MISE EN VEILLE"),
-                // le mode d'à côté : changer de session n'est pas sortir, la
-                // ligne reste donc AU-DESSUS des sorties (demandé le 23/11)
-                Entree::Action(if dispo.console { "MODE BUREAU" } else { "MODE JEU" }),
-                Entree::Action("TOUT FERMER"),
-                Entree::Action("FERMER LA SESSION"),
-                Entree::Action("REDEMARRER"),
-                Entree::Action("ETEINDRE"),
             ],
         }
     }
@@ -1028,7 +1064,7 @@ impl Entree {
             Entree::VolumeJeu => "VOLUME JEU",
             Entree::VolumeApp => "VOLUME APP",
             // le libellé dit toujours où l'on va, jamais d'où l'on vient
-            Entree::Basculer => "BASCULER JEU / APP",
+            Entree::Basculer => "BASCULER",
             Entree::Mango => "MANGOHUD",
             Entree::Fps => "FPS MAX",
             Entree::Duree => "DUREE REPLAY",
@@ -1071,13 +1107,13 @@ impl Entree {
                 | Entree::AutoReplay
         )
     }
-    /// Hauteur de la ligne : les réglages à curseur respirent (86), les
-    /// énumérations tiennent sur une seule ligne (46), une catégorie de
-    /// l'accueil un peu plus (56 : c'est un point d'entrée, pas une action).
+    /// Hauteur de la ligne : les réglages à curseur respirent (86), tout le
+    /// reste tient sur une seule ligne (46) — catégories de l'accueil
+    /// comprises : à 56 px, l'écart entre `AFFICHAGE`, `CAPTURE` et `SYSTEME`
+    /// ne ressemblait à aucune autre ligne (constaté le 25/11/2026).
     fn hauteur(self) -> i32 {
         match self {
             Entree::Fenetre => 0,
-            Entree::SousMenu(..) => 56,
             Entree::Volume
             | Entree::VolumeJeu
             | Entree::VolumeApp
@@ -1357,6 +1393,9 @@ struct App {
     replay_attente: Option<Instant>,
     /// VRR automatique actif sur les sorties capables (`vrr.sh get`)
     vrr_on: bool,
+    /// VRR coupé le temps de l'overlay (il scintille sous Adaptive Sync) :
+    /// restauré à la fermeture, jamais touché si l'utilisateur l'a laissé off.
+    vrr_suspendu: bool,
     /// booster « premier plan » de Plasma actif (`booster.sh get`)
     booster_on: bool,
     /// page d'ouverture déjà choisie (une seule fois)
@@ -1835,6 +1874,7 @@ impl App {
             replay_active: false,
             replay_attente: None,
             vrr_on: false,
+            vrr_suspendu: false,
             booster_on: false,
             page_initiale: false,
             focus_impose: false,
@@ -1866,16 +1906,7 @@ impl App {
             icones: HashMap::new(),
             fenetres: Vec::new(),
             fen_items: Vec::new(),
-            fen_menu: {
-                // le plein écran d'une fenêtre ne se bascule pas en session
-                // console : tout y est plein écran (demandé le 24/11/2026)
-                let mut v = vec![Entree::Action("FERMER")];
-                if !session_console {
-                    v.push(Entree::Action("PLEIN ECRAN"));
-                }
-                v.push(Entree::Action("CHOISIR FENETRE"));
-                v
-            },
+            fen_menu: fenetre_items(session_console),
             stick_x_latched: false,
             stick_y_latched: false,
             touches_tenues: [false; 0x140],
@@ -3876,6 +3907,31 @@ impl App {
             self.echanger(sens > 0);
             return;
         }
+        // AUCUN jeu, mais une app compagne : la bascule va et vient entre
+        // l'app et le LAUNCHER (25/11/2026) — depuis la canapé, « BASCULER »
+        // doit ramener à la bibliothèque, pas cycler des fenêtres au hasard.
+        if self.bascule_jeu.is_none() {
+            if let Some(app) = self.bascule_app.clone() {
+                let cible = if self.win.class == "glauncher" {
+                    Some(app)
+                } else {
+                    self.fenetres
+                        .iter()
+                        .find(|f| f.class == "glauncher")
+                        .cloned()
+                };
+                if let Some(f) = cible {
+                    let ok = self.activer_par_uuid(&f.uuid);
+                    self.status = if ok {
+                        format!("BASCULE: {}", f.titre())
+                    } else {
+                        "BASCULE: ECHEC KWIN".to_string()
+                    };
+                    println!("BASCULE launcher<->app -> {} ok={ok}", f.titre());
+                    return;
+                }
+            }
+        }
         self.cycler_fenetres(sens);
     }
 
@@ -4100,7 +4156,7 @@ impl App {
                     self.refresh_vrr();
                     println!("VRR {}", if self.vrr_on { "auto" } else { "desactive" });
                 }
-                "REPLAY" => {
+                "ACTIVER LE REPLAY" => {
                     // Indépendant de l'enregistrement : un seul pipeline encode,
                     // l'anneau TS et le mp4 écrivent côte à côte. On démarre ou
                     // on arrête le buffer même pendant une capture.
@@ -4541,6 +4597,46 @@ impl App {
     /// gate, état neuf, **glissement immédiat**. La surface est mappée depuis
     /// le démarrage (transparente, hors écran) : KWin ne rejoue pas son
     /// animation d'ouverture (elle n'a lieu qu'au map), donc aucune attente.
+    /// Coupe le VRR **le temps de l'overlay** : sous Adaptive Sync le panneau
+    /// scintille (signalé le 25/11/2026). Seul un réglage « automatique » est
+    /// suspendu — un « désactivé » ou un « mixte » de l'utilisateur n'est pas
+    /// touché — et l'état d'origine est remis à la fermeture. Le script fait
+    /// `kscreen-doctor` (asynchrone, ~1 s) : lancé en fond, jamais bloquant.
+    fn suspendre_vrr(&mut self) {
+        if self.vrr_suspendu {
+            return;
+        }
+        let Ok(vrr) = std::env::var("VRR") else {
+            return;
+        };
+        if !std::path::Path::new(&vrr).exists() {
+            return;
+        }
+        let etat = std::process::Command::new(&vrr)
+            .arg("get")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if etat != "vrr=auto" {
+            println!("VRR non suspendu (etat={etat})");
+            return;
+        }
+        let _ = std::process::Command::new(&vrr).arg("off").spawn();
+        self.vrr_suspendu = true;
+        println!("VRR suspendu (overlay ouvert)");
+    }
+
+    fn reprendre_vrr(&mut self) {
+        if !self.vrr_suspendu {
+            return;
+        }
+        self.vrr_suspendu = false;
+        if let Ok(vrr) = std::env::var("VRR") {
+            let _ = std::process::Command::new(vrr).arg("on").spawn();
+            println!("VRR rendu");
+        }
+    }
+
     fn ouvrir(&mut self, node: &str, cibles: &[String]) {
         // clavier ouvert : il tient la manette, un `open` ne doit pas poser le
         // panneau par-dessus (les deux surfaces se superposeraient)
@@ -4578,9 +4674,20 @@ impl App {
         self.anim = None;
         self.fondu = None;
         self.opacite = 1.0;
-        self.off = self.panel_w;
+        // au bureau la surface n'est pas mappée hors usage : la première image
+        // doit être visible et en place (voir le bloc `configured`).
+        self.off = if self.console { self.panel_w } else { 0 };
         self.page = Page::Accueil;
         self.selected = 0;
+        // CONSOLE : le panneau s'ouvre TOUJOURS curseur sur le volume
+        // (demandé le 25/11/2026) — l'accueil commence par `FERMER`, on ne
+        // veut pas risquer un appui dessus en ouvrant.
+        if self.console {
+            self.maj_accueil();
+            if let Some(i) = self.liste().iter().position(|e| *e == Entree::Volume) {
+                self.selected = i;
+            }
+        }
         self.fen_top = 0;
         self.page_initiale = false;
         self.depart = Instant::now();
@@ -4601,7 +4708,12 @@ impl App {
         self.dirty = true;
         // les réglages (pactl, scripts) sont relus APRÈS la première image
         self.a_rafraichir = true;
-        self.slide(self.panel_w, 0, 200);
+        // en console seulement : au bureau la première image est déjà en place
+        // et opaque (une image vide n'y serait jamais libérée par Plasma)
+        if self.console {
+            self.slide(self.panel_w, 0, 200);
+        }
+        self.suspendre_vrr();
         println!("OPEN {node}");
     }
 
@@ -4616,6 +4728,19 @@ impl App {
         self.fondu = None;
         self.opacite = 0.0;
         self.off = self.panel_w;
+        // Bureau : on RETIRE la surface (attach NULL) au lieu d'envoyer une
+        // image transparente. Plasma ne libère pas les tampons d'une surface
+        // layer-shell qu'il juge invisible (`wl_buffer::Release` espacé de
+        // plusieurs secondes, mesuré le 25/11/2026) : la réouverture attendait
+        // donc un tampon libre pendant des minutes, panneau invisible. Retirer
+        // la surface la démonte proprement ; `ouvrir` la remonte opaque et en
+        // place. En console, KWin libère normalement : rien à changer.
+        if !self.console {
+            if let Some(s) = &self.wl_surface {
+                s.attach(None, 0, 0);
+                s.commit();
+            }
+        }
         self.arme = None;
         self.home_down = false;
         self.home_console = false;
@@ -4627,7 +4752,10 @@ impl App {
                 println!("GATE closed");
             }
         }
-        self.dirty = true;
+        // bureau : la surface vient d'être retirée, ne rien redessiner (cela la
+        // remonterait) ; en console l'image transparente reste la règle.
+        self.dirty = self.console;
+        self.reprendre_vrr();
         println!("HIDDEN");
         // le panneau est hors écran : les actions différées peuvent partir
         self.executer_apres();
@@ -4862,7 +4990,10 @@ impl App {
         let Some(ic) = &self.logo else {
             return (0, 0);
         };
-        if self.console || ic.w <= 0 || ic.h <= 0 || inner <= 0 {
+        // PAS de garde `console` : le logo est justement le repère du jeu
+        // lancé, et c'est en session console qu'on en a le plus besoin
+        // (constaté le 25/11/2026 : le logo n'apparaissait jamais en jeu).
+        if ic.w <= 0 || ic.h <= 0 || inner <= 0 {
             return (0, 0);
         }
         let th = LOGO_MAX_H.min(inner * ic.h / ic.w).max(1);
@@ -5244,11 +5375,11 @@ impl App {
             match *e {
                 // inatteignable : l'en-tête est sauté plus haut
                 Entree::Fenetre => {}
-                Entree::Action("REPLAY") => {
+                Entree::Action("ACTIVER LE REPLAY") => {
                     // indépendant de l'enregistrement : l'interrupteur reste
                     // manipulable pendant une capture (c'est le seul chemin
                     // pour arrêter le buffer depuis le panneau).
-                    cv.text_fit(px0 + pad + 36, y, "REPLAY", 3, color, inner - 36 - 52);
+                    cv.text_fit(px0 + pad + 36, y, "ACTIVER LE REPLAY", 3, color, inner - 36 - 52);
                     self.interrupteur(
                         &mut cv,
                         px0 + pad + inner,
@@ -5260,7 +5391,7 @@ impl App {
                 // sélecteur jeu ⇄ app : action simple, libellé seul (le sens
                 // est dans le libellé, voir `nom()`)
                 Entree::Basculer => {
-                    cv.text_fit(px0 + pad + 36, y, "BASCULER JEU / APP", 3, color, inner - 36);
+                    cv.text_fit(px0 + pad + 36, y, "BASCULER", 3, color, inner - 36);
                 }
                 Entree::Action("SAUVER REPLAY") => {
                     let c_txt = if self.replay_active { color } else { cc_dim };
@@ -6819,6 +6950,12 @@ fn flux_du_jeu(flux: &[audio::Flux], pids: &[i32]) -> Vec<audio::Flux> {
 }
 
 fn script_bascule(jeu: &str, cible: &str, jeu_plein_ecran: bool) -> String {
+    // Le jeu passe **en icône** quand on va vers l'app : retirer `fullScreen`
+    // ne suffit pas pour un jeu XWayland/Proton, qui garde la taille de
+    // l'écran (windowed plein écran) et couvre alors l'app — ou la reprend
+    // aussitôt le focus (SetForegroundWindow de Wine) : l'app apparaissait
+    // une fraction de seconde puis le jeu revenait (signalé le 25/11/2026).
+    // Minimisé, il ne peut plus reprendre la main ; on le restaure en revenant.
     format!(
         "var ws = workspace.stackingOrder;\n\
          for (var i = 0; i < ws.length; i++) {{\n\
@@ -6826,13 +6963,16 @@ fn script_bascule(jeu: &str, cible: &str, jeu_plein_ecran: bool) -> String {
          \x20   if (String(w.internalId) === \"{jeu}\") {{\n\
          \x20       w.fullScreen = {plein};\n\
          \x20       w.keepAbove = false;\n\
+         \x20       w.minimized = {cache};\n\
          \x20   }}\n\
          \x20   if (String(w.internalId) === \"{cible}\") {{\n\
+         \x20       w.minimized = false;\n\
          \x20       w.keepAbove = false;\n\
          \x20       workspace.activeWindow = w;\n\
          \x20   }}\n\
          }}\n",
         plein = if jeu_plein_ecran { "true" } else { "false" },
+        cache = if jeu_plein_ecran { "false" } else { "true" },
     )
 }
 
@@ -7975,18 +8115,7 @@ fn main() {
         // menu système (`--console`, touche Home) : la veille d'abord — c'est
         // la seule action réversible — puis les sorties. Les jeux sont fermés
         // avec « tout fermer » avant toute action système.
-        let mut v = vec![
-            Entree::Action("MISE EN VEILLE"),
-            Entree::Action("MODE BUREAU"),
-            Entree::Action("TOUT FERMER"),
-        ];
-        if app.pad_bt.is_some() {
-            v.push(Entree::Action("DECONNECTER LA MANETTE"));
-        }
-        v.push(Entree::Action("FERMER LA SESSION"));
-        v.push(Entree::Action("REDEMARRER"));
-        v.push(Entree::Action("ETEINDRE"));
-        app.accueil = v;
+        app.accueil = menu_systeme(app.session_console, app.pad_bt.is_some());
         app.selected = 0;
         app.dirty = true;
         println!("CONSOLE items={}", app.accueil.len());
@@ -8018,6 +8147,7 @@ fn main() {
             if app.visible {
                 app.request_close();
             } else {
+                app.reprendre_vrr();
                 app.running = false;
             }
         }
@@ -8131,7 +8261,15 @@ fn main() {
                 // ne doit jamais apparaître au démarrage.
                 app.opacite = 0.0;
                 app.off = app.panel_w;
-                app.dirty = true;
+                // AU BUREAU, aucune image n'est envoyée : une image
+                // entièrement transparente n'est pas libérée par Plasma (voir
+                // `cacher`), donc la surface reste NON MAPPÉE jusqu'au premier
+                // `open` — la première image visible est alors opaque et
+                // arrive tout de suite.
+                app.dirty = app.console || app.kbd_ouvert;
+                if !app.resident && !app.kbd_ouvert {
+                    app.suspendre_vrr();
+                }
                 if app.resident {
                     app.demarrer_ipc();
                     println!(
@@ -8150,13 +8288,34 @@ fn main() {
                 // animation, PUIS on fait la nôtre — même remède que la
                 // fermeture du menu système (faire animer une surface
                 // invisible), mais l'entrée visible est bien un glissement.
-                app.opacite = 0.0;
-                app.entree =
-                    Some(Instant::now() + Duration::from_millis(app.panneau_delai_ms));
-                println!(
-                    "SLIDE IN (attente {} ms puis glissement 200 ms)",
-                    app.panneau_delai_ms
-                );
+                //
+                // AU BUREAU (Plasma) CE REMÈDE EST PIRE QUE LE MAL : KWin
+                // n'anime pas une surface layer-shell et, entièrement
+                // transparente, il ne la considère pas visible — il ne libère
+                // donc jamais ses tampons (aucun `wl_buffer::Release`, d'où
+                // aucune image suivante) : le panneau restait à opacité 0,
+                // INVISIBLE, avec des commits espacés de ~9 s (mesuré le
+                // 25/11/2026 au banc, Plasma 6.8, `WAYLAND_DEBUG`). Là, on
+                // entre directement opaque puis on glisse.
+                if app.console {
+                    app.opacite = 0.0;
+                    app.entree =
+                        Some(Instant::now() + Duration::from_millis(app.panneau_delai_ms));
+                    println!(
+                        "SLIDE IN (attente {} ms puis glissement 200 ms)",
+                        app.panneau_delai_ms
+                    );
+                } else {
+                    // (voir juste au-dessus) : contenu DÈS la première image,
+                    // opaque et en place — une image entièrement transparente
+                    // ne serait pas rendue par Plasma et le panneau resterait
+                    // invisible. Le glissement part de la position finale :
+                    // c'est une ouverture franche, comme les panneaux Plasma.
+                    app.opacite = 1.0;
+                    app.off = 0;
+                    app.dirty = true;
+                    println!("SLIDE IN (bureau : direct)");
+                }
             } else {
                 app.opacite = 0.0;
                 app.fondu = Some(Fondu {
@@ -8197,6 +8356,7 @@ fn main() {
                 // manette rendue, à l'écoute de la prochaine commande
                 app.cacher();
             } else {
+                app.reprendre_vrr();
                 app.running = false;
             }
         }
@@ -8393,10 +8553,14 @@ mod tests {
         assert!(vers_app.contains("w.fullScreen = false"));
         assert_eq!(vers_app.matches("workspace.activeWindow = w").count(), 1);
         assert!(vers_app.contains("\"{app}\""));
+        // le jeu passe en icône : sans ça un jeu XWayland garde l'écran et
+        // reprend le focus aussitôt (signalé le 25/11/2026)
+        assert!(vers_app.contains("w.minimized = true"));
 
         let vers_jeu = script_bascule("{jeu}", "{app}", true);
         assert!(vers_jeu.contains("w.fullScreen = true"));
         assert!(!vers_jeu.contains("w.fullScreen = false"));
+        assert!(vers_jeu.contains("w.minimized = false"));
     }
 
     /// La sourdine du jeu ne touche que ses flux : l'application compagne
@@ -8841,14 +9005,12 @@ mod tests {
         // l'en-tête de fenêtre est en tête de l'accueil comme des catégories
         assert_eq!(accueil.first(), Some(&Entree::Fenetre));
         for geste in [
-            Entree::Action("FERMER"),
             Entree::Action("MODE SOURIS"),
             Entree::Action("CLAVIER VIRTUEL"),
-            Entree::Action("PLEIN ECRAN"),
             Entree::Volume,
             Entree::Action("CAPTURE ECRAN"),
             Entree::Action("ENREGISTRER UNE VIDEO"),
-            Entree::Action("REPLAY"),
+            Entree::Action("ACTIVER LE REPLAY"),
         ] {
             assert!(accueil.contains(&geste), "{geste:?} doit être sur l'accueil");
         }
@@ -8861,8 +9023,8 @@ mod tests {
             .collect();
         assert_eq!(
             cats,
-            vec![Cat::Affichage, Cat::Capture, Cat::Systeme],
-            "trois catégories, dans cet ordre"
+            vec![Cat::Affichage, Cat::Capture],
+            "deux catégories, dans cet ordre (SYSTEME vit dans le menu Home)"
         );
         for cat in &cats {
             let items = cat.entrees(Dispo::default());
@@ -8892,28 +9054,35 @@ mod tests {
 
     /// Présence conditionnelle sur l'accueil : bascule seulement avec une app
     /// compagne, `SAUVER REPLAY` seulement avec le buffer, les volumes du jeu
-    /// et de l'app seulement avec leur flux, et **pas de bascule de plein
-    /// écran en session console** (demandé le 24/11/2026).
+    /// et de l'app seulement avec leur flux. `FERMER` et `PLEIN ECRAN` ne sont
+    /// **pas** sur l'accueil (page de la fenêtre active), et les volumes sont
+    /// la première chose sous le nom de la fenêtre (demandé le 25/11/2026).
     #[test]
     fn accueil_conditionnel() {
+        let bureau = accueil_items(Dispo::default());
+        assert_eq!(bureau.get(1), Some(&Entree::Volume), "volumes en tête");
+        assert!(!bureau.contains(&Entree::Action("FERMER")));
+        assert!(!bureau.contains(&Entree::Action("PLEIN ECRAN")));
+        // CONSOLE : aucun en-tête cliquable (il n'ouvrait rien d'utile en jeu),
+        // `FERMER` puis `BASCULER` au-dessus des volumes (demandé le
+        // 25/11/2026) — et le panneau s'ouvre curseur sur le volume
+        let console = accueil_items(Dispo {
+            console: true,
+            bascule: true,
+            ..Dispo::default()
+        });
+        assert!(!console.contains(&Entree::Fenetre), "en-tête non cliquable");
+        assert_eq!(console.first(), Some(&Entree::Action("FERMER")));
+        assert_eq!(console.get(1), Some(&Entree::Basculer));
+        assert_eq!(console.get(2), Some(&Entree::Volume));
+
         let avec_bascule = accueil_items(Dispo {
             bascule: true,
             ..Dispo::default()
         });
-        // juste après l'en-tête : c'est le geste du quotidien
-        assert_eq!(avec_bascule.get(1), Some(&Entree::Basculer));
-        assert_eq!(
-            avec_bascule.len(),
-            accueil_items(Dispo::default()).len() + 1
-        );
-
-        let bureau = accueil_items(Dispo::default());
-        assert!(bureau.contains(&Entree::Action("PLEIN ECRAN")));
-        let console = accueil_items(Dispo {
-            console: true,
-            ..Dispo::default()
-        });
-        assert!(!console.contains(&Entree::Action("PLEIN ECRAN")));
+        // juste après les volumes : c'est le geste du quotidien
+        assert_eq!(avec_bascule.get(2), Some(&Entree::Basculer));
+        assert_eq!(avec_bascule.len(), bureau.len() + 1);
 
         assert!(!bureau.contains(&Entree::Action("SAUVER REPLAY")));
         assert!(!bureau.contains(&Entree::VolumeJeu));
@@ -8926,26 +9095,35 @@ mod tests {
         assert!(plein.contains(&Entree::Action("SAUVER REPLAY")));
         assert!(plein.contains(&Entree::VolumeJeu));
         assert!(plein.contains(&Entree::VolumeApp));
+        // les trois volumes restent groupés sous l'en-tête
+        assert_eq!(
+            &plein[1..4],
+            &[Entree::Volume, Entree::VolumeJeu, Entree::VolumeApp]
+        );
     }
 
-    /// `TOUT FERMER` reste dans SYSTEME **et** dans le menu système (décidé le
-    /// 24/11/2026) ; le mode d'à côté dépend de la session, jamais les deux ;
-    /// `AFFICHAGE` a absorbé `PERF` (VRR, HUD, FPS : le même sujet).
+    /// Les actions de la fenêtre vivent dans SA page, jamais sur l'accueil :
+    /// `FERMER` et `PLEIN ECRAN` y sont toujours, et le plein écran disparaît
+    /// en session console (tout y est plein écran).
+    #[test]
+    fn page_fenetre_garde_les_actions() {
+        let bureau = fenetre_items(false);
+        assert_eq!(bureau.first(), Some(&Entree::Action("FERMER")));
+        assert!(bureau.contains(&Entree::Action("PLEIN ECRAN")));
+        assert_eq!(bureau.last(), Some(&Entree::Action("CHOISIR FENETRE")));
+        let console = fenetre_items(true);
+        assert!(console.contains(&Entree::Action("FERMER")));
+        assert!(!console.contains(&Entree::Action("PLEIN ECRAN")));
+    }
+
+    /// Le menu système (Home maintenu) est le SEUL endroit des sorties depuis
+    /// le 25/11/2026 (`SYSTEME` retiré de l'accueil) ; le mode d'à côté dépend
+    /// de la session, jamais les deux ; `AFFICHAGE` a absorbé `PERF` (VRR,
+    /// HUD, FPS : le même sujet).
     #[test]
     fn categories_et_session() {
-        let systeme = Cat::Systeme.entrees(Dispo::default());
-        assert_eq!(systeme.get(1), Some(&Entree::Action("MISE EN VEILLE")));
-        assert_eq!(systeme.get(2), Some(&Entree::Action("MODE JEU")));
-        let console = Cat::Systeme.entrees(Dispo {
-            console: true,
-            ..Dispo::default()
-        });
-        assert_eq!(console.get(2), Some(&Entree::Action("MODE BUREAU")));
-        assert!(!console.contains(&Entree::Action("MODE JEU")));
-        assert!(!systeme.contains(&Entree::Action("MODE BUREAU")));
-        assert!(systeme.contains(&Entree::Action("ETEINDRE")));
-        assert!(systeme.contains(&Entree::Action("TOUT FERMER")));
-        assert!(console.contains(&Entree::Action("TOUT FERMER")));
+        let accueil = accueil_items(Dispo::default());
+        assert!(!accueil.iter().any(|e| matches!(e, Entree::SousMenu("SYSTEME", _))));
 
         let affichage = Cat::Affichage.entrees(Dispo::default());
         for ligne in [
@@ -8957,6 +9135,18 @@ mod tests {
         ] {
             assert!(affichage.contains(&ligne), "{ligne:?} doit être dans AFFICHAGE");
         }
+
+        // menu système (Home maintenu) : même règle de sens, et la ligne
+        // « déconnecter la manette » seulement si une manette BT est connue
+        let menu_bureau = menu_systeme(false, false);
+        assert_eq!(menu_bureau.get(1), Some(&Entree::Action("MODE JEU")));
+        assert!(!menu_bureau.contains(&Entree::Action("DECONNECTER LA MANETTE")));
+        assert_eq!(menu_bureau.last(), Some(&Entree::Action("ETEINDRE")));
+        let menu_console = menu_systeme(true, true);
+        assert_eq!(menu_console.get(1), Some(&Entree::Action("MODE BUREAU")));
+        assert!(!menu_console.contains(&Entree::Action("MODE JEU")));
+        assert!(menu_console.contains(&Entree::Action("DECONNECTER LA MANETTE")));
+        assert!(menu_console.contains(&Entree::Action("TOUT FERMER")));
     }
 
     /// Session console déduite de l'environnement, même règle que

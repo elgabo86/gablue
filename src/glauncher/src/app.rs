@@ -21,6 +21,7 @@ use iced::{
 };
 
 use crate::assets;
+use crate::audio;
 use crate::config::{Config, ViewMode};
 use crate::copy;
 use crate::covers;
@@ -637,6 +638,9 @@ pub enum Message {
     /// La musique de fond a changé (activée/coupée, volume) : appliqué à
     /// chaud puis écrit dans `config.toml`.
     SettingsMusic,
+    /// Message transitoire des lignes audio (aucune écriture de config : le
+    /// défaut est retenu par WirePlumber).
+    SettingsAudio(String),
     /// Galerie : ouvrir (avec le nom du jeu pour n'afficher QUE ses captures et
     /// vidéos ; `None` = tout), fermer, naviguer, ouvrir l'élément sélectionné.
     GalleryOpen(Option<String>),
@@ -933,7 +937,7 @@ enum ArtMenuEntry {
     Xbox,
 }
 
-fn art_menu_entries(kind: Kind) -> Vec<ArtMenuEntry> {
+fn art_menu_entries(kind: Kind, gamescope: bool) -> Vec<ArtMenuEntry> {
     let mut entries = vec![
         ArtMenuEntry::Kind(covers::ArtKind::Grid),
         ArtMenuEntry::Kind(covers::ArtKind::Hero),
@@ -944,8 +948,13 @@ fn art_menu_entries(kind: Kind) -> Vec<ArtMenuEntry> {
         ArtMenuEntry::Date,
         ArtMenuEntry::Copier,
         ArtMenuEntry::Gamescope,
-        ArtMenuEntry::Resolution,
     ];
+    // la résolution forcée n'a de sens QUE dans gamescope : hors de lui, le
+    // jeu prend celle de l'écran et la ligne n'apprendrait rien (demandé le
+    // 25/11/2026). La ligne apparaît donc à l'activation de gamescope.
+    if gamescope {
+        entries.push(ArtMenuEntry::Resolution);
+    }
     if kind == Kind::Wgp {
         entries.push(ArtMenuEntry::Xbox);
     }
@@ -1163,6 +1172,13 @@ struct Settings {
     musique: bool,
     /// Volume de la musique en pourcentage (`music_volume`), par pas de 5.
     volume: u8,
+    /// Sorties audio disponibles (PipeWire, `pactl list sinks`) et l'index du
+    /// défaut courant : choix au gauche/droite, appliqué tout de suite.
+    sorties: Vec<audio::Peripherique>,
+    sortie: usize,
+    /// Entrées audio (micros, monitors écartés) et l'index du défaut.
+    entrees: Vec<audio::Peripherique>,
+    entree: usize,
     /// Écran du jeu (index dans `ECRANS`).
     ecran: usize,
     /// Scanne les disques externes montés (`scan_disks`).
@@ -1192,6 +1208,14 @@ struct Browser {
 
 impl Settings {
     fn nouveau(config: &Config) -> Self {
+        // périphériques relus à chaque ouverture : casque branché, TV
+        // allumée… l'état du serveur audio est la seule vérité
+        let sorties = audio::sorties();
+        let defaut = audio::defaut_sortie();
+        let sortie = sorties.iter().position(|p| p.nom == defaut).unwrap_or(0);
+        let entrees = audio::entrees();
+        let defaut = audio::defaut_entree();
+        let entree = entrees.iter().position(|p| p.nom == defaut).unwrap_or(0);
         Self {
             dossiers: config.game_dirs.clone(),
             selected: 0,
@@ -1201,6 +1225,10 @@ impl Settings {
             shots: recorder::dossier(recorder::CLE_SHOTS),
             musique: config.music,
             volume: config.music_volume.min(100),
+            sorties,
+            sortie,
+            entrees,
+            entree,
             ecran: ecran_lu(),
             disques: config.scan_disks,
         }
@@ -1216,35 +1244,43 @@ impl Settings {
         self.dossiers.len() + 2
     }
 
+    /// Ligne de la sortie audio (première du bloc Son).
+    fn ligne_sortie(&self) -> usize {
+        self.dossiers.len() + 3
+    }
+
+    /// Ligne de l'entrée audio (micro).
+    fn ligne_entree(&self) -> usize {
+        self.dossiers.len() + 4
+    }
+
     /// Ligne de la musique de fond (jouée / coupée).
     fn ligne_musique(&self) -> usize {
-        self.dossiers.len() + 3
+        self.dossiers.len() + 5
     }
 
     /// Ligne du volume de la musique.
     fn ligne_volume(&self) -> usize {
-        self.dossiers.len() + 4
+        self.dossiers.len() + 6
     }
 
     /// Ligne de la préférence d'écran (après « ajouter » et les dossiers).
     fn ligne_ecran(&self) -> usize {
-        self.dossiers.len() + 5
+        self.dossiers.len() + 7
     }
 
     /// Ligne « Oublier les jeux disparus », dernière de la page (entretien).
     fn ligne_oublier(&self) -> usize {
-        self.dossiers.len() + 6
+        self.dossiers.len() + 8
     }
 
-    /// Nombre de lignes de la liste (« ajouter », les dossiers, les deux
-    /// dossiers de sortie, la musique et son volume, l'écran, l'entretien).
     /// Ligne « Scanner les disques externes » (entretien).
     fn ligne_disques(&self) -> usize {
-        self.dossiers.len() + 7
+        self.dossiers.len() + 9
     }
 
     fn lignes(&self) -> usize {
-        self.dossiers.len() + 8
+        self.dossiers.len() + 10
     }
 
     /// Clé de `recorder.conf` d'une ligne de sortie, si c'en est une.
@@ -3870,7 +3906,14 @@ impl App {
                     // on ne referme pas le menu, l'état se voit changer sous
                     // les yeux (comme un switch d'overlay)
                     ArtMenuEntry::Gamescope => {
-                        self.bascule_option(|options| options.gamescope = !options.gamescope);
+                        // couper gamescope retire aussi la résolution forcée :
+                        // elle n'a de sens que pour lui, et la ligne disparaît
+                        self.bascule_option(|options| {
+                            options.gamescope = !options.gamescope;
+                            if !options.gamescope {
+                                options.resolution = None;
+                            }
+                        });
                         Task::none()
                     }
                     ArtMenuEntry::Xbox => {
@@ -4327,6 +4370,12 @@ impl App {
                 if settings.selected == settings.ligne_ecran() {
                     return Task::none();
                 }
+                // périphériques audio : eux aussi au gauche/droite seulement
+                if settings.selected == settings.ligne_sortie()
+                    || settings.selected == settings.ligne_entree()
+                {
+                    return Task::none();
+                }
                 // entretien : bascule le scan des disques externes
                 if settings.selected == settings.ligne_disques() {
                     settings.disques = !settings.disques;
@@ -4388,7 +4437,53 @@ impl App {
             }
             Message::SettingsChanged(message) => self.persist_dirs(message),
             Message::SettingsMusic => self.persist_musique(),
+            Message::SettingsAudio(message) => {
+                self.status = Some((message, false));
+                Task::none()
+            }
             Message::SettingsChoix(delta) => {
+                // sortie / entrée audio : le cran suivant, appliqué aussitôt
+                let audio_change = {
+                    let Some(settings) = self.settings.as_mut() else {
+                        return Task::none();
+                    };
+                    if settings.browser.is_some() {
+                        None
+                    } else if settings.selected == settings.ligne_sortie()
+                        && !settings.sorties.is_empty()
+                    {
+                        let n = settings.sorties.len() as i32;
+                        settings.sortie =
+                            (settings.sortie as i32 + delta.signum()).rem_euclid(n) as usize;
+                        Some((true, settings.sorties[settings.sortie].clone()))
+                    } else if settings.selected == settings.ligne_entree()
+                        && !settings.entrees.is_empty()
+                    {
+                        let n = settings.entrees.len() as i32;
+                        settings.entree =
+                            (settings.entree as i32 + delta.signum()).rem_euclid(n) as usize;
+                        Some((false, settings.entrees[settings.entree].clone()))
+                    } else {
+                        None
+                    }
+                };
+                if let Some((sortie, peripherique)) = audio_change {
+                    let ok = if sortie {
+                        audio::choisir_sortie(&peripherique.nom)
+                    } else {
+                        audio::choisir_entree(&peripherique.nom)
+                    };
+                    let message = if ok {
+                        format!(
+                            "{} : {}",
+                            if sortie { "sortie" } else { "entrée" },
+                            peripherique.affiche()
+                        )
+                    } else {
+                        "changement audio refusé par pactl".to_string()
+                    };
+                    return Task::done(Message::SettingsAudio(message));
+                }
                 // volume de la musique : gauche/droite par pas de 5 %
                 let volume = {
                     let Some(settings) = self.settings.as_mut() else {
@@ -7566,7 +7661,7 @@ impl App {
 
     fn art_entries(&self) -> Vec<ArtMenuEntry> {
         let kind = self.art_kind();
-        art_menu_entries(kind)
+        art_menu_entries(kind, self.art_options().gamescope)
     }
 
     fn art_kind(&self) -> Kind {
@@ -8123,6 +8218,53 @@ impl App {
                             ACCENT
                         }),
                         text(" ▸")
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding([11.0, 14.0])
+                .style(move |_| action_style(selected));
+                rows = rows.push(mouse_area(ligne).on_press(if selected {
+                    Message::SettingsAct
+                } else {
+                    Message::Nothing
+                }));
+                continue;
+            }
+
+            // sortie / entrée audio : gauche/droite change le défaut PipeWire,
+            // appliqué tout de suite (WirePlumber le retient d'une session à
+            // l'autre). En session console il n'y a pas d'applet audio.
+            if index == settings.ligne_sortie() || index == settings.ligne_entree() {
+                let (label, liste, courant) = if index == settings.ligne_sortie() {
+                    ("Sortie audio", &settings.sorties, settings.sortie)
+                } else {
+                    ("Entrée audio", &settings.entrees, settings.entree)
+                };
+                let valeur = liste
+                    .get(courant)
+                    .map(|p| short(p.affiche(), 34))
+                    .unwrap_or_else(|| "aucun périphérique".to_string());
+                let couleur_valeur = if selected {
+                    Color::BLACK
+                } else if liste.is_empty() {
+                    MUTED
+                } else {
+                    ACCENT
+                };
+                let ligne = container(
+                    row![
+                        text(label)
+                            .size(17)
+                            .width(Fill)
+                            .color(if selected { Color::BLACK } else { TEXT }),
+                        text("◀ ")
+                            .size(14)
+                            .color(if selected { Color::BLACK } else { MUTED }),
+                        text(valeur).size(15).color(couleur_valeur),
+                        text(" ▶")
                             .size(14)
                             .color(if selected { Color::BLACK } else { MUTED }),
                     ]
@@ -9179,7 +9321,7 @@ impl App {
         let absent = self.absents.get(&game.slug).filter(|absent| covers::absent_frais(absent));
         let year = self.year_of(&game.slug);
         let options = self.art_options();
-        let entries = art_menu_entries(game.kind);
+        let entries = art_menu_entries(game.kind, options.gamescope);
 
         let mut rows = Column::new().spacing(6);
         for (index, entry) in entries.iter().enumerate() {
@@ -11089,6 +11231,29 @@ fn plural(count: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// La résolution forcée n'apparaît que si gamescope est activé, et juste
+    /// après sa ligne (on vient de l'activer, c'est là qu'on la cherche) ;
+    /// `.wgp` garde « manettes Xbox » en dernier.
+    #[test]
+    fn resolution_seulement_dans_gamescope() {
+        let sans = art_menu_entries(Kind::Lgp, false);
+        let avec = art_menu_entries(Kind::Lgp, true);
+        assert!(!sans.contains(&ArtMenuEntry::Resolution));
+        assert!(avec.contains(&ArtMenuEntry::Resolution));
+        let rang = avec
+            .iter()
+            .position(|e| *e == ArtMenuEntry::Gamescope)
+            .expect("gamescope toujours proposé");
+        assert_eq!(avec.get(rang + 1), Some(&ArtMenuEntry::Resolution));
+        assert_eq!(
+            avec.len(),
+            sans.len() + 1,
+            "une seule ligne ajoutée par gamescope"
+        );
+        let wgp = art_menu_entries(Kind::Wgp, true);
+        assert_eq!(wgp.last(), Some(&ArtMenuEntry::Xbox));
+    }
 
     #[test]
     fn le_dernier_ecran_ne_decale_pas_le_cadre() {

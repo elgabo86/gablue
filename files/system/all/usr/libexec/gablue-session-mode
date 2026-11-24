@@ -169,8 +169,11 @@ sessions_siege() {
 # répondait « inactive » alors que le compositeur tournait).
 compositeur_vivant() {
     local pid
-    for pid in $(pgrep -x kwin_wayland; pgrep -x kwin_wayland_wrapper; \
-                 pgrep -x plasmashell); do
+    # `pgrep -x kwin_wayland_wrapper` ne matcherait jamais : le noyau tronque
+    # `comm` à 15 caractères, pgrep répond « pattern longer than 15 characters »
+    # et zéro processus. Le wrapper est le PARENT du compositeur : tuer
+    # `kwin_wayland` suffit à ce qu'il sorte.
+    for pid in $(pgrep -x kwin_wayland; pgrep -x plasmashell); do
         grep -q "user@$UID_NUM.service/session.slice" "/proc/$pid/cgroup" 2>/dev/null &&
             return 0
     done
@@ -191,8 +194,7 @@ arret_compositeur() {
         sleep 0.25
     done
     log "compositeur survivant : SIGKILL des processus de la session"
-    for pid in $(pgrep -x kwin_wayland; pgrep -x kwin_wayland_wrapper; \
-                 pgrep -x plasmashell); do
+    for pid in $(pgrep -x kwin_wayland; pgrep -x plasmashell); do
         grep -q "user@$UID_NUM.service/session.slice" "/proc/$pid/cgroup" 2>/dev/null &&
             kill -9 "$pid" 2>/dev/null
     done
@@ -201,6 +203,78 @@ arret_compositeur() {
         sleep 0.25
     done
     log "compositeur encore vivant : le redémarrage du gestionnaire tranchera"
+}
+
+# Compositeur de la MAUVAISE session : le plasmalogin qui s'arrête relance une
+# dernière fois la session qu'il avait EN MÉMOIRE (bug KDE 522181), donc une
+# session Plasma apparaît pendant une bascule vers la console. Ses unités
+# (`plasma-kwin_wayland.service`) vivent dans le gestionnaire UTILISATEUR :
+# `loginctl kill-session` ne les tue pas, et le KWin rescapé garde
+# `org.kde.KWin` — `gpad-shot` et les scripts KWin de la session jeu partent
+# alors au mauvais compositeur (mesuré le 25/11/2026 : capture de la session
+# Plasma au lieu du jeu, panneau du bureau sur une session censée être nue).
+# Le compositeur ATTENDU se reconnaît à sa source, jamais à un PID :
+#   console → sa ligne de commande porte `--socket gablue-gaming` ;
+#   bureau  → son cgroup est sous /user@<uid>.service (unités Plasma) ;
+#   greeter → aucun compositeur n'est attendu.
+compositeur_attendu() {   # pid
+    local cgroup
+    case "$mode" in
+    console) tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q -- '--socket gablue-gaming' ;;
+    bureau)
+        cgroup=$(cat "/proc/$1/cgroup" 2>/dev/null) || return 1
+        [[ $cgroup == *"/user@$UID_NUM.service/"* ]]
+        ;;
+    *) return 1 ;;
+    esac
+}
+
+nettoyer_compositeurs_etrangers() {
+    local pid
+    # Filtré sur l'utilisateur basculé : un autre compte peut avoir sa propre
+    # session (gremote, second utilisateur) et elle n'est pas notre affaire.
+    for pid in $(pgrep -u "$UTILISATEUR" -x kwin_wayland; \
+                 pgrep -u "$UTILISATEUR" -x plasmashell); do
+        compositeur_attendu "$pid" && continue
+        log "compositeur étranger au mode $mode : SIGKILL $pid"
+        kill -9 "$pid" 2>/dev/null
+    done
+    # Les unités Plasma ne doivent pas rester actives hors mode bureau : sinon
+    # le gestionnaire utilisateur les considère comme la session courante.
+    if [ "$mode" != bureau ]; then
+        userctl stop --no-block plasma-plasmashell.service \
+            plasma-kwin_wayland.service >/dev/null 2>&1 || true
+    fi
+}
+
+# Session ATTENDUE : `Desktop=` du .desktop choisi. Plasmashell et plasma.desktop
+# annoncent « KDE » ; la session console annonce « GablueGaming;KDE ».
+session_attendue() {   # id
+    local desktop
+    desktop=$(/usr/bin/loginctl show-session "$1" -p Desktop --value 2>/dev/null)
+    case "$mode" in
+    console) [[ $desktop == GablueGaming* ]] ;;
+    bureau) [[ $desktop == *KDE* && $desktop != GablueGaming* ]] ;;
+    *) return 1 ;;
+    esac
+}
+
+# Attend que la session demandée prenne le siège, en écartant au passage les
+# sessions et compositeurs de la précédente : c'est ce qui empêche les deux
+# sessions de se disputer le DRM. 60 s au plus — au-delà, le garde d'autologin
+# et le redémarrage du gestionnaire restent les filets.
+attendre_session() {
+    local i id
+    for i in $(seq 1 240); do
+        for id in $(sessions_siege); do
+            session_attendue "$id" && return 0
+            /usr/bin/loginctl terminate-session "$id" >/dev/null 2>&1 ||
+                /usr/bin/loginctl kill-session "$id" -s SIGKILL >/dev/null 2>&1
+        done
+        nettoyer_compositeurs_etrangers
+        sleep 0.25
+    done
+    return 1
 }
 
 ecrire_autologin() {   # session .desktop
@@ -275,5 +349,43 @@ greeter)
     ;;
 esac
 
-/usr/bin/systemctl restart plasmalogin.service
-log "plasmalogin redémarré (rc=$?)"
+ # `stop` PUIS `start`, jamais `restart` : le plasmalogin sortant relance une
+# dernière fois la session qu'il a EN MÉMOIRE (bug KDE 522181) — le bureau
+# Plasma apparaissait une seconde au milieu du passage en mode jeu (signalé le
+# 25/11/2026). Arrêté d'abord, il ne relance rien ; le nouveau lit la conf.
+/usr/bin/systemctl stop plasmalogin.service
+for i in $(seq 1 20); do
+    /usr/bin/systemctl is-active --quiet plasmalogin.service && sleep 0.25 || break
+done
+/usr/bin/systemctl start plasmalogin.service
+log "plasmalogin arrêté puis relancé (rc=$?)"
+# plasmalogin démarre son greeter puis, pour l'autologin, demande sa fin — son
+# serveur d'affichage survit et garde la VT (bug amont sddm#1844, PR #1969 non
+# reprise ici) : l'autologin boucle alors sur « Failed to take control ».
+# `gablue-login-guard` rattrape exactement ce cas, ici comme au démarrage.
+if [ "$mode" != greeter ]; then
+    /usr/bin/systemctl start --no-block gablue-login-guard.service 2>/dev/null ||
+        log "garde d'autologin indisponible (image antérieure ?)"
+    # Le plasmalogin sortant relance une dernière fois la session qu'il avait en
+    # mémoire : on attend la BONNE et on écarte l'intruse (voir
+    # nettoyer_compositeurs_etrangers). Sans cette attente, deux compositeurs
+    # restent vivants et `org.kde.KWin` revient au mauvais.
+    if attendre_session; then
+        log "session $mode active"
+    else
+        log "session $mode non apparue en 60 s : le garde et le gestionnaire tranchent"
+    fi
+else
+    # Écran de connexion : aucune session ne doit subsister (Relogin en mémoire)
+    for i in $(seq 1 40); do
+        [ -z "$(sessions_siege)" ] && break
+        for id in $(sessions_siege); do
+            /usr/bin/loginctl terminate-session "$id" >/dev/null 2>&1 ||
+                /usr/bin/loginctl kill-session "$id" -s SIGKILL >/dev/null 2>&1
+        done
+        nettoyer_compositeurs_etrangers
+        sleep 0.25
+    done
+    nettoyer_compositeurs_etrangers
+    log "écran de connexion : sessions du siège=$(sessions_siege | tr '\n' ' ')"
+fi

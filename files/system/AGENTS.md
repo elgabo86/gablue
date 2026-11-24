@@ -112,6 +112,10 @@
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
   `[Autologin] Session=` à son démarrage et le garde en mémoire (bug KDE
   522181), donc une déconnexion relance la session précédente ;
+  (1bis) **`stop` puis `start`, jamais `restart`** : le plasmalogin sortant
+  relance une dernière fois la session qu'il a EN MÉMOIRE (bug KDE 522181) —
+  le bureau Plasma apparaissait une seconde au milieu du passage en mode jeu
+  (signalé le 25/11/2026) ; arrêté d'abord, il ne relance rien.
   (2) **arrêter la session sortante avant** — `plasma-kwin_wayland.service` et
   `plasma-plasmashell.service` vivent dans le gestionnaire UTILISATEUR, pas
   dans le scope de session : ils survivent, gardent `org.kde.KWin`, le siège
@@ -135,6 +139,24 @@
   inopérante : **aucun préfixe arithmétique dans un chemin** —
   `UID_NUM=10#$(id -u …)` donne la chaîne `10#1000`, donc `/run/user/10#1000`,
   et toutes les commandes `systemctl --user` échouent sans un mot.
+  Et **le fichier doit être exécutable** : livré en 644 (comme tous les helpers
+  de `files/system/`), il n'était pas dans la liste `chmod +x` de
+  `post-install` — `pkexec` répondait `Error executing … Permission denied`
+  dans le journal de la session et `MODE JEU` / `MODE BUREAU` **ne faisait
+  rien**, en silence (constaté le 25/11/2026, deux appuis tracés dans
+  `journalctl`) : tout helper lancé par `pkexec` ou directement doit figurer
+  dans cette liste.
+  (6) **l'autologin est rattrapé par `gablue-login-guard`** : plasmalogin
+  démarre son écran de connexion, puis demande sa fin pour ouvrir la session
+  autologin — le serveur d'affichage du greeter (`kwin_wayland`, compte
+  `plasmalogin`) ne sort pas quand sa session logind se termine et garde
+  `/dev/tty1` : `plasmalogin-helper` boucle alors sur « Failed to take control
+  of "/dev/tty1" ("root"): Operation not permitted », écran noir, **aucune
+  session** (constaté le 25/11/2026, ~25 tentatives/s, après bascule comme au
+  démarrage). C'est le bug amont **sddm#1844** (PR sddm#1969 « if autologin is
+  used, avoid starting a display server for the greeter »), non repris par le
+  fork : le helper démarre donc le garde en fin de bascule, et le garde achève
+  le greeter resté en vie avant de laisser le démon réessayer.
   `FERMER LA SESSION` de `gpad` l'appelle en mode `greeter` **quand un
   autologin est armé**, sinon il garde la déconnexion polie de Plasma.
 - **Pas encore là** (lots suivants) : la session « choix » avec compte à
@@ -150,6 +172,15 @@ Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité pl
 - **gablue-share.service** : démon de partage en **mode permanent** (opt-in, livré désactivé ; réglé depuis Gablue Share ou gablue-manager). Démarre avec la session : pour un poste sans session graphique, `loginctl enable-linger` serait nécessaire — hors périmètre. Contrat → `src/gablue-share/AGENTS.md`
 - **gablue-pad-gate.service** (système) : démon du **gate BPF** de l'overlay manette, lancé en root au boot (`/usr/libexec/gablue-pad/gpad-gate --socket /run/gablue-pad/gate.sock --timeout 0`, `RuntimeDirectory=gablue-pad`). Le programme BPF est chargé une fois et **attaché seulement entre `open` et `close`** : hors menu, aucun hook dans le noyau. Les cibles (`target`/`clear`) sont posées par l'utilisateur à chaque ouverture, donc un démon qui vit depuis le boot ne garde aucun `dev_t` périmé après une reconnexion. Contrat → `src/gablue-pad/gate/AGENTS.md`
 - **gablue-pad.service** : overlay manette de la session (`ExecStart=/usr/bin/gpad-trigger /usr/bin/gpad`, `Restart=always`/`RestartSec=1`, `After=` + `PartOf=graphical-session.target`, `StartLimitIntervalSec=0`) ; l'unité exporte tous les chemins (`RECORDER`, `SCRIPTS`, `KWIN_SCRIPTS`, `GPAD_GATE`…), le banc les déduit du binaire. **Activée pour tous les comptes** (`systemctl --global enable` dans `files/scripts/systemd`) ; `gablue-pad off` la neutralise par **masque utilisateur** et les trois options (`menu`, `shortcuts`, `inhibit`) se coupent séparément, à chaud (SIGHUP). Contrat → `src/gablue-pad/AGENTS.md`
+- **gablue-login-guard.service** (système, oneshot, `After=plasmalogin.service`,
+  `WantedBy=graphical.target`, `TimeoutStartSec=240`) : `/usr/libexec/gablue-login-guard`
+  au démarrage **et** depuis `gablue-session-mode` après chaque redémarrage du
+  gestionnaire de connexion. Sans autologin armé il ne fait **rien** ; avec, il
+  attend la session du compte visé et, si elle ne vient pas, achève l'écran de
+  connexion resté en vie (**SIGKILL du seul compte `plasmalogin`**, jamais
+  celui de l'utilisateur) puis laisse plasmalogin réessayer, avec un
+  redémarrage du démon en dernier recours. Raison et vécu : bug amont
+  **sddm#1844**, bullets `gablue-session-mode` ci-dessus.
 - **gablue-pad-wake.service** (système, oneshot) : déclare les manettes
   Bluetooth appariées comme sources de réveil (`bluetoothctl wake <mac> on`),
   filtrées sur `Icon: input-gaming` — un téléphone ou un casque apparié ne doit
