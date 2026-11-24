@@ -49,6 +49,10 @@
 #include <libswresample/swresample.h>
 
 #define MAX_SEG 512
+/* Durée d'un segment de l'anneau, en secondes de CONTENU. Le muxeur `segment`
+ * ne coupe qu'à une image clé : la même valeur sert donc aussi de période
+ * d'IDR forcé (cf. boucle d'encodage). */
+#define RING_SEGMENT_SEC 1
 
 static void logx(const char *fmt, ...)
 {
@@ -412,6 +416,10 @@ struct etat {
     int fps_enc;              /* cadence déclarée à l'encodeur */
     int forcer_idr;
     int attendre_idr;
+    /* PTS de la dernière image clé (µs, échelle t0) : en VFR le GOP de
+     * `fps_enc` IMAGES peut durer des dizaines de secondes, l'anneau restait
+     * alors sans segment clos (sauvegarde refusée « anneau vide »). */
+    int64_t dernier_idr;
     AVPacket *premiers[8];
     int nb_premiers;
     uint8_t *extradata;
@@ -930,7 +938,9 @@ static void ring_ouvre(struct etat *e)
         erreur(e, "contexte segment"); return;
     }
     AVDictionary *o = NULL;
-    av_dict_set(&o, "segment_time", "1", 0);
+    char seg_t[16];
+    snprintf(seg_t, sizeof seg_t, "%d", RING_SEGMENT_SEC);
+    av_dict_set(&o, "segment_time", seg_t, 0);
     av_dict_set(&o, "segment_format", "mpegts", 0);
     av_dict_set(&o, "segment_list", e->seg_liste, 0);
     av_dict_set(&o, "segment_list_type", "csv", 0);
@@ -990,6 +1000,11 @@ static int lit_liste(struct etat *e, char chemins[][700], double *durees, int ma
         b = b ? b + 1 : nom;
         int w = snprintf(chemins[n], 700, "%s/%s", e->tampon, b);
         if (w < 0 || w >= 700) continue;
+        /* Le CSV n'est jamais réécrit quand un segment est purgé : une ligne
+         * peut désigner un fichier déjà supprimé. La compter ferait refuser la
+         * sauvegarde (« segments disparus ») alors que l'anneau a du contenu. */
+        struct stat st;
+        if (stat(chemins[n], &st) != 0) continue;
         durees[n] = t1 - t0;
         n++;
     }
@@ -1009,7 +1024,9 @@ static void ring_purge(struct etat *e)
         if (stat(chemins[i], &st) == 0) total += durees[i];
     }
     int i = 0;
-    while (i < n && total > e->cfg.replay_sec) {
+    /* jamais le dernier : un segment plus long que replay_sec (écran figé, donc
+     * aucune image clé) est TOUT le buffer ; le supprimer vidait l'anneau */
+    while (i < n - 1 && total > e->cfg.replay_sec) {
         struct stat st;
         if (stat(chemins[i], &st) == 0) {
             unlink(chemins[i]);
@@ -1457,7 +1474,7 @@ static void *thread_video(void *arg)
         if (r > 0) { usleep(500); continue; }
 
         if (!e->graphe && graphe_ouvre(e) < 0) { e->arret = 1; break; }
-        if (!e->t0) { e->t0 = t1; nb_pts = 0; }
+        if (!e->t0) { e->t0 = t1; nb_pts = 0; e->dernier_idr = 0; }
         /* PTS de la GRILLE, pas de l'horloge : (n x 1 s / fps) donne 16666 puis
          * 16667 us et une cadence exacte. Avec l'horloge réelle, un réveil
          * tardif de 5 ms faisait tomber un 30 s à 59,97 fps. Le décalage de
@@ -1482,6 +1499,7 @@ static void *thread_video(void *arg)
             a->pts = pts;   /* même index de grille que la frame courante */
             a->pict_type = AV_PICTURE_TYPE_I;
             e->forcer_idr = 0;
+            e->dernier_idr = pts;
             if (avcodec_send_frame(e->enc, a) == 0) {
                 AVPacket *q = av_packet_alloc();
                 while (e->nb_premiers < 8 && avcodec_receive_packet(e->enc, q) == 0) {
@@ -1518,7 +1536,21 @@ static void *thread_video(void *arg)
         pthread_mutex_unlock(&e->verrou);
 
         vf->pts = pts;
-        if (e->forcer_idr) { vf->pict_type = AV_PICTURE_TYPE_I; e->forcer_idr = 0; }
+        if (e->forcer_idr) {
+            vf->pict_type = AV_PICTURE_TYPE_I;
+            e->forcer_idr = 0;
+            e->dernier_idr = pts;
+        } else if (e->replay_actif && pts - e->dernier_idr >= RING_SEGMENT_SEC * 1000000LL) {
+            /* Le muxeur `segment` ne coupe qu'à une image clé. En VFR, un GOP de
+             * `fps_enc` IMAGES dure ce que dure l'activité de l'écran : un bureau
+             * presque figé le faisait dépasser la minute, la liste CSV restait
+             * vide et `replay.save` répondait « anneau vide » (constaté le
+             * 24/11/2026). On force donc un IDR par seconde de CONTENU, la
+             * granularité de l'anneau : rotation à l'heure, pas au compte
+             * d'images. */
+            vf->pict_type = AV_PICTURE_TYPE_I;
+            e->dernier_idr = pts;
+        }
         if (avcodec_send_frame(e->enc, vf) < 0) { av_frame_unref(vf); continue; }
         av_frame_unref(vf);
         nb_pts++;

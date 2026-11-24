@@ -208,6 +208,22 @@ Les débits, eux, restent ce qu'ils sont — c'est juste une information :
 - Le format du scanout peut changer en cours de route (HDR activé, changement de
   mode) : sur `Plane framebuffer format changed`, **arrêter proprement** plutôt
   que d'encoder du garbage.
+- **La rotation de l'anneau suit les images clés, pas l'horloge** : le muxeur
+  `segment` ne coupe qu'à un IDR, et en VFR (`fps=flips`) un GOP de `fps_enc`
+  IMAGES dure ce que dure l'activité de l'écran. Sur un bureau presque figé la
+  liste CSV restait vide et `replay.save` répondait **« anneau vide »** —
+  constaté le 24/11/2026 : premier segment clos à 4,2 s (bureau à 28 img/s,
+  écran 120 Hz), jusqu'à **46 s** sur un écran immobile, alors que le buffer
+  affichait « actif » depuis longtemps. Un IDR est donc **forcé par seconde de
+  contenu** quand le replay tourne (`RING_SEGMENT_SEC`) : rotation à l'heure,
+  indépendante de la cadence réelle. Mesuré après correctif : premier segment
+  clos à 1,1 s, sauvegarde à 2 s acceptée (avant : refusée), fichier décodé.
+- **`liste.csv` n'est jamais réécrit, et la purge ne doit pas vider l'anneau** :
+  une ligne du CSV peut désigner un segment déjà purgé (la compter faisait
+  refuser la sauvegarde, « segments disparus »), et un segment plus long que
+  `replay_sec` (écran figé) est TOUT le buffer (le supprimer laissait l'anneau
+  vide). Les lignes sans fichier sont ignorées ; le **dernier** segment n'est
+  jamais purgé.
 
 ### Pièges payés au banc (20/11/2026, à ne pas réintroduire)
 
