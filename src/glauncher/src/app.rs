@@ -341,6 +341,24 @@ fn spawn_launch(name: String, command: launch::Launch, cache: PathBuf, slug: Str
 
 /// Réindexe en arrière-plan (scan complet ou rafale de chemins) et poste le
 /// résultat : le thread UI ne touche jamais le disque ni SQLite.
+/// Compte les captures et vidéos **par jeu** (nom écrit dans le sidecar au
+/// lancement) sur un fil de fond : ouvrir une page ne doit pas parcourir les
+/// dossiers de sortie ni ouvrir les PNG sans sidecar.
+fn spawn_comptes_galerie() {
+    let _ = std::thread::Builder::new()
+        .name("glauncher-galerie".into())
+        .spawn(|| {
+            let mut comptes: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for item in gallery::scanne() {
+                if let Some(titre) = item.titre {
+                    *comptes.entry(titre).or_default() += 1;
+                }
+            }
+            post(Message::GalerieComptes(comptes));
+        });
+}
+
 fn spawn_refresh(
     config: Config,
     index: Arc<Mutex<Option<Index>>>,
@@ -619,8 +637,9 @@ pub enum Message {
     /// La musique de fond a changé (activée/coupée, volume) : appliqué à
     /// chaud puis écrit dans `config.toml`.
     SettingsMusic,
-    /// Galerie : ouvrir, fermer, naviguer, ouvrir l'élément sélectionné.
-    GalleryOpen,
+    /// Galerie : ouvrir (avec le nom du jeu pour n'afficher QUE ses captures et
+    /// vidéos ; `None` = tout), fermer, naviguer, ouvrir l'élément sélectionné.
+    GalleryOpen(Option<String>),
     GalleryClose,
     GalleryNav(i32),
     GalleryAct,
@@ -633,6 +652,9 @@ pub enum Message {
     GalleryFilter,
     /// Carré dans l'aperçu : copie du screenshot avec le logo du jeu.
     ApercuCopy,
+    /// Combien de captures/vidéos par jeu (lues en fond, pour savoir si la
+    /// page d'un jeu propose le bouton « Galerie »).
+    GalerieComptes(std::collections::HashMap<String, usize>),
     /// Alias visuel : choisir un autre jeu de la bibliothèque comme source.
     AliasOpen,
     AliasNav(i32),
@@ -835,16 +857,20 @@ struct Zoom {
     elapsed: f32,
 }
 
-/// Selon le cas : « Jouer », « Favori » ou « Options » (les quatre visuels,
+/// Selon le cas : « Jouer », « Favori », « Options » (les quatre visuels,
 /// l'identification du jeu et sa date sont réunis derrière ce seul bouton :
-/// « Images » ne décrivait plus ce qu'on y trouve).
+/// « Images » ne décrivait plus ce qu'on y trouve) et, **seulement si le jeu a
+/// des captures ou des vidéos**, « Galerie » — qui n'affiche que les siennes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PageAction {
     Play,
     Favorite,
     Options,
+    Gallery,
 }
 
+/// Actions présentes pour **tout** jeu ; « Galerie » s'ajoute au bout selon ce
+/// que les dossiers de sortie contiennent pour lui (`page_actions`).
 const PAGE_ACTIONS: [PageAction; 3] = [PageAction::Play, PageAction::Favorite, PageAction::Options];
 
 impl PageAction {
@@ -853,6 +879,7 @@ impl PageAction {
             PageAction::Play => "Jouer",
             PageAction::Favorite => "Favori",
             PageAction::Options => "Options",
+            PageAction::Gallery => "Galerie",
         }
     }
 }
@@ -979,8 +1006,22 @@ fn view_label(view: ViewMode) -> &'static str {
 /// (affichés / préparés), pour ne pas confondre « 3 captures » et « 1200
 /// vidéos » quand un filtre est actif.
 fn galerie_legende(galerie: &Galerie) -> String {
-    let images = galerie.tous.iter().filter(|item| item.genre == gallery::Genre::Image).count();
-    let videos = galerie.tous.len().saturating_sub(images);
+    // volumétrie du jeu quand la galerie est filtrée : « 3 captures au total »
+    // doit compter les captures DU JEU, pas celles du poste
+    let perimetre: Vec<&gallery::Item> = galerie
+        .tous
+        .iter()
+        .filter(|item| match (&galerie.jeu, item.titre.as_deref()) {
+            (None, _) => true,
+            (Some(nom), Some(titre)) => titre == nom,
+            (Some(_), None) => false,
+        })
+        .collect();
+    let images = perimetre
+        .iter()
+        .filter(|item| item.genre == gallery::Genre::Image)
+        .count();
+    let videos = perimetre.len().saturating_sub(images);
     let filtrees = match galerie.filtre {
         None => String::new(),
         Some(gallery::Genre::Image) => format!(" · {images} capture(s) au total"),
@@ -1069,6 +1110,12 @@ struct Galerie {
     items: Vec<gallery::Item>,
     /// `None` = tout, sinon captures ou vidéos (Triangle fait défiler).
     filtre: Option<gallery::Genre>,
+    /// Jeu dont on ne montre que les captures et vidéos (bouton « Galerie » de
+    /// sa page) ; `None` = la galerie complète. Comparé au **nom affiché**
+    /// écrit dans le sidecar `<fichier>.jeu` au lancement, qui est le nom du
+    /// paquet (`row.name`, la tige du `.wgp`/`.lgp`) — donc juste aussi pour
+    /// un jeu non identifié sur SteamGridDB, dont c'est le seul nom.
+    jeu: Option<String>,
     selected: usize,
     /// Effacement armé (index) : Croix efface, Rond ou un déplacement désarme.
     arme: Option<usize>,
@@ -1357,6 +1404,13 @@ pub struct App {
     music: Option<music::Music>,
     /// Galerie des captures et vidéos (ouvre le menu des vues si `None`).
     galerie: Option<Galerie>,
+    /// Combien de captures/vidéos par jeu, compté **en fond** : la page d'un
+    /// jeu n'a pas à scanner les dossiers de sortie (des milliers de fichiers)
+    /// pour savoir s'il faut y poser le bouton « Galerie ».
+    galerie_comptes: std::collections::HashMap<String, usize>,
+    /// Dernier comptage demandé (`None` : jamais) — un scan à la demande, pas
+    /// à chaque page ouverte.
+    galerie_comptes_at: Option<std::time::Instant>,
     /// Capture ouverte en plein écran (par-dessus la galerie).
     apercu: Option<Apercu>,
     /// Lecture vidéo en cours : `mpv` plein écran, piloté au pad.
@@ -1611,6 +1665,8 @@ impl App {
             to_launch: None,
             music: None,
             galerie: None,
+            galerie_comptes: std::collections::HashMap::new(),
+            galerie_comptes_at: None,
             apercu: None,
             lecteur: None,
             a_lancer_video: None,
@@ -1668,6 +1724,9 @@ impl App {
         // années déjà connues (fichier partagé dans `assets/`)
         app.years = covers::load_years(&covers::years_path(&app.config.assets_dir()));
         app.apply_filter();
+        // captures et vidéos par jeu : comptées en fond dès le départ, pour que
+        // la première page ouverte sache déjà si elle a un bouton « Galerie »
+        app.rafraichir_comptes_galerie(true);
         // musique de fond : lecture par `mpv` dans un fil à part, l'UI
         // n'attend rien (et sans `mpv` le launcher reste simplement muet)
         // volume 0 = muet : inutile de lancer `mpv` pour rien
@@ -1723,7 +1782,7 @@ impl App {
         // crochet de banc : ouvre la galerie au démarrage, pour la
         // photographier sans manette (dossiers lus dans recorder.conf)
         if std::env::var_os("GLAUNCHER_GALLERY_DEMO").is_some() {
-            tasks.push(Task::done(Message::GalleryOpen));
+            tasks.push(Task::done(Message::GalleryOpen(None)));
             // valeurs `apercu` / `video` : ouvre aussi l'élément du genre
             if matches!(
                 std::env::var("GLAUNCHER_GALLERY_DEMO").as_deref(),
@@ -1951,6 +2010,22 @@ impl App {
 
     /// Applique le filtre courant en gardant la sélection sur le même
     /// fichier quand il reste visible.
+    /// Demande le comptage des captures/vidéos par jeu, au plus toutes les
+    /// [`COMPTES_GALERIE_TTL`] secondes (ou tout de suite avec `force`).
+    fn rafraichir_comptes_galerie(&mut self, force: bool) {
+        const COMPTES_GALERIE_TTL: Duration = Duration::from_secs(20);
+        let recent = self
+            .galerie_comptes_at
+            .is_some_and(|instant| instant.elapsed() < COMPTES_GALERIE_TTL);
+        if recent && !force {
+            return;
+        }
+        // daté tout de suite : une rafale d'ouvertures de page ne lance pas
+        // un scan par page
+        self.galerie_comptes_at = Some(std::time::Instant::now());
+        spawn_comptes_galerie();
+    }
+
     fn gallery_apply_filter(&mut self) {
         let Some(galerie) = self.galerie.as_mut() else {
             return;
@@ -1960,10 +2035,16 @@ impl App {
             .get(galerie.selected)
             .map(|item| item.path.clone());
         let filtre = galerie.filtre;
+        let jeu = galerie.jeu.clone();
         galerie.items = galerie
             .tous
             .iter()
             .filter(|item| filtre.is_none_or(|genre| item.genre == genre))
+            .filter(|item| match (&jeu, item.titre.as_deref()) {
+                (None, _) => true,
+                (Some(nom), Some(titre)) => titre == nom,
+                (Some(_), None) => false,
+            })
             .cloned()
             .collect();
         galerie.selected = courant
@@ -2939,17 +3020,25 @@ impl App {
                 });
                 Task::none()
             }
-            Message::GalleryOpen => {
+            Message::GalleryOpen(jeu) => {
                 let tous = gallery::scanne();
-                let mut galerie = Galerie {
-                    items: tous.clone(),
+                self.galerie = Some(Galerie {
+                    items: Vec::new(),
                     tous,
                     filtre: None,
+                    jeu,
                     selected: 0,
                     arme: None,
                     thumbs: std::collections::HashMap::new(),
                     prepared: HashSet::new(),
                     restant: 0,
+                });
+                // le filtre de jeu (bouton « Galerie » d'une page) s'applique
+                // dès l'ouverture : la grille ne montre jamais, même un
+                // instant, les captures des autres jeux
+                self.gallery_apply_filter();
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
                 };
                 // banc : `apercu`/`video` sélectionne le premier élément du
                 // genre, pour photographier le lecteur sans manette
@@ -2977,13 +3066,19 @@ impl App {
                         false,
                     ));
                 }
-                self.galerie = Some(galerie);
                 // les vignettes déjà en cache arrivent tout de suite (lecture
                 // de fichiers), les autres suivent par fenêtre visible
                 self.gallery_prepare();
                 Task::none()
             }
+            Message::GalerieComptes(comptes) => {
+                self.galerie_comptes = comptes;
+                Task::none()
+            }
             Message::GalleryClose => {
+                // une capture ou une vidéo a pu passer à la corbeille : le
+                // bouton « Galerie » de la page doit suivre
+                self.rafraichir_comptes_galerie(true);
                 self.galerie = None;
                 self.apercu = None;
                 self.video_veil = 0.0;
@@ -3648,6 +3743,10 @@ impl App {
                 let Some(_) = self.games.get(index) else {
                     return Task::none();
                 };
+                // le bouton « Galerie » dépend de ce que contiennent les
+                // dossiers de sortie : recompter au besoin (une capture prise
+                // depuis le dernier comptage doit apparaître)
+                self.rafraichir_comptes_galerie(false);
                 self.selected = index;
                 // La bascule se fait au sommet du fondu (voir `tick`) : la page
                 // n'entre pas dans l'arbre tout de suite, sinon le changement
@@ -3695,16 +3794,20 @@ impl App {
                 Task::none()
             }
             Message::PageNav(delta) => {
+                // borne calculée comme dans `page_view` : « Galerie » n'existe
+                // que si le jeu a des captures (sinon Reste-Suivante s'y
+                // arrêtait sans rien afficher)
+                let last = self.page_actions().len().saturating_sub(1);
                 if let Some(page) = self.page.as_mut() {
-                    let last = PAGE_ACTIONS.len() - 1;
                     let next = page.action as i32 + delta;
                     page.action = next.clamp(0, last as i32) as usize;
                 }
                 Task::none()
             }
             Message::PageChoose(index) => {
+                let last = self.page_actions().len().saturating_sub(1);
                 if let Some(page) = self.page.as_mut() {
-                    page.action = index.min(PAGE_ACTIONS.len() - 1);
+                    page.action = index.min(last);
                 }
                 self.page_act()
             }
@@ -3969,7 +4072,7 @@ impl App {
                 }
                 // dernière ligne : la galerie des captures et vidéos
                 if index == VIEWS.len() + 1 {
-                    return Task::done(Message::GalleryOpen);
+                    return Task::done(Message::GalleryOpen(None));
                 }
                 let Some(&view) = VIEWS.get(index) else {
                     return Task::none();
@@ -5675,7 +5778,7 @@ impl App {
             return Task::none();
         };
         let index = page.index;
-        let Some(action) = PAGE_ACTIONS.get(page.action).copied() else {
+        let Some(action) = self.page_actions().get(page.action).copied() else {
             return Task::none();
         };
         match action {
@@ -5691,7 +5794,25 @@ impl App {
                 self.art_menu = Some(0);
                 Task::none()
             }
+            PageAction::Gallery => {
+                let nom = self.games.get(index).map(|game| game.name.clone());
+                Task::done(Message::GalleryOpen(nom))
+            }
         }
+    }
+
+    /// Actions de la page du jeu courant : les trois de base, plus « Galerie »
+    /// quand les dossiers de sortie contiennent au moins une capture ou une
+    /// vidéo **de ce jeu** (comptées en fond par `spawn_comptes_galerie`).
+    fn page_actions(&self) -> Vec<PageAction> {
+        let mut actions = PAGE_ACTIONS.to_vec();
+        let jeu = self.page.as_ref().and_then(|page| self.games.get(page.index));
+        if let Some(game) = jeu
+            && self.galerie_comptes.get(&game.name).copied().unwrap_or(0) > 0
+        {
+            actions.push(PageAction::Gallery);
+        }
+        actions
     }
 
     /// Étoile de la page : ajoute/retire le jeu des favoris et l'écrit tout de
@@ -6269,6 +6390,15 @@ impl App {
                     "f" => Task::done(Message::PageChoose(1)),
                     // « c » : copier le paquet (téléchargements ou dossier de jeux)
                     "c" => Task::done(Message::CopyOpen),
+                    // « g » : les captures et vidéos de CE jeu (bouton Galerie)
+                    "g" if self.page_actions().contains(&PageAction::Gallery) => {
+                        let nom = self
+                            .page
+                            .as_ref()
+                            .and_then(|page| self.games.get(page.index))
+                            .map(|game| game.name.clone());
+                        Task::done(Message::GalleryOpen(nom))
+                    }
                     _ => Task::none(),
                 },
                 _ => Task::none(),
@@ -6686,6 +6816,11 @@ impl App {
         };
         view = stack![view, page_dust].into();
 
+        // Coin bas droit (réseau, manettes, roues) : AVANT le voile, sinon les
+        // icônes restaient en pleine couleur pendant que tout l'écran virait au
+        // noir au lancement d'un jeu (constaté le 24/11).
+        view = stack![view, self.coin_bas_view()].into();
+
         // Le voile noir du fondu existe MÊME à opacité nulle, et il passe APRÈS
         // la page : lancer un jeu depuis une page doit virer au noir comme
         // depuis la grille, et l'arbre doit garder la même forme d'un rendu à
@@ -6786,29 +6921,7 @@ impl App {
         // conditionnel de la pile racine : un changement de forme recrée le
         // sous-arbre, donc la zone défilante, et la liste remonte — constaté
         // 20/11). Le canvas ne dessine rien hors téléchargement.
-        view = stack![view, self.copy_overlay(), self.etat_view()].into();
-        view = stack![
-            view,
-            container(
-                row![
-                    self.indicateur(self.spin + 1.7, "Scan", self.scanning()),
-                    self.indicateur(self.spin, "Visuels", self.loading()),
-                ]
-                .spacing(16)
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::End)
-            .align_y(Alignment::Start)
-            .padding(Padding {
-                top: 10.0,
-                right: 12.0,
-                bottom: 0.0,
-                left: 0.0,
-            })
-        ]
-        .into();
+        view = stack![view, self.copy_overlay()].into();
 
         // clic droit = retour, partout : les couches du dessus n'ont pas de
         // gestion du bouton droit, l'évènement remonte donc jusqu'ici.
@@ -7057,18 +7170,33 @@ impl App {
                     .color(MUTED),
             );
         }
-        container(ligne)
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Start)
-            .align_y(Alignment::Start)
-            .padding(Padding {
-                top: 12.0,
-                right: 0.0,
-                bottom: 0.0,
-                left: 12.0,
-            })
-            .into()
+        ligne.into()
+    }
+
+    /// Coin bas droit de la fenêtre : état du poste (réseau, manettes) puis les
+    /// deux roues (Scan à droite, Visuels à gauche d'elle). Le pied de page
+    /// laisse cette zone libre — le tri et le compte sont partis à gauche.
+    fn coin_bas_view(&self) -> Element<'_, Message> {
+        container(
+            row![
+                self.etat_view(),
+                self.indicateur(self.spin + 1.7, "Scan", self.scanning()),
+                self.indicateur(self.spin, "Visuels", self.loading()),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::End)
+        .align_y(Alignment::End)
+        .padding(Padding {
+            top: 0.0,
+            right: 14.0,
+            bottom: 12.0,
+            left: 0.0,
+        })
+        .into()
     }
 
     /// Indicateur d'activité du coin haut droit : la roue et son libellé à
@@ -7305,7 +7433,7 @@ impl App {
 
         let favorite = self.favorites.contains(&game.slug);
         let mut actions = Row::new().spacing(14.0 * ech).align_y(Alignment::Center);
-        for (index, action) in PAGE_ACTIONS.iter().enumerate() {
+        for (index, action) in self.page_actions().iter().enumerate() {
             let selected = index == page.action;
             // l'étoile montre l'état : pleine = favori, atténuée = à marquer
             let inside: Element<'_, Message> = match action {
@@ -7348,15 +7476,18 @@ impl App {
             .align_y(Alignment::Center)
             .into()
         } else {
-            row![
+            let mut aide = row![
                 key_hint(&["Entrée"], "valider"),
                 key_hint(&["Échap"], "retour"),
                 key_hint(&["J"], "jouer"),
                 key_hint(&["F"], "favori"),
-            ]
-            .spacing(18.0 * ech)
-            .align_y(Alignment::Center)
-            .into()
+            ];
+            if self.page_actions().contains(&PageAction::Gallery) {
+                aide = aide.push(key_hint(&["G"], "galerie"));
+            }
+            aide.spacing(18.0 * ech)
+                .align_y(Alignment::Center)
+                .into()
         };
 
         // Le bloc (cover, textes, pastilles) se centre dans la place laissée
@@ -8567,8 +8698,11 @@ impl App {
         let (aide, glyphes): (String, Vec<(&image::Handle, &'static str)>) =
             if galerie.items.is_empty() {
                 (
-                    "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer)."
-                        .to_string(),
+                    match galerie.jeu.as_deref() {
+                        Some(nom) => format!("Aucune capture ni vidéo pour {}.", short(nom, 40)),
+                        None => "Aucune capture ni vidéo dans les dossiers de sortie (Réglages pour les changer)."
+                            .to_string(),
+                    },
                     vec![(&self.glyphs.back, "Fermer")],
                 )
             } else {
@@ -8593,6 +8727,10 @@ impl App {
             column![
                 row![
                     text("Galerie").size(28).color(TEXT),
+                    match galerie.jeu.as_deref() {
+                        Some(nom) => text(short(nom, 40)).size(17).color(TEXT),
+                        None => text(""),
+                    },
                     text(filtre).size(17).color(ACCENT),
                 ]
                 .spacing(10)
@@ -10278,9 +10416,12 @@ impl App {
             .height(Fill)
             .align_x(Alignment::Center)
             .center_y(Fill);
+        // gauche : tri puis compte (le compte demande le 24/11 juste après le
+        // tri, les deux se lisent d'un coup) ; puis le message d'état, et la
+        // place libre à droite pour les icônes d'état et les roues
         let sides = container(
-            row![sort, Row::new().width(Fill), status, total]
-                .spacing(16)
+            row![sort, total, status, Row::new().width(Fill)]
+                .spacing(12)
                 .align_y(Alignment::Center),
         )
         .width(Fill);
@@ -10643,10 +10784,24 @@ fn key_hint(keys: &'static [&'static str], label: &'static str) -> Element<'stat
         );
     }
 
-    row![caps, text(label).size(15).font(HELP_FONT).color(MUTED)]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into()
+    row![
+        caps,
+        text(majuscule(label)).size(15).font(HELP_FONT).color(MUTED)
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// « naviguer » → « Naviguer » : l'aide au clavier prend la même casse que les
+/// glyphes de manette (« Ouvrir », « Tri »), sinon les deux aides se lisent
+/// comme deux applications (signalé le 24/11).
+fn majuscule(texte: &str) -> String {
+    let mut chars = texte.chars();
+    match chars.next() {
+        Some(premier) => premier.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 fn hint(glyph: image::Handle, label: &'static str) -> Element<'static, Message> {

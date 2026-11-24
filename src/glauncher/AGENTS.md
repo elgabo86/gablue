@@ -239,6 +239,25 @@ lignes** : le nom du jeu quand la capture le connaît (métadonnée), puis
 **poussière d'étoiles** du launcher (`sparkles`), posée au-dessus de la
 grille : un fond noir opaque l'aurait effacée.
 
+- **Vue par jeu** : le bouton **`Galerie`** de la page d'un jeu (touche `G`)
+  n'ouvre que **ses** captures et vidéos (`Galerie.jeu`, `GalleryOpen(Some(nom))` ;
+  `None` pour la galerie complète des menus de vues). Le filtre est appliqué
+  **dès l'ouverture** (`gallery_apply_filter`), donc les captures des autres
+  jeux ne s'affichent pas même une image ; en-tête « Galerie <jeu> », légende
+  et compteurs recalculés sur ce périmètre, et le Triangle continue de filtrer
+  captures/vidéos **du jeu**. La clé de rapprochement est le **nom affiché du
+  jeu = la tige du `.wgp`/`.lgp`** (`row.name`) : c'est la même chaîne que
+  `nom=` de `running.txt` et donc du sidecar `<capture>.jeu`, donc ça marche
+  aussi pour un jeu **non identifié sur SteamGridDB** (son seul nom est celui
+  du fichier). Un paquet **renommé** perd ses anciennes captures dans cette
+  vue (elles restent dans la galerie complète).
+- **Comptage en fond** : le bouton n'apparaît que si le jeu a quelque chose à
+  montrer, or la page ne doit pas parcourir les dossiers de sortie (des
+  milliers de fichiers) à chaque ouverture. `spawn_comptes_galerie` compte par
+  jeu (`gallery::scanne` → `Message::GalerieComptes`), au démarrage, à
+  l'ouverture d'une page (au plus toutes les 20 s) et à la fermeture de la
+  galerie (une capture mise à la corbeille fait disparaître le bouton).
+
 - **Nom du jeu et logo** : `screenshot.sh`, `recorder.sh` et `replay.sh`
   écrivent un sidecar `<fichier>.jeu` (`nom=`, `logo=`) en lisant
   `running.txt` (launcher d'abord, puis `gwine`/`lgplaunch`), avec les PID
@@ -566,12 +585,19 @@ grille : un fond noir opaque l'aurait effacée.
   - **Banc** : `GLAUNCHER_COPY_DEMO=1` ouvre le panneau, `=go` copie le jeu
     sélectionné vers la première destination, `=file` en fait deux (deux jeux,
     pour la progression cumulée).
-- **Indicateurs d'état, coin haut gauche** (`src/status.rs`) : l'icône du
-  **réseau** puis une **icône par manette** connectée (quatre au plus, un
-  `+N` au-delà). Aucune image embarquée : tout est dessiné au canvas (arcs du
-  Wi-Fi, prise du filaire, arcs barrés hors ligne ; corps + poignées + croix
-  et boutons pour la manette), teinté par famille (`gamepad::PadKind` : vert
-  Xbox, bleu PlayStation, gris pour une manette non reconnue).
+- **Indicateurs d'état, coin bas droit** (`src/status.rs`, `App::coin_bas_view`) :
+  l'icône du **réseau** puis une **icône par manette** connectée (quatre au plus,
+  un `+N` au-delà), **suivies des deux roues** (Scan puis Visuels) — le pied de
+  page laisse cette zone libre, le tri et le compte sont partis à gauche. La
+  couche est posée **avant le voile** du lancement : les icônes s'assombrissent
+  avec le reste de l'écran au lieu de rester en pleine couleur sur le noir
+  (signalé le 24/11). Aucune image embarquée : tout est dessiné au canvas (arcs
+  du Wi-Fi, prise du filaire, arcs barrés hors ligne ; pour la manette un
+  **tracé unique** — coque bombée, deux poignées qui descendent, creux central —
+  puis croix à gauche et deux boutons à droite ; les trois formes de la
+  première version — corps + deux ronds — se lisaient comme une tache,
+  signalé le 24/11), teinté par famille (`gamepad::PadKind` : vert Xbox, bleu
+  PlayStation, gris pour une manette non reconnue).
   - Réseau lu dans `/sys/class/net` : une interface **physique** (dossier
     `device`) et `operstate == up` — les interfaces virtuelles (`docker0`,
     `virbr0`, `tailscale0`, `veth…`) sont actives sans câble et feraient
@@ -1020,7 +1046,11 @@ grille : un fond noir opaque l'aurait effacée.
   l'ouvre : héros en bande (largeur **explicite**, `ContentFit::Cover`), logo,
   cover, nom, **année de sortie** (sous le titre) et temps de jeu, puis trois
   pastilles — `Jouer`, `☆ Favori`, `Options ▸` (renommée le 20/11 : le menu ne
-  contient plus seulement des images). **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
+  contient plus seulement des images) — auxquelles s'ajoute **`Galerie`**
+  quand le jeu a au moins une capture ou une vidéo (voir *Galerie*). Les
+  actions sont **dynamiques** (`App::page_actions`) : `PageNav`, `PageChoose`
+  et les flèches bornent sur cette liste, jamais sur les trois actions de
+  base — sinon la manette n'atteignait pas « Galerie » (signalé le 24/11). **Ni chemin du paquet, ni état des visuels** (`Grid ✓ · Héros …`) :
   retiré le 20/11, la page doit rester une affiche, pas une fiche technique.
   Échap/B referme et rend la liste avec la
   sélection et le défilement intacts. **Sans héros, aucune bande n'est
@@ -1166,9 +1196,11 @@ grille : un fond noir opaque l'aurait effacée.
   le nom dépasse le budget de caractères de la vignette (`App::title_budget`,
   volontairement pessimiste), donc aucune image demandée au repos.
 - **Deux roues de chargement libellées** : `src/spinner.rs`, neuf points sur
-  un cercle dans le coin **haut droit** (aucun contrôle n'y vit, grille comme
-  page). Deux indicateurs côte à côte, chacun avec son libellé à droite de sa
-  roue : **« Visuels »** pendant un téléchargement SteamGridDB
+  un cercle dans le **coin bas droit**, à gauche des icônes d'état (aucun
+  contrôle n'y vit, grille comme page ; elles étaient en haut à droite jusqu'au
+  24/11, où le coin bas droit a été demandé pour tout regrouper). Deux
+  indicateurs côte à côte, chacun avec son libellé à droite de sa roue :
+  **« Visuels »** pendant un téléchargement SteamGridDB
   (`covers::busy()`), **« Scan »** pendant une réindexation (`refreshing`,
   scan des dossiers ou d'un disque branché). Éteint, un indicateur ne dessine
   rien mais garde sa place (forme d'arbre constante) ; les deux tournent sur
@@ -1407,9 +1439,12 @@ grille : un fond noir opaque l'aurait effacée.
   tout le reste du fichier appartient à `gablue-manager`.
 - **Rien à rafraîchir à la main** : le veilleur inotify met la liste à jour,
   donc plus de touche `R` ni de bouton Start/Menu « Rafraîchir » (retour 18/11).
-- **Pied de page** : l'aide des touches est **centrée**, le tri à gauche, et à
-  droite le message d'état puis le **total de la bibliothèque** en pastille (le
-  nombre de favoris quand le tri est Favoris : c'est la liste affichée). Le nom du jeu
+- **Pied de page** : l'aide des touches est **centrée**, et **à gauche la
+  pastille de tri puis le total de la bibliothèque** (le nombre de favoris
+  quand le tri est Favoris : c'est la liste affichée) — le compte a été
+  rapproché du tri le 24/11, les deux se lisant d'un coup ; le **message
+  d'état** suit, et la place libre à droite revient au **coin bas droit**
+  (réseau, manettes, roues). Le nom du jeu
   n'y est **pas** répété (la vignette sélectionnée le porte déjà ; demandé le
   20/11). Le tri est une **pastille** (bordure d'accent, « TRI » + libellé
   en 15 px) parce qu'une ligne grise se perdait dans le pied de page — et
@@ -1483,6 +1518,12 @@ grille : un fond noir opaque l'aurait effacée.
   état on/off, **barre de réglage** (piste arrondie + remplissage d'accent) pour
   un pourcentage, aide du bas en **glyphes de manette** — et non du texte
   (« Croix = … ») quand c'est la manette qui pilote (`App::aide_menu`).
+  **Casse alignée** : le libellé est capitalisé par `majuscule()` (« naviguer »
+  → « Naviguer »), comme les glyphes de manette (« Ouvrir », « Tri ») — les
+  deux aides commencent en minuscule/majuscule différemment sinon, et se lisent
+  comme deux applications (signalé le 24/11). La capitalisation ne touche que
+  la **première lettre** (accents préservés) et s'applique à tous les appels de
+  `key_hint`, donc partout d'un coup.
   L'interrupteur et la barre s'inversent sur la ligne sélectionnée (piste
   sombre, remplissage noir) pour rester lisibles sur l'accent.
 - **Aucun message d'état pour un réglage** qui se voit déjà sur sa ligne

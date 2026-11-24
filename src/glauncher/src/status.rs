@@ -236,35 +236,50 @@ fn dessiner_reseau(frame: &mut Frame, etat: Reseau, couleur: Color, taille: iced
     }
 }
 
-fn dessiner_manette(frame: &mut Frame, _kind: PadKind, couleur: Color, taille: iced::Size) {
-    let (l, h) = (taille.width, taille.height);
-    // corps + deux poignées : trois remplissages de même teinte font une
-    // silhouette de manette à cette taille
-    let corps = Path::rounded_rectangle(
-        Point::new(6.0, 2.0),
-        iced::Size::new(l - 12.0, h - 8.0),
-        3.0.into(),
-    );
+/// Silhouette de manette : barre supérieure bombée, deux poignées qui
+/// descendent, creux au milieu. Les trois formes de la première version (corps
+/// + deux ronds) se lisaient comme une tache — « on dirait même pas une
+/// manette » (signalé le 24/11). Tout est un seul tracé, à l'échelle du canvas
+/// (26×18 px) : à cette taille, c'est la silhouette qui porte la lecture, pas
+/// les détails.
+fn dessiner_manette(frame: &mut Frame, _kind: PadKind, couleur: Color, _taille: iced::Size) {
+    let corps = Path::new(|b| {
+        b.move_to(Point::new(6.0, 3.0));
+        // bord supérieur : légèrement bombé, comme une coque
+        b.quadratic_curve_to(Point::new(13.0, 1.2), Point::new(20.0, 3.0));
+        // coin droit, puis l'extérieur de la poignée droite
+        b.quadratic_curve_to(Point::new(22.6, 3.8), Point::new(22.6, 6.6));
+        b.quadratic_curve_to(Point::new(23.4, 12.4), Point::new(20.8, 15.4));
+        // intérieur de la poignée droite, qui remonte vers le creux
+        b.quadratic_curve_to(Point::new(18.2, 17.4), Point::new(16.0, 12.6));
+        b.quadratic_curve_to(Point::new(14.6, 10.2), Point::new(13.0, 10.2));
+        // creux puis symétrie : poignée gauche
+        b.quadratic_curve_to(Point::new(11.4, 10.2), Point::new(10.0, 12.6));
+        b.quadratic_curve_to(Point::new(7.8, 17.4), Point::new(5.2, 15.4));
+        b.quadratic_curve_to(Point::new(2.6, 12.4), Point::new(3.4, 6.6));
+        b.quadratic_curve_to(Point::new(3.4, 3.8), Point::new(6.0, 3.0));
+        b.close();
+    });
     frame.fill(&corps, couleur);
-    frame.fill(&Path::circle(Point::new(5.0, h - 4.5), 3.6), couleur);
-    frame.fill(&Path::circle(Point::new(l - 5.0, h - 4.5), 3.6), couleur);
-    // croix à gauche, deux boutons à droite : ce qu'on reconnaît d'un coup d'œil
+
+    // croix à gauche, deux boutons à droite : le repère qui dit « manette » et
+    // pas « poignée de valise »
     let trou = Color {
-        a: 0.55,
+        a: 0.62,
         ..Color::BLACK
     };
-    let croix = Path::rounded_rectangle(
-        Point::new(7.5, 9.5),
-        iced::Size::new(6.0, 1.8),
-        0.9.into(),
+    let croix_h = Path::rounded_rectangle(
+        Point::new(5.6, 7.5),
+        iced::Size::new(5.0, 1.7),
+        0.8.into(),
     );
-    frame.fill(&croix, trou);
+    frame.fill(&croix_h, trou);
     let croix_v = Path::rounded_rectangle(
-        Point::new(9.6, 7.4),
-        iced::Size::new(1.8, 6.0),
-        0.9.into(),
+        Point::new(7.3, 5.8),
+        iced::Size::new(1.7, 5.0),
+        0.8.into(),
     );
     frame.fill(&croix_v, trou);
-    frame.fill(&Path::circle(Point::new(l - 10.5, 8.6), 1.3), trou);
-    frame.fill(&Path::circle(Point::new(l - 7.5, 10.8), 1.3), trou);
+    frame.fill(&Path::circle(Point::new(17.6, 7.2), 1.25), trou);
+    frame.fill(&Path::circle(Point::new(19.5, 9.0), 1.25), trou);
 }
