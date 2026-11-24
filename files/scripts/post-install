@@ -200,6 +200,18 @@ fi
 # CONFIGURATION SYSTÈME
 # =============================================================================
 
+# Plasma Setup (assistant de premier démarrage de KDE, paquet plasma-setup) :
+# son unité, tant que /etc/plasma-setup-done n'existe pas, écrit un autologin
+# `User=plasma-setup` dans /etc/plasmalogin.conf.d/99-plasma-setup.conf à CHAQUE
+# démarrage. Sur Gablue l'utilisateur est créé par l'installateur : un second
+# autologin n'a rien à faire là, et en mode « écran de connexion » (fichier
+# zz-gablue-session.conf retiré) il ouvrait l'assistant à la place de l'écran de
+# connexion (constaté le 25/11/2026). Le drapeau coupe l'unité
+# (`ConditionPathExists=!/etc/plasma-setup-done`), et le fichier déjà écrit est
+# retiré.
+touch /etc/plasma-setup-done
+rm -f /etc/plasmalogin.conf.d/99-plasma-setup.conf
+
 # Configuration des profils tuned pour Gablue
 sed -i 's/balanced=balanced$/balanced=balanced-gablue/' /etc/tuned/ppd.conf
 sed -i 's/performance=throughput-performance$/performance=throughput-performance-gablue/' /etc/tuned/ppd.conf

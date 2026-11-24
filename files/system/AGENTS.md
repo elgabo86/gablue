@@ -108,7 +108,14 @@
   privilège), `etat` (`session=console|bureau|greeter`, sortie stable lue par
   le dialogue « Session graphique » de Gablue Manager, sans privilège). Root via pkexec, autorisé sans mot de passe par
   `60-gablue-session-mode.rules` (groupe wheel, session locale, programme
-  exact). Trois précautions, toutes mesurées le 23/11/2026 :
+  exact). Le fichier lu est `/etc/plasmalogin.conf.d/zz-gablue-session.conf` ;
+  **aucun autre autologin ne doit exister** — `plasma-setup.service` (assistant
+  de premier démarrage de KDE) écrivait `User=plasma-setup` dans
+  `99-plasma-setup.conf` à chaque démarrage : sans effet tant que le `zz-`
+  l'écrase, mais en mode « écran de connexion » (fichier retiré) il ouvrait
+  l'assistant au lieu du greeter. Neutralisé au build par
+  `/etc/plasma-setup-done` (voir `files/scripts/AGENTS.md`). Trois précautions,
+  toutes mesurées le 23/11/2026 :
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
   `[Autologin] Session=` à son démarrage et le garde en mémoire (bug KDE
   522181), donc une déconnexion relance la session précédente ;
