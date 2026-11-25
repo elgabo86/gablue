@@ -119,10 +119,21 @@
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
   `[Autologin] Session=` à son démarrage et le garde en mémoire (bug KDE
   522181), donc une déconnexion relance la session précédente ;
-  (1bis) **`stop` puis `start`, jamais `restart`** : le plasmalogin sortant
-  relance une dernière fois la session qu'il a EN MÉMOIRE (bug KDE 522181) —
-  le bureau Plasma apparaissait une seconde au milieu du passage en mode jeu
-  (signalé le 25/11/2026) ; arrêté d'abord, il ne relance rien.
+  (1bis) **arrêter plasmalogin AVANT que la session ne se termine**, le
+  relancer à la fin — jamais `restart` : le plasmalogin vivant réagit à la fin
+  de session. Avec `Relogin=true` (valeur d'origine du fichier) il relançait
+  aussitôt la session qu'il avait EN MÉMOIRE (bug KDE 522181) : le bureau
+  Plasma réapparaissait une seconde avant la session jeu (mesuré le
+  25/11/2026 — session créée avec `startplasma-wayland` juste après la fin de
+  la précédente, puis tuée par la bascule). Avec `Relogin=false`, il ouvre
+  l'**écran de connexion**, dont le serveur d'affichage ne peut pas reprendre
+  `/dev/tty1` (sddm#1844) : il sort en 23, systemd le relance en rafale et il
+  meurt sur `start-limit-hit`, la bascule finissant **sans aucune session**
+  (mesuré le même jour, 14:33). D'où l'ordre du script : `stop` en tête,
+  sessions arrêtées, fichier d'autologin écrit, puis `reset-failed` + `start`
+  (le compteur de démarrages d'une unité déjà en échec ferait sinon refuser le
+  démarrage). `Relogin=false` reste obligatoire : c'est lui qui empêche le
+  rejeu de la session mémorisée.
   (2) **arrêter la session sortante avant** — `plasma-kwin_wayland.service` et
   `plasma-plasmashell.service` vivent dans le gestionnaire UTILISATEUR, pas
   dans le scope de session : ils survivent, gardent `org.kde.KWin`, le siège

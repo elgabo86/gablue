@@ -279,13 +279,32 @@ attendre_session() {
 
 ecrire_autologin() {   # session .desktop
     mkdir -p "$(dirname "$CONF")"
-    printf '# Écrit par gablue-session-mode : session choisie depuis le menu Home.\n# Retiré par le mode « greeter » (fermer la session).\n[Autologin]\nUser=%s\nSession=%s\nRelogin=true\n' \
+    # `Relogin=false` est ESSENTIEL : avec `true`, la fin de la session fait
+    # relancer par plasmalogin la session qu'il a EN MÉMOIRE (bug KDE 522181),
+    # donc le bureau Plasma se réaffichait une seconde avant la session jeu
+    # (mesuré le 25/11/2026 : session 8 créée avec `startplasma-wayland` juste
+    # après la fin de la session 7, puis tuée par la bascule). Sans Relogin, le
+    # démon attend simplement l'autologin dicté par le nouveau fichier.
+    printf '# Écrit par gablue-session-mode : session choisie depuis le menu Home.\n# Retiré par le mode « greeter » (fermer la session).\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' \
         "$UTILISATEUR" "$1" >"$CONF"
     chmod 644 "$CONF"
     log "autologin : $1"
 }
 
 log "mode=$mode utilisateur=$UTILISATEUR sessions=$(sessions_siege | tr '\n' ' ')"
+
+# 0. Le gestionnaire de connexion est arrêté AVANT que la session ne se termine.
+#    Sinon, `Relogin=false` le fait démarrer l'écran de connexion dès la fin de
+#    la session : son serveur d'affichage ne peut pas reprendre /dev/tty1
+#    (bug amont sddm#1844), le démon sort en 23, systemd le relance en rafale
+#    et il meurt sur `start-limit-hit` — la bascule finissait SANS session
+#    (mesuré le 25/11/2026, 14:33). Arrêté d'abord, il ne voit rien se
+#    terminer, et le plasmalogin neuf démarre directement sur l'autologin.
+/usr/bin/systemctl stop plasmalogin.service
+for i in $(seq 1 20); do
+    /usr/bin/systemctl is-active --quiet plasmalogin.service && sleep 0.25 || break
+done
+log "plasmalogin arrêté"
 
 # 1. Déconnexion polie : les applications se ferment comme avec « Quitter »
 #    de Plasma (sauvegardes, dialogues). Non bloquant, sans effet hors Plasma.
@@ -349,16 +368,12 @@ greeter)
     ;;
 esac
 
- # `stop` PUIS `start`, jamais `restart` : le plasmalogin sortant relance une
-# dernière fois la session qu'il a EN MÉMOIRE (bug KDE 522181) — le bureau
-# Plasma apparaissait une seconde au milieu du passage en mode jeu (signalé le
-# 25/11/2026). Arrêté d'abord, il ne relance rien ; le nouveau lit la conf.
-/usr/bin/systemctl stop plasmalogin.service
-for i in $(seq 1 20); do
-    /usr/bin/systemctl is-active --quiet plasmalogin.service && sleep 0.25 || break
-done
+ # Le neuf lit le fichier écrit juste au-dessus. `reset-failed` d'abord : s'il a
+# été arrêté pendant une rafale d'échecs, l'unité porte encore son compteur de
+# démarrages et `start` répondrait « start-limit-hit » sans rien lancer.
+/usr/bin/systemctl reset-failed plasmalogin.service 2>/dev/null || true
 /usr/bin/systemctl start plasmalogin.service
-log "plasmalogin arrêté puis relancé (rc=$?)"
+log "plasmalogin relancé (rc=$?)"
 # plasmalogin démarre son greeter puis, pour l'autologin, demande sa fin — son
 # serveur d'affichage survit et garde la VT (bug amont sddm#1844, PR #1969 non
 # reprise ici) : l'autologin boucle alors sur « Failed to take control ».
