@@ -202,15 +202,15 @@ ferme pas), que `gpad-trigger` transmet au binaire (`--gate <socket>
 jeu continuait de recevoir la manette : déplacer le pointeur faisait aussi
 marcher le personnage (signalé le 24/11/2026). Le binaire n'envoie **jamais**
 `clear` au démon (il viderait les cibles de l'overlay) : `target` s'accumule,
-le démon est idempotent, et un `open` attache le hook. À la sortie — **Home seul** (s'il tient le grab : il rend la manette, envoie
-`close`, puis demande `open` au résident via `--ipc` pour que le panneau
-revienne), Home+R3, `SIGTERM`/`SIGINT`/`SIGHUP`, ou manette débranchée — il
+le démon est idempotent, et un `open` attache le hook. À la sortie — Home+R3, `SIGTERM`/`SIGINT`/`SIGHUP`, ou manette débranchée — il
 envoie **`close`** puis relâche le grab : sans ça la manette resterait coupée
 pour tout le monde jusqu'au prochain `close`. Le grab est **retenté toutes les
 0,5 s** tant qu'il ne l'a pas : lancé depuis le panneau, le premier essai
 échoue (l'overlay le tient) et sans ce retry le mode souris restait sans grab
 après la fermeture du panneau (vécu 25/11/2026 : Home ne revenait plus, le
-déclencheur ne voyant plus la manette). La boucle attend en `nanosleep` (interruptible par
+déclencheur ne voyant plus la manette). **Home**, quand le pointeur tient le
+grab, ne quitte pas le mode : il prête la manette (relâche le grab) et demande
+`open` au résident via `--ipc`, puis la reprend à la fermeture du panneau. La boucle attend en `nanosleep` (interruptible par
 un signal), pas en `usleep`, pour que l'arrêt soit immédiat.
 
 **Changement de session** (`MODE JEU` sur le bureau, `MODE BUREAU` en console) :

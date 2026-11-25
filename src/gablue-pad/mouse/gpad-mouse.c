@@ -495,8 +495,12 @@ int main(int argc, char **argv)
     int hat_x = 0, hat_y = 0;
     int last_hat_up = 0, last_hat_down = 0, last_hat_left = 0, last_hat_right = 0;
     int mode_state = 0, r3_state = 0;
-    int demande_panneau = 0;
     double dernier_grab = 0.0;
+    /* Fenêtre pendant laquelle on NE retente PAS le grab : on vient de préter
+     * la manette au panneau, il doit pouvoir la prendre. Sans ça, notre retry
+     * (0,5 s) reprenait le grab avant l'overlay, qui se retrouvait avec un
+     * panneau ouvert et aveugle — Home « marchait une fois sur deux ». */
+    double pause_reprise = 0.0;
 
     // Accumulateur de mouvement sub-pixel (reprise de mouse.py)
     double carry_x = 0.0, carry_y = 0.0;
@@ -540,11 +544,19 @@ int main(int argc, char **argv)
                     // declencheur sourd a Home et le menu ne revenait plus
                     // (signale le 25/11/2026).
                     // Seulement si NOUS tenons la manette : panneau ouvert,
-                    // c'est l'overlay qui a le grab et Home lui appartient
-                    // (sinon Home fermerait le panneau ET le rouvrirait).
+                    // c'est l'overlay qui a le grab et Home lui appartient.
+                    // On ne quitte PAS le mode souris : on prête la manette au
+                    // panneau (il doit pouvoir grabber) et on la reprend à sa
+                    // fermeture par le grab retenté plus haut. Quitter ici
+                    // laissait un `gpad-mouse` mort mais vu « ACTIF » par le
+                    // panneau, et le mode souris ne revenait plus (constaté le
+                    // 25/11/2026).
                     if (ev.value == 1 && grabe) {
-                        demande_panneau = 1;
-                        running = 0;
+                        fprintf(stderr, "[INFO] Home : manette pretee au panneau.\n");
+                        ioctl(ctrl, EVIOCGRAB, 0);
+                        grabe = 0;
+                        pause_reprise = now_seconds() + 2.0;
+                        demander_panneau(device_path);
                     }
                 } else if (ev.code == BTN_THUMBR) {
                     r3_state = ev.value;
@@ -561,7 +573,8 @@ int main(int argc, char **argv)
 
         double current_time = now_seconds();
         // grab différé : le panneau le rend en se fermant (~0,5 s de latence)
-        if (!grabe && current_time - dernier_grab > 0.5) {
+        if (!grabe && current_time >= pause_reprise &&
+            current_time - dernier_grab > 0.5) {
             dernier_grab = current_time;
             if (ioctl(ctrl, EVIOCGRAB, 1) == 0) {
                 grabe = 1;
@@ -663,9 +676,5 @@ int main(int argc, char **argv)
     close(ctrl);
     ioctl(ufd, UI_DEV_DESTROY);
     close(ufd);
-    if (demande_panneau && running == 0) {
-        fprintf(stderr, "[INFO] Home : panneau redemande au resident.\n");
-        demander_panneau(device_path);
-    }
     return 0;
 }

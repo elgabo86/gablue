@@ -2002,7 +2002,19 @@ impl App {
         };
         let fd: OwnedFd = file.into();
         const EVIOCGRAB: libc::c_ulong = 0x4004_4590; // _IOW('E', 0x90, int)
-        if unsafe { libc::ioctl(fd.as_raw_fd(), EVIOCGRAB, 1) } < 0 {
+        // Le mode souris vient de prêter la manette (Home) : son grab peut
+        // encore être posé quelques millisecondes. On réessaie une seconde
+        // avant d'abandonner — sans quoi le panneau s'ouvrait **aveugle**
+        // (aucun événement reçu) et se refermait tout seul après 10 s.
+        let mut grabe = false;
+        for _ in 0..20 {
+            if unsafe { libc::ioctl(fd.as_raw_fd(), EVIOCGRAB, 1) } == 0 {
+                grabe = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        if !grabe {
             eprintln!("grab: EVIOCGRAB {path}: {}", std::io::Error::last_os_error());
             return;
         }
@@ -2160,12 +2172,27 @@ impl App {
                 } else if ev.value == 0 && self.home_down {
                     self.home_down = false;
                     if self.home_at.elapsed() < Duration::from_millis(600) {
-                        println!("CLOSE (Home)");
-                        if self.kbd_ouvert {
-                            fermer_apres = true;
-                            break;
+                        if self.closing {
+                            // Home pendant l'animation de fermeture (140 ms) :
+                            // l'appui tombait dans le vide (`request_close`
+                            // sort sur `closing`), donc il fallait appuyer
+                            // DEUX fois pour revoir le panneau. On annule la
+                            // fermeture et on rouvre (constaté le 25/11/2026).
+                            self.closing = false;
+                            self.anim = None;
+                            self.fondu = None;
+                            self.off = 0;
+                            self.opacite = 1.0;
+                            self.dirty = true;
+                            println!("OPEN (Home, fermeture annulee)");
+                        } else {
+                            println!("CLOSE (Home)");
+                            if self.kbd_ouvert {
+                                fermer_apres = true;
+                                break;
+                            }
+                            self.request_close();
                         }
-                        self.request_close();
                     }
                 }
                 continue;
@@ -2541,11 +2568,27 @@ impl App {
             self.status = format!("MODE SOURIS: ARRETE ({n})");
             println!("MOUSE STOP {nom} ({n})");
         } else {
-            lancer_script("MOUSE", &[]);
+            // Socket du résident : en mode souris c'est `gpad-mouse` qui tient
+            // la manette, donc le déclencheur ne voit plus Home. Au premier
+            // appui il prête la manette et demande le panneau par ce socket ;
+            // sans le chemin il ne pouvait rien demander et il fallait appuyer
+            // une SECONDE fois pour que le déclencheur voie Home (constaté le
+            // 25/11/2026). `ipc_attente` couvre le cas où le bind n'a pas
+            // encore eu lieu.
+            let ipc = self.ipc_path.clone().or_else(|| self.ipc_attente.clone());
+            match ipc {
+                Some(sock) => lancer_script("MOUSE", &["--ipc", &sock]),
+                None => lancer_script("MOUSE", &[]),
+            }
             self.mouse_active = true;
             self.status = "MODE SOURIS: ACTIF".to_string();
             println!("MOUSE START {nom}");
         }
+        // Le panneau se ferme dans les deux sens (demande du 25/11/2026) : en
+        // entrant, il rend son grab à `gpad-mouse` (qui le retente toutes les
+        // 0,5 s) au lieu de laisser l'utilisateur fermer à la main ; en
+        // sortant, le pointeur rend la manette et rien ne reste à l'écran.
+        self.request_close();
     }
 
     /// CLAVIER VIRTUEL (depuis le panneau) : on garde la manette **et** le
@@ -8294,6 +8337,17 @@ fn main() {
         }
         if fds[2].revents & libc::POLLIN != 0 {
             app.lire_ipc();
+        }
+        // Enfants de `lancer_script` (vrr.sh, gpad-mouse, captures, scripts) :
+        // sans `wait`, chaque lancement laissait un zombie dans /proc. Et un
+        // `gpad-mouse` zombie restait vu « ACTIF » par le scan du panneau
+        // (le processus est mort, son /proc vit), donc le mode souris semblait
+        // allumé sans effet (constaté le 25/11/2026).
+        loop {
+            let pid = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+            if pid <= 0 {
+                break;
+            }
         }
         // maintien de Home : vérifié à chaque tour (poll 100 ms au repos)
         app.surveiller_home();

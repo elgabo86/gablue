@@ -410,22 +410,33 @@ quadratique explosait et un seul événement produisait un déplacement de 2 Gpx
 
 ## Mode souris
 
-`MODE SOURIS` lance/arrête `gpad-mouse` **sans toucher au panneau** : le
-panneau reste ouvert, c'est l'utilisateur qui le ferme (choix confirmé le
-25/11/2026). Le binaire **grabbe le node evdev** dès qu'il peut — le premier
-essai échoue tant que l'overlay tient le grab du panneau, il est donc
-**retenté toutes les 0,5 s** ; sans ça il restait sans grab après la fermeture
-et le jeu continuait de recevoir la manette. Tant que le panneau est ouvert,
-c'est notre grab qui parle et `gpad-mouse` reste muet.
+`MODE SOURIS` lance/arrête `gpad-mouse` **et ferme le panneau**, dans les deux
+sens (demande du 25/11/2026 après essai du contraire) : en entrant, il rend son
+grab au pointeur au lieu de laisser l'utilisateur fermer à la main ; en
+sortant, le pointeur rend la manette et rien ne reste à l'écran. Le binaire
+**grabbe le node evdev** dès qu'il peut — le premier essai échoue tant que
+l'overlay tient le grab du panneau, il est donc **retenté toutes les 0,5 s** ;
+sans ça il restait sans grab après la fermeture et le jeu continuait de
+recevoir la manette. Tant que le panneau est ouvert, c'est notre grab qui
+parle et `gpad-mouse` reste muet.
 
 **Home, en mode souris** : le grab du pointeur rend le déclencheur sourd à
 Home — le menu était donc perdu jusqu'à un `kill`. `gpad-mouse` reçoit
-`--ipc <socket du résident>` (de l'overlay quand il le lance, du déclencheur
-sinon) : au **premier Home**, s'il tient le grab, il rend la manette puis
-demande `open <node>` au résident, et le panneau revient. Si c'est l'overlay
-qui tient le grab, il ne fait rien — Home appartient alors au panneau, qui se
-ferme normalement. La ligne affiche `ACTIF` (vert) ou `ARRET`, relue une fois
-par seconde en scannant `/proc/<pid>/comm` (aucun fork).
+`--ipc <socket du résident>`, du déclencheur **et du panneau** (`mouse_toggle`
+lui passe `self.ipc_path`) : au **premier Home**, s'il tient le grab, il
+**prête** la manette
+(relâche le grab, sinon l'overlay ne peut pas le prendre) puis demande
+`open <node>` au résident. Le panneau revient, le **mode souris reste allumé**
+et reprend la manette à la fermeture par le grab retenté. Si c'est l'overlay
+qui tient le grab, `gpad-mouse` ne fait rien — Home appartient au panneau.
+Sans cet `--ipc` le premier appui ne faisait que prêter la manette ; le
+déclencheur, redevenu voyant, n'ouvrait qu'au **second** (vécu « des fois deux
+fois Home », 25/11/2026).
+Un `gpad-mouse` zombie restait vu « ACTIF » (son `/proc` survit) alors que le
+processus était mort : `gpad` **récolte ses enfants** à chaque tour
+(`waitpid(-1, WNOHANG)`), ce qui couvre aussi `vrr.sh` et les scripts.
+La ligne affiche `ACTIF` (vert) ou `ARRET`, relue une fois par seconde en
+scannant `/proc/<pid>/comm` (aucun fork).
 
 Mesuré : `SELECT MODE SOURIS` → `MOUSE START gpad-mouse`,
 `gpad-mouse` = 1 processus, **aucun `GPAD_DOWN`** (le panneau reste) ; un
