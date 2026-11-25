@@ -36,7 +36,7 @@ l'accueil ; chaque ligne de réglage se manipule **au gauche/droite**, appliqué
 | `CAPTURE` / `FPS REC` | 4 positions, **`60`** → `120` → `144` → `FLIPS` | `fps` (plafond d'émission ; `flips` = taux réel des flips) |
 | `CAPTURE` / `CURSEUR` | 2 positions, **`MASQUE`** → `AFFICHE` | `curseur` (affiché = v2, non implémenté) |
 | `CAPTURE` / `DUREE REPLAY` | 5 positions, `15` → **`30`** → `60` → `120` → `300` s | `replay_sec` dans `recorder.conf` (le démon relit le fichier seul) |
-| `CAPTURE` / `REPLAY AUTO` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
+| `CAPTURE` / `REPLAY AUTOMATIQUE` | **interrupteur** (A) | `auto_replay` (défaut **off**) : démarre le buffer dès qu'un `.lgp`/`.wgp` tourne |
 | `AFFICHAGE` / `PRIORITE ACTIVE` | **interrupteur** (A) | « optimiser au premier plan » : `cpu.weight` **×100** (10 000) **et** VRAM réservée (`dmem.low` = capacité de chaque GPU) pour l'app de la fenêtre active ↔ désactivé : `booster.sh toggle` → `autostart` dans `~/.config/kcgroupsrc` + `systemctl --user restart\|stop plasma-foreground-booster.service` |
 | `AFFICHAGE` / `STYLE RETRO` / `STYLE MODERNE` | **interrupteur** (A) | le libellé porte le style courant (OFF = retro, ON = moderne), appliqué **à chaud** + écrit dans `~/.config/gablue/gpad-style` |
 
@@ -172,7 +172,8 @@ BASCULER   (seulement si une app compagne est ouverte)
 MODE SOURIS · CLAVIER VIRTUEL
 CAPTURE ECRAN · ENREGISTRER · ACTIVER LE REPLAY · SAUVER REPLAY (si le buffer tourne)
 OPTIONS D'AFFICHAGE ▸  FPS MAX · MANGOHUD · VRR · PRIORITE ACTIVE · STYLE
-OPTIONS DE CAPTURE  ▸  QUALITE · CODEC · RESOLUTION · FPS REC · CURSEUR · FORMAT PHOTO · QUALITE PHOTO · DUREE REPLAY · REPLAY AUTO
+OPTIONS DE CAPTURE  ▸  — VIDEO —  QUALITE · CODEC · RESOLUTION · FPS REC · CURSEUR · DUREE REPLAY · REPLAY AUTOMATIQUE
+                        — IMAGE —  FORMAT PHOTO · QUALITE PHOTO
 
 CONSOLE (GablueGaming)
 FERMER
@@ -198,6 +199,13 @@ la liste des fenêtres n'apporte rien). Le mode est déduit de
 `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP` (`GPAD_MODE` pour le banc), jamais
 d'un réglage.
 
+**Séparateurs de section** (`Entree::Titre`) : la page CAPTURE en porte deux,
+`VIDEO` puis `IMAGE` (25/11/2026 : les réglages de `gpad-rec` et ceux des
+captures d'écran n'ont rien à voir et se lisaient d'un seul bloc). Ce sont de
+petits libellés de 34 px, **non sélectionnables** : `pas_selectable` les saute
+et `premier_action` ne s'y arrête pas, donc le curseur ne tombe jamais dessus.
+Une page ne commence jamais par l'un d'eux (test).
+
 **Toutes les lignes d'une valeur ont la même hauteur** (46 px ; seuls les
 réglages à curseur montent à 86) : les catégories étaient à 56, d'où un écart entre elles qui ne ressemblait à aucune
 autre ligne (constaté le 25/11/2026). Une catégorie se reconnaît à son
@@ -222,7 +230,7 @@ irréversibles n'ont pas besoin de sous-menus.
 (`QUALITE`, `CODEC`, `RESOLUTION`, `FPS` de CAPTURE, comme `VOLUME`/`FPS`/
 `DUREE`)
 prennent la **valeur à droite + le curseur gradué dessous** (ligne de 86 px), et
-le **`CURSEUR` est un interrupteur** comme `VRR`, `REPLAY AUTO`, `PRIORITE`,
+le **`CURSEUR` est un interrupteur** comme `VRR`, `REPLAY AUTOMATIQUE`, `PRIORITE`,
 `STYLE` (ligne de 46 px). `FPS` (capture) liste **AUTO en tête** (valeur par
 défaut, `flips`), puis les cadences bornées croissantes. Toute ligne de CAPTURE en simple libellé/valeur jure
 avec le reste du panneau.
@@ -536,6 +544,12 @@ Géométrie et chrome, communs aux deux styles :
   les chaînes entièrement en capitales : les légendes de fenêtres, les noms
   d'applis et les valeurs numériques gardent leur casse. RETRO garde ses
   capitales (la bitmap n'a pas de minuscules).
+  **Mots composés** (`casse_mot`) : apostrophe et tiret coupent le mot en
+  parties traitées séparément, sinon il restait en capitales — « OPTIONS
+  D'AFFICHAGE » affichait « Options d'AFFICHAGE », le mot n'étant pas
+  « entièrement alphabétique » (signalé le 25/11/2026). Une partie d'une seule
+  lettre est une élision française (`d'affichage`), et `MM:SS` ou `A: OUVRIR`
+  ne changent pas : le deux-points n'est pas un séparateur de mot.
 - **Glyphes** : `assets/glyphes/{ps,xbox}/` (pack **Xelu**, CC0 —
   `assets/glyphes/README-Xelu-CC0.txt`), 100×100 PNG, embarqués par
   `include_bytes!` et chargés au premier dessin (`charger_glyphes`). Famille

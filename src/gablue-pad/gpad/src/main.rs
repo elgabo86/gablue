@@ -823,6 +823,9 @@ enum Entree {
     Curseur,
     /// démarre le replay seul quand un jeu LGP/WGP est lancé (désactivé par défaut)
     AutoReplay,
+    /// séparateur de section, non sélectionnable : la page CAPTURE mélangeait
+    /// les réglages vidéo et ceux des captures d'écran (demandé le 25/11/2026)
+    Titre(&'static str),
 }
 
 /// Nom de session posé par `wayland-sessions/gablue-gaming.desktop`
@@ -1012,17 +1015,22 @@ impl Cat {
             ],
             // plus que des réglages : les actions (enregistrer, capture,
             // replay) sont sur l'accueil, à un appui d'ouverture
+            // deux sections : ce que `gpad-rec` enregistre (vidéo, replay)
+            // d'abord — c'est l'usage courant en jeu — puis les captures
+            // d'écran, qui n'ont rien à voir (demandé le 25/11/2026)
             Cat::Capture => vec![
                 Entree::Fenetre,
+                Entree::Titre("VIDEO"),
                 Entree::Qualite,
                 Entree::Codec,
                 Entree::Reso,
                 Entree::FpsRec,
                 Entree::Curseur,
-                Entree::ShotFormat,
-                Entree::ShotQualite,
                 Entree::Duree,
                 Entree::AutoReplay,
+                Entree::Titre("IMAGE"),
+                Entree::ShotFormat,
+                Entree::ShotQualite,
             ],
         }
     }
@@ -1084,7 +1092,8 @@ impl Entree {
             Entree::Reso => "RESOLUTION",
             Entree::FpsRec => "FPS",
             Entree::Curseur => "CURSEUR",
-            Entree::AutoReplay => "REPLAY AUTO",
+            Entree::AutoReplay => "REPLAY AUTOMATIQUE",
+            Entree::Titre(t) => t,
         }
     }
     /// ligne de réglage (curseur) plutôt qu'une action ponctuelle
@@ -1114,6 +1123,7 @@ impl Entree {
     fn hauteur(self) -> i32 {
         match self {
             Entree::Fenetre => 0,
+            Entree::Titre(_) => 34,
             Entree::Volume
             | Entree::VolumeJeu
             | Entree::VolumeApp
@@ -1129,10 +1139,9 @@ impl Entree {
             _ => 46,
         }
     }
-    /// le curseur peut s'y poser (toutes les lignes le sont : les séparateurs
-    /// ont disparu avec les catégories)
+    /// le curseur peut s'y poser : tout sauf un séparateur de section
     fn selectionnable(self) -> bool {
-        true
+        !matches!(self, Entree::Titre(_))
     }
 }
 
@@ -2919,6 +2928,8 @@ impl App {
             Entree::VolumeApp => self.regler_flux(Cible::App, 5 * sens),
             // action ponctuelle : rien à régler au curseur
             Entree::Basculer => {}
+            // séparateur : jamais sélectionné, rien à régler
+            Entree::Titre(_) => {}
             Entree::Fps => {
                 let max = FPS_OPTS.len() as i32 - 1;
                 // Valeur hors crans : on part de la vraie valeur et on va au
@@ -4042,6 +4053,7 @@ impl App {
         self.arme = None;
         match item {
             // les lignes de réglage n'ont rien à valider : gauche/droite agit
+            Entree::Titre(_) => {}
             Entree::Volume => self.toggle_mute(),
             Entree::VolumeJeu => self.muter_flux(Cible::Jeu),
             Entree::VolumeApp => self.muter_flux(Cible::App),
@@ -5534,6 +5546,10 @@ impl App {
                     self.curseur_ligne(&mut cv, px0 + pad + 36, y + 40, inner - 36,
                                        REPR_OPTS.len(), self.repr_idx, sel);
                 }
+                // séparateur de section : petit libellé, jamais sélectionné
+                Entree::Titre(t) => {
+                    cv.text_fit(px0 + pad + 36, y + 8, t, 2, cc_dim, inner - 36);
+                }
                 Entree::Qualite => self.ligne_gradee(
                     &mut cv, px0, pad, inner, y, "QUALITE", color,
                     capture::libelle(&self.cap, "qualite", &capture::QUALITES),
@@ -5575,7 +5591,7 @@ impl App {
                         false);
                 }
                 Entree::AutoReplay => {
-                    cv.text_fit(px0 + pad + 36, y, "REPLAY AUTO", 3, color, inner - 36 - 60);
+                    cv.text_fit(px0 + pad + 36, y, "REPLAY AUTOMATIQUE", 3, color, inner - 36 - 60);
                     self.interrupteur(&mut cv, px0 + pad + inner, y, self.auto_replay(), false);
                 }
                 Entree::Fps => {
@@ -7468,33 +7484,71 @@ fn joli(s: &str) -> String {
         let coeur = &reste[..reste.len() - queue];
         let queue = &reste[reste.len() - queue..];
         out.push_str(tete);
-        if coeur.chars().count() < 2 || !coeur.chars().all(|c| c.is_ascii_alphabetic()) {
+        if coeur.contains('\'') || coeur.contains('-') {
+            // mot composé : « D'AFFICHAGE », « SOUS-TITRES ». Il n'est pas
+            // « entièrement alphabétique », donc il restait en CAPITALES au
+            // milieu d'un libellé en casse de phrase — « Options d'AFFICHAGE »
+            // (constaté le 25/11/2026). Chaque partie passe par la règle
+            // commune, l'apostrophe ou le tiret restant tels quels.
+            out.push_str(&casse_mot(coeur, &mut premier));
+        } else if coeur.chars().count() < 2 || !coeur.chars().all(|c| c.is_ascii_alphabetic()) {
             // « L1 », « A », « 60 », « MM:SS » : rien à casser
             out.push_str(coeur);
-            out.push_str(queue);
-            continue;
-        }
-        let bas = coeur.to_ascii_lowercase();
-        let mut rendu = if SIGLES.contains(&bas.as_str()) {
-            coeur.to_string()
         } else {
-            ACCENTS
-                .iter()
-                .find(|(k, _)| *k == bas)
-                .map(|(_, v)| v.to_string())
-                .unwrap_or(bas)
-        };
-        if premier {
-            let mut cs = rendu.chars();
-            if let Some(c) = cs.next() {
-                rendu = c.to_uppercase().collect::<String>() + cs.as_str();
-            }
-            premier = false;
+            out.push_str(&casse_partie(coeur, &mut premier));
         }
-        out.push_str(&rendu);
         out.push_str(queue);
     }
     out
+}
+
+/// Casse d'un mot composé (`D'AFFICHAGE`, `SOUS-TITRES`) : les parties
+/// alphabétiques passent par `casse_partie`, les séparateurs sont recopiés.
+fn casse_mot(mot: &str, premier: &mut bool) -> String {
+    let mut out = String::with_capacity(mot.len());
+    let mut partie = String::new();
+    for c in mot.chars() {
+        if c.is_ascii_alphabetic() {
+            partie.push(c);
+            continue;
+        }
+        if !partie.is_empty() {
+            out.push_str(&casse_partie(&partie, premier));
+            partie.clear();
+        }
+        out.push(c);
+    }
+    if !partie.is_empty() {
+        out.push_str(&casse_partie(&partie, premier));
+    }
+    out
+}
+
+/// Une partie alphabétique d'un libellé : sigles et noms propres intacts,
+/// accents rétablis, et la **première** partie du libellé prend une majuscule.
+/// Une partie d'une seule lettre est une élision française (« d'affichage »),
+/// jamais un sigle.
+fn casse_partie(mot: &str, premier: &mut bool) -> String {
+    if mot.chars().count() < 2 {
+        return mot.to_ascii_lowercase();
+    }
+    let bas = mot.to_ascii_lowercase();
+    let mut rendu = if SIGLES.contains(&bas.as_str()) {
+        mot.to_string()
+    } else {
+        match ACCENTS.iter().find(|(k, _)| *k == bas.as_str()) {
+            Some((_, v)) => v.to_string(),
+            None => bas,
+        }
+    };
+    if *premier {
+        let mut cs = rendu.chars();
+        if let Some(c) = cs.next() {
+            rendu = c.to_uppercase().collect::<String>() + cs.as_str();
+        }
+        *premier = false;
+    }
+    rendu
 }
 
 /// Glyphes de manette embarqués (Xelu, CC0 — `assets/glyphes/README-Xelu-CC0.txt`).
@@ -9039,9 +9093,14 @@ mod tests {
             );
             assert!(!cat.nom().is_empty(), "{cat:?} sans libellé");
             assert!(
-                items.iter().all(|e| e.selectionnable()),
+                items
+                    .iter()
+                    .all(|e| e.selectionnable() || matches!(e, Entree::Titre(_))),
                 "{cat:?} : une ligne non sélectionnable"
             );
+            // un séparateur ne peut pas être en tête : la page s'ouvre sur
+            // une ligne réglable
+            assert!(!matches!(items.first(), Some(Entree::Titre(_))));
         }
         // une entrée de l'accueil n'apparaît qu'une fois : le retour depuis une
         // catégorie retrouve son libellé, et deux « FERMER » se contrediraient
@@ -9050,6 +9109,33 @@ mod tests {
         noms.sort();
         noms.dedup();
         assert_eq!(noms.len(), total, "ligne en double sur l'accueil");
+    }
+
+    /// Casse de phrase (thème MODERNE) : un mot composé ne reste plus en
+    /// capitales. « OPTIONS D'AFFICHAGE » sortait « Options d'AFFICHAGE » — le
+    /// mot n'était pas « entièrement alphabétique » à cause de l'apostrophe, et
+    /// le filtre le laissait tel quel (signalé le 25/11/2026).
+    #[test]
+    fn casse_de_phrase_des_mots_composes() {
+        assert_eq!(joli("OPTIONS D'AFFICHAGE"), "Options d'affichage");
+        assert_eq!(joli("OPTIONS DE CAPTURE"), "Options de capture");
+        // sigles, unités et glyphes de manette intacts
+        assert_eq!(joli("FPS MAX"), "FPS max");
+        assert_eq!(joli("MM:SS"), "MM:SS");
+        assert_eq!(joli("A: OUVRIR"), "A: Ouvrir");
+    }
+
+    /// La page CAPTURE sépare la vidéo des captures d'écran, et le replay
+    /// automatique est écrit en toutes lettres (demandé le 25/11/2026).
+    #[test]
+    fn capture_separe_video_et_image() {
+        let items = Cat::Capture.entrees(Dispo::default());
+        let pos = |e: Entree| items.iter().position(|x| *x == e).expect("ligne absente");
+        assert!(pos(Entree::Titre("VIDEO")) < pos(Entree::Qualite));
+        assert!(pos(Entree::AutoReplay) < pos(Entree::Titre("IMAGE")));
+        assert!(pos(Entree::Titre("IMAGE")) < pos(Entree::ShotFormat));
+        assert_eq!(Entree::AutoReplay.nom(), "REPLAY AUTOMATIQUE");
+        assert!(!Entree::Titre("IMAGE").selectionnable());
     }
 
     /// Présence conditionnelle sur l'accueil : bascule seulement avec une app
