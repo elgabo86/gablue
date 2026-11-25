@@ -2453,30 +2453,43 @@ def session_mode_available() -> bool:
     return Path(SESSION_MODE_HELPER).is_file()
 
 
-def session_mode_state() -> str:
-    """`console`, `bureau` ou `greeter` — la session que plasmalogin ouvrira.
+def session_mode_etat() -> dict:
+    """`session=` et `autologin=` de `gablue-session-mode etat`, sans privilège.
 
-    Lecture SEULE, sans privilège (`gablue-session-mode etat` sort une ligne
-    `session=…`). Chaîne vide = helper absent ou réponse incompréhensible : le
-    dialogue ne doit rien inventer.
+    `session` vaut `console`, `bureau` ou `greeter` ; `autologin` nomme le
+    compte qui démarrera **sans mot de passe** (chaîne vide = écran de
+    connexion). Dictionnaire vide = helper absent ou réponse incompréhensible :
+    le dialogue ne doit rien inventer.
     """
+    etat = {"session": "", "autologin": ""}
     if not session_mode_available():
-        return ""
+        return {}
     try:
         result = subprocess.run(
             [SESSION_MODE_HELPER, "etat"], capture_output=True, text=True,
             timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return ""
+        return {}
     if result.returncode != 0:
-        return ""
+        return {}
     for line in result.stdout.splitlines():
         key, _, value = line.partition("=")
-        value = value.strip()
-        if key.strip() == "session" and value in ("console", "bureau", "greeter"):
-            return value
-    return ""
+        key, value = key.strip(), value.strip()
+        if key == "session" and value in ("console", "bureau", "greeter"):
+            etat["session"] = value
+        elif key == "autologin":
+            etat["autologin"] = value
+    return etat
+
+
+def session_mode_state() -> str:
+    """`console`, `bureau` ou `greeter` — la session que plasmalogin ouvrira.
+
+    Lecture SEULE, sans privilège. Chaîne vide = helper absent ou réponse
+    incompréhensible : le dialogue ne doit rien inventer.
+    """
+    return session_mode_etat().get("session", "")
 
 
 def session_mode_command(mode: str) -> list[str]:

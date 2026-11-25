@@ -10,11 +10,21 @@ SESSION`), donc un seul mécanisme et un seul fichier :
 - « Mode jeu » autologin la session console (KWin nu + launcher + overlay
   manette), ce qui est exactement ce que fait `MODE JEU` depuis le canapé.
 
+Le fichier est **commun à tous les comptes** de la machine : chacun ne peut y
+mettre que SON nom (le helper le prend dans `PKEXEC_UID`, aucun argument ne
+permet de nommer quelqu'un d'autre), mais le dernier qui bascule prend
+l'autologin. Le dialogue affiche donc **pour qui** il est armé : c'est la seule
+chose qui empêche de croire qu'on règle « le mode » alors qu'on règle « qui
+démarre sans mot de passe » (25/11/2026).
+
 Le choix APPLIQUE TOUT DE SUITE : le helper redémarre plasmalogin, donc la
 session en cours est arrêtée. L'écran de connexion (ou la session choisie)
 revient une seconde plus tard et le réglage survit aux redémarrages suivants.
 Gablue Manager meurt avec la session, c'est annoncé avant d'appliquer.
 """
+
+import os
+import pwd
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -24,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import _which
 from ..local import (
-    session_mode_available, session_mode_command, session_mode_state,
+    session_mode_available, session_mode_command, session_mode_etat,
 )
 from ..tasks import LocalTaskDialog, start_task
 from ..uiutil import fit_dialog_height
@@ -77,6 +87,13 @@ class SessionModeDialog(QDialog):
         note.setObjectName("subtitle")
         note.setWordWrap(True)
         root.addWidget(note)
+
+        # qui démarre sans mot de passe — l'information qui manquait : le
+        # fichier est commun aux comptes, chacun n'y met que son nom
+        self.autologin_note = QLabel("", self)
+        self.autologin_note.setObjectName("hostStatus")
+        self.autologin_note.setWordWrap(True)
+        root.addWidget(self.autologin_note)
 
         card = QFrame(self)
         card.setObjectName("hostCard")
@@ -137,21 +154,49 @@ class SessionModeDialog(QDialog):
 
     # -- état ---------------------------------------------------------------
     def _reload(self) -> None:
-        self.initial = session_mode_state()
+        etat = session_mode_etat()
+        self.initial = etat.get("session", "")
+        self.autologin = etat.get("autologin", "")
         if self.initial in self.radios:
             self.radios[self.initial].setChecked(True)
+        self._update_autologin_note()
         if not self.disponible:
             self.hint.setText(
                 "Helper absent (image antérieure) : la session ne peut pas "
                 "être réglée ici."
             )
-        self.change_note.setText(
-            ""
-            if self.initial == "greeter"
-            else "Au prochain démarrage, aucune demande de mot de passe : la "
-            "session choisie s'ouvre directement."
-        )
+        moi = pwd.getpwuid(os.getuid()).pw_name
+        if self.initial == "greeter":
+            self.change_note.setText("")
+        else:
+            self.change_note.setText(
+                "Au prochain démarrage, aucune demande de mot de passe : la "
+                f"session choisie s'ouvre directement pour {moi} (ton compte "
+                "est écrit dans le fichier, il n'y a pas de choix d'un autre "
+                "compte depuis ici)."
+            )
         self._update_apply()
+
+    def _update_autologin_note(self) -> None:
+        """Dit à qui profite l'autologin, et à qui il profitera après coup."""
+        moi = pwd.getpwuid(os.getuid()).pw_name
+        if not self.disponible:
+            self.autologin_note.setText("")
+        elif not self.autologin:
+            self.autologin_note.setText(
+                "Démarrage automatique : personne — l'écran de connexion "
+                "s'affiche et chacun choisit son compte."
+            )
+        elif self.autologin == moi:
+            self.autologin_note.setText(
+                f"Démarrage automatique : toi ({moi}), sans mot de passe."
+            )
+        else:
+            self.autologin_note.setText(
+                f"Démarrage automatique : {self.autologin}, sans mot de "
+                f"passe — un autre compte que le tien. Appliquer écrira ton "
+                f"nom ({moi}) : c'est toi qui démarreras ensuite."
+            )
 
     def chosen(self) -> str:
         for cle, radio in self.radios.items():

@@ -105,8 +105,10 @@
 - **gablue-session-mode** : bascule de session demandée depuis le menu Home
   de `gpad` — `console` (session Gablue Gaming), `bureau` (Plasma), `greeter`
   (aucune session : écran de connexion), `status` (autologin en place, sans
-  privilège), `etat` (`session=console|bureau|greeter`, sortie stable lue par
-  le dialogue « Session graphique » de Gablue Manager, sans privilège). Root via pkexec, autorisé sans mot de passe par
+  privilège), `etat` (`session=console|bureau|greeter` **puis**
+  `autologin=<compte|vide>`, sortie stable lue par le dialogue « Session
+  graphique » de Gablue Manager, sans privilège — le nom affiché est celui qui
+  démarrera sans mot de passe, le fichier étant commun aux comptes). Root via pkexec, autorisé sans mot de passe par
   `60-gablue-session-mode.rules` (groupe wheel, session locale, programme
   exact). Le fichier lu est `/etc/plasmalogin.conf.d/zz-gablue-session.conf` ;
   **aucun autre autologin ne doit exister** — `plasma-setup.service` (assistant

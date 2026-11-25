@@ -6,9 +6,9 @@
 #   gablue-session-mode bureau    session Plasma
 #   gablue-session-mode greeter   aucune session : écran de connexion
 #   gablue-session-mode status    autologin en place, sans privilège
-#   gablue-session-mode etat      `session=console|bureau|greeter`, lisible
-#                                 par un programme (Gablue Manager), sans
-#                                 privilège
+#   gablue-session-mode etat      `session=console|bureau|greeter` puis
+#                                 `autologin=<compte|vide>`, lisible par un
+#                                 programme (Gablue Manager), sans privilège
 #
 # Lancé en root par pkexec (menu Home de gpad) : la règle polkit livrée avec
 # l'image autorise le groupe wheel sans mot de passe, donc aucun dialogue en
@@ -75,14 +75,20 @@ RUNTIME=/run/user/$UID_NUM
 if [ "$mode" = etat ]; then
     # Sortie STABLE pour Gablue Manager : une ligne, une clé. `status` reste
     # lisible par un humain (contenu du fichier) et n'est pas parsé ailleurs.
+    # `autologin=` nomme le compte qui démarrera SANS mot de passe (vide =
+    # écran de connexion) : le dialogue l'affiche, parce que le fichier est
+    # commun à TOUS les comptes de la machine — chacun n'y met que son propre
+    # nom, mais le dernier qui bascule prend l'autologin (25/11/2026).
     if [ ! -f "$CONF" ]; then
         echo "session=greeter"
+        echo "autologin="
     else
         case "$(sed -n 's/^[[:space:]]*Session=//p' "$CONF" | head -1)" in
         "$SESSION_CONSOLE") echo "session=console" ;;
         "$SESSION_BUREAU") echo "session=bureau" ;;
         *) echo "session=greeter" ;;
         esac
+        echo "autologin=$(sed -n 's/^[[:space:]]*User=//p' "$CONF" | head -1)"
     fi
     exit 0
 fi
