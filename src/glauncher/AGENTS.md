@@ -240,13 +240,18 @@ manette n'était libre.
 Section **séparée** (menus des vues → « Galerie… », triangle/T), plein écran
 en session console. Deux dossiers lus dans `recorder.conf` : `screenshot_*.png`
 (captures) et `Video_*.mp4` / `Replay_*.mp4` (enregistrements, replays), triés
-du plus récent au plus ancien. Un seul flux, chaque tuile affiche **deux
-lignes** : le nom du jeu quand la capture le connaît (métadonnée), puis
-`genre · date · poids` ; sans nom de jeu, `genre · poids` puis la date
-**locale au propre** (« 22 nov. 2026 · 22:31 ») — **jamais le nom du fichier**
-(`Video_20261120_101500.mp4` ne dit rien à personne). Le fond garde la
-**poussière d'étoiles** du launcher (`sparkles`), posée au-dessus de la
-grille : un fond noir opaque l'aurait effacée.
+du plus récent au plus ancien. Un seul flux (captures **et** vidéos mêlées,
+le filtre est une option), chaque tuile affiche **deux lignes** : le nom du jeu
+quand la capture le connaît (métadonnée), puis `date · poids` ; sans nom de jeu,
+`genre · poids` puis la date **locale au propre** (« 22 nov. 2026 · 22:31 ») —
+**jamais le nom du fichier** (`Video_20261120_101500.mp4` ne dit rien à
+personne). Le genre n'est plus une ligne de texte : une **mini-icône** est
+posée sur le coin bas droit de la miniature (triangle de lecture pour une vidéo,
+cadre photo pour une capture, dessinée au `canvas` par `genre_icon`) — les deux
+natures vivent dans la même grille et se distinguent d'un coup d'œil. Le fond
+garde la **poussière d'étoiles** du launcher (`sparkles`), posée au-dessus de
+la grille, sur la teinte `BG` de la liste (pas du noir pur : deux écrans du
+même launcher).
 
 - **Vue par jeu** : le bouton **`Galerie`** de la page d'un jeu (touche `G`)
   n'ouvre que **ses** captures et vidéos (`Galerie.jeu`, `GalleryOpen(Some(nom))` ;
@@ -306,17 +311,28 @@ grille : un fond noir opaque l'aurait effacée.
   vidéos lancerait autant de `ffmpeg`. Rien n'anime la grille : pas de
   respiration, cadre de sélection fixe.
 - **Géométrie** : `galerie_geometrie(largeur)` (pure, testée) choisit le
-  nombre de colonnes pour une tuile visée de ~300 px (2 à 10) et **étale les
-  tuiles sur toute la largeur**. Avant, 6 colonnes de 240 px figées : sur un
-  écran 2K la galerie s'arrêtait « à la zone 1080 », ~1500 px au milieu de
-  2560 (constaté le 22/11). À 1080p : 6 colonnes ; à 2K : 8.
+  nombre de colonnes pour une case visée de ~260 px (2 à 10), la **même** que
+  la grille de jeux, et **étale les cases sur toute la largeur** via
+  `grid_metrics` (une seule formule pour les deux grilles). Avant, 6 colonnes
+  de 240 px figées : sur un écran 2K la galerie s'arrêtait « à la zone 1080 »,
+  ~1500 px au milieu de 2560 (constaté le 22/11). À 1080p : 6 colonnes ; à 2K :
+  8. Le visuel garde le 16:9 des captures et des vidéos, plus étroit que sa
+  case (`CARD_INSET` puis `PADDING`), comme les covers de la grille.
   **Rangées** : `lignes_vues` se calcule sur la hauteur réellement libre
-  (`hauteur - GALERIE_CHROME`, 173 px mesurés : padding 2×20, titre,
-  sous-titre, compteur, aide et leurs interlignes), pas sur une constante
-  pessimiste. `pas` = `tuile_h + 77` (vignette + interligne + légende + marge
-  + 10 px entre rangées) : le `+86` d'avant, avec un chrome de 290, ne
+  (`hauteur - GALERIE_CHROME`, 178 px : padding 2×18 de la page, titre,
+  sous-titre, compteur, aide et leurs interlignes ; un ressort pousse le
+  compteur et l'aide tout en bas), pas sur une constante pessimiste. `pas` =
+  carte (visuel + 2 × `PADDING` + légende `GALERIE_CAPTION`) +
+  2 × `CARD_INSET` + `GAP` : le `+86` d'avant, avec un chrome de 290, ne
   laissait que **4 rangées en 2K alors que la 5ᵉ tenait** (constaté le 23/11).
-  Résultat : 5 rangées à 2560×1440, 3 à 1080p.
+- **Même boîte que la grille de jeux** (demandé le 25/11) : chaque tuile est
+  une carte `card_style` — coins `CARD_RADIUS`, ombre portée, fond teinté et
+  cadre d'accent `FOCUS_BORDER` quand elle est sélectionnée, liseré rouge quand
+  elle est armée (corbeille) — et le visuel porte `ART_RADIUS`. Interligne
+  `GAP` (20 px) entre colonnes et rangées. Pas de respiration : la grille de
+  la galerie reste fixe (seule la grille de jeux respire). L'aide de commande
+  est un **pied de page** centré en bas de l'écran, comme celle de la liste ;
+  le compteur « N/M · vignettes prêtes » est à gauche au-dessus.
 - **Ouverture** : `Croix` sur une capture → aperçu plein écran dans le launcher
   (image **pleine**, pas la vignette) : l'image est là **tout de suite**, seule
   une entrée de 0,16 s (opacité 0,70 → 1 et échelle 1,03 → 1) l'accompagne,
