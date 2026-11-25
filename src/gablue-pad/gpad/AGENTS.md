@@ -410,11 +410,22 @@ quadratique explosait et un seul événement produisait un déplacement de 2 Gpx
 
 ## Mode souris
 
-`MODE SOURIS` lance/arrête `gpad-mouse` **sans toucher au panneau** : il ne
-grabbe pas, il lit le node en partage. Tant que le panneau est ouvert, notre
-`EVIOCGRAB` le rend muet ; il reprend à la fermeture. La ligne affiche `ACTIF`
-(vert) ou `ARRET`, relue une fois par seconde en scannant `/proc/<pid>/comm`
-(aucun fork).
+`MODE SOURIS` lance/arrête `gpad-mouse` **sans toucher au panneau** : le
+panneau reste ouvert, c'est l'utilisateur qui le ferme (choix confirmé le
+25/11/2026). Le binaire **grabbe le node evdev** dès qu'il peut — le premier
+essai échoue tant que l'overlay tient le grab du panneau, il est donc
+**retenté toutes les 0,5 s** ; sans ça il restait sans grab après la fermeture
+et le jeu continuait de recevoir la manette. Tant que le panneau est ouvert,
+c'est notre grab qui parle et `gpad-mouse` reste muet.
+
+**Home, en mode souris** : le grab du pointeur rend le déclencheur sourd à
+Home — le menu était donc perdu jusqu'à un `kill`. `gpad-mouse` reçoit
+`--ipc <socket du résident>` (de l'overlay quand il le lance, du déclencheur
+sinon) : au **premier Home**, s'il tient le grab, il rend la manette puis
+demande `open <node>` au résident, et le panneau revient. Si c'est l'overlay
+qui tient le grab, il ne fait rien — Home appartient alors au panneau, qui se
+ferme normalement. La ligne affiche `ACTIF` (vert) ou `ARRET`, relue une fois
+par seconde en scannant `/proc/<pid>/comm` (aucun fork).
 
 Mesuré : `SELECT MODE SOURIS` → `MOUSE START gpad-mouse`,
 `gpad-mouse` = 1 processus, **aucun `GPAD_DOWN`** (le panneau reste) ; un
@@ -960,6 +971,16 @@ banc qui ne voyait rien. Donc : entrée transparente + glissement réservées à
 `app.console` ; au **bureau**, la première image est opaque et en place
 (`off = 0`), puis plus aucun état transparent n'est envoyé — l'ouverture est
 franche, comme un panneau Plasma.
+
+**Fermeture au bureau : la surface est DÉTRUITE, jamais seulement démontée**
+(25/11/2026) : `attach(None)` + commit laissait KWin la surface vivante mais
+**jamais remappée** — au Home suivant le binaire dessinait et commitait
+normalement (vérifié au journal : tampon attaché, `off = 0`, 480×1080) et rien
+n'apparaissait, puis la passe d'inactivité refermait le panneau. `cacher`
+détruit donc la surface layer-shell et la surface wl, et `ouvrir` en recrée une
+(`sorties[ecran]`) ; le configure refait les tampons dans la foulée. Mesuré :
+trois ouvertures/fermetures d'affilée, panneau visible à chaque fois (capture
+KWin). Le coût est un aller-retour de configure, invisible à l'œil.
 
 **Calibrage** (enregistrement 60 fps + moyenne d'un patch sur la pastille de la
 première ligne) : à 160 ms, la montée ne durait que **~100 ms** à l'écran (5

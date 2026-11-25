@@ -792,7 +792,13 @@ static void do_mouse(void)
         return;
     }
     char cmd[1400];
+    if (!ipc_path[0])
+        ipc_path_init();
     int len = snprintf(cmd, sizeof cmd, "setsid '%s'", g_mouse);
+    /* socket du résident : gpad-mouse y demande le panneau quand on quitte au
+     * Home (le mode souris grabbe la manette, nous ne voyons plus Home) */
+    if (len > 0 && len < (int)sizeof cmd - 90)
+        len += snprintf(cmd + len, sizeof cmd - (size_t)len, " --ipc '%s'", ipc_path);
     if (len < 0 || len >= (int)sizeof cmd - 2)
         len = (int)strlen(cmd);
     if (gate_sock[0]) {

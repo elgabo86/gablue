@@ -59,6 +59,11 @@
 // =============================================================================
 
 static volatile sig_atomic_t running = 1;
+
+/* Socket IPC du resident (`--ipc`) : sert a lui demander d'ouvrir le panneau
+ * quand on quitte. Vide = lance sans resident (banc, ou declencheur sans
+ * panneau) : on sort alors simplement, le prochain Home ouvrira le menu. */
+static char ipc_socket[300] = "";
 static void on_signal(int sig) { (void)sig; running = 0; }
 
 // Nodes js/hidraw des manettes (donnes par le declencheur : `padnodes.sh`).
@@ -383,6 +388,28 @@ static struct button_map buttons[] = {
 // BOUCLE PRINCIPALE
 // =============================================================================
 
+/* Demande au resident d'ouvrir le panneau. A appeler APRES avoir relache le
+ * grab : la requete part en un datagramme sur son socket, elle ne touche pas
+ * la manette. */
+static void demander_panneau(const char *node)
+{
+    if (!ipc_socket[0] || !node || !*node)
+        return;
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return;
+    struct sockaddr_un addr = {0};
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, sizeof addr.sun_path, "%s", ipc_socket);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) == 0) {
+        char msg[512];
+        int len = snprintf(msg, sizeof msg, "open %s\n", node);
+        if (len > 0)
+            (void)!write(fd, msg, (size_t)len);
+    }
+    close(fd);
+}
+
 int main(int argc, char **argv)
 {
     // Reaper automatique des enfants (ffplay)
@@ -402,6 +429,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--gate") == 0 && i + 1 < argc) {
             gate_socket = argv[++i];
+        } else if (strcmp(argv[i], "--ipc") == 0 && i + 1 < argc) {
+            snprintf(ipc_socket, sizeof ipc_socket, "%s", argv[++i]);
         } else if (strcmp(argv[i], "--gate-target") == 0 && i + 1 < argc &&
                    n_gate_targets < (int)(sizeof(gate_targets) / sizeof(gate_targets[0]))) {
             gate_targets[n_gate_targets++] = argv[++i];
@@ -418,9 +447,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // evdev nous seul : les jeux (SDL/wine) ne voient plus stick ni boutons
-    if (ioctl(ctrl, EVIOCGRAB, 1) < 0)
-        fprintf(stderr, "[WARN] grab refusé (%s) : le jeu verra encore evdev\n",
+    // evdev nous seul : les jeux (SDL/wine) ne voient plus stick ni boutons.
+    // Le grab est RETENTÉ dans la boucle : lancé depuis le panneau, il est
+    // tenu par l'overlay et le premier essai échoue — sans le retenter, le
+    // mode souris restait sans grab après la fermeture du panneau (le jeu
+    // continuait de recevoir la manette).
+    int grabe = 0;
+    if (ioctl(ctrl, EVIOCGRAB, 1) == 0)
+        grabe = 1;
+    else
+        fprintf(stderr, "[WARN] grab refusé (%s) : nouvel essai dans la boucle\n",
                 strerror(errno));
 
     // js/hidraw : le trou que le grab ne ferme pas, coupe par le gate BPF
@@ -459,6 +495,8 @@ int main(int argc, char **argv)
     int hat_x = 0, hat_y = 0;
     int last_hat_up = 0, last_hat_down = 0, last_hat_left = 0, last_hat_right = 0;
     int mode_state = 0, r3_state = 0;
+    int demande_panneau = 0;
+    double dernier_grab = 0.0;
 
     // Accumulateur de mouvement sub-pixel (reprise de mouse.py)
     double carry_x = 0.0, carry_y = 0.0;
@@ -497,6 +535,17 @@ int main(int argc, char **argv)
             } else if (ev.type == EV_KEY) {
                 if (ev.code == BTN_MODE) {
                     mode_state = ev.value;
+                    // Home seul : on rend la manette et on redemande le
+                    // panneau. Sans ca, le grab du mode souris rendait le
+                    // declencheur sourd a Home et le menu ne revenait plus
+                    // (signale le 25/11/2026).
+                    // Seulement si NOUS tenons la manette : panneau ouvert,
+                    // c'est l'overlay qui a le grab et Home lui appartient
+                    // (sinon Home fermerait le panneau ET le rouvrirait).
+                    if (ev.value == 1 && grabe) {
+                        demande_panneau = 1;
+                        running = 0;
+                    }
                 } else if (ev.code == BTN_THUMBR) {
                     r3_state = ev.value;
                 } else {
@@ -511,6 +560,14 @@ int main(int argc, char **argv)
         }
 
         double current_time = now_seconds();
+        // grab différé : le panneau le rend en se fermant (~0,5 s de latence)
+        if (!grabe && current_time - dernier_grab > 0.5) {
+            dernier_grab = current_time;
+            if (ioctl(ctrl, EVIOCGRAB, 1) == 0) {
+                grabe = 1;
+                fprintf(stderr, "[INFO] manette grabbe (panneau fermé).\n");
+            }
+        }
         double dt = current_time - last_time;
         last_time = current_time;
         if (dt > 0.1)
@@ -606,5 +663,9 @@ int main(int argc, char **argv)
     close(ctrl);
     ioctl(ufd, UI_DEV_DESTROY);
     close(ufd);
+    if (demande_panneau && running == 0) {
+        fprintf(stderr, "[INFO] Home : panneau redemande au resident.\n");
+        demander_panneau(device_path);
+    }
     return 0;
 }

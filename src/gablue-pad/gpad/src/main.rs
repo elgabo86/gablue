@@ -4658,6 +4658,13 @@ impl App {
         // double écran : la surface doit être sur l'écran au focus AVANT de
         // glisser (layer-shell l'y fige à la création)
         self.sur_ecran_actif();
+        // bureau : la surface a été détruite à la fermeture, on en recrée une
+        // (voir `cacher`). Le configure arrive ensuite et les tampons sont
+        // refaits ; `dirty` plus bas déclenche la première image.
+        if self.wl_surface.is_none() {
+            let sortie = self.sorties.get(&self.ecran).cloned();
+            self.creer_surface(sortie.as_ref());
+        }
         if !node.is_empty() {
             self.detecter_manette(node);
             self.grab_pad(node);
@@ -4740,18 +4747,23 @@ impl App {
         self.fondu = None;
         self.opacite = 0.0;
         self.off = self.panel_w;
-        // Bureau : on RETIRE la surface (attach NULL) au lieu d'envoyer une
-        // image transparente. Plasma ne libère pas les tampons d'une surface
+        // Bureau : la surface est DÉTRUITE (pas seulement démontée par
+        // `attach(None)`). Plasma ne libère pas les tampons d'une surface
         // layer-shell qu'il juge invisible (`wl_buffer::Release` espacé de
-        // plusieurs secondes, mesuré le 25/11/2026) : la réouverture attendait
-        // donc un tampon libre pendant des minutes, panneau invisible. Retirer
-        // la surface la démonte proprement ; `ouvrir` la remonte opaque et en
-        // place. En console, KWin libère normalement : rien à changer.
+        // plusieurs secondes, mesuré le 25/11/2026) ; et une surface seulement
+        // démontée n'était jamais remappée au Home suivant — dessin et commit
+        // bien faits (vérifié au journal), rien à l'écran. `ouvrir` en recrée
+        // une neuve, opaque et en place ; le coût est un aller-retour de
+        // configure, invisible à l'œil. En console, KWin libère normalement :
+        // rien à changer.
         if !self.console {
-            if let Some(s) = &self.wl_surface {
-                s.attach(None, 0, 0);
-                s.commit();
+            if let Some(l) = self.layer.take() {
+                l.destroy();
             }
+            if let Some(s) = self.wl_surface.take() {
+                s.destroy();
+            }
+            self.configured = false;
         }
         self.arme = None;
         self.home_down = false;
