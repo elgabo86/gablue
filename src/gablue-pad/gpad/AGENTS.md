@@ -356,10 +356,32 @@ overlay orphelin).
 - **Table dérivée du keymap XKB** de la session (`xkbcommon`, `kxkbrc`, puis
   `GPAD_CLAVIER_LAYOUT`/`GPAD_CLAVIER_VARIANT` pour le banc) : 4 niveaux
   affichés, accents morts marqués, `code evdev = keycode XKB − 8`. Aucune table
-  en dur, donc ch-DE marche sans code.
+  en dur, donc ch-DE marche sans code. Seule exception : la **couche NAV**
+  (Échap n'y est pas, il est sur la rangée spéciale ; Suppr, Inser, Début, Fin,
+  Page préc./suiv., flèches et F1-F12) est une table statique — ce sont des
+  touches de navigation, pas des caractères, aucun keymap ne les fournit.
+- **Couche NAV** (case `NAV` + pastille d'en-tête, comme le `?123` d'un
+  téléphone) : elle remplace les 4 rangées de lettres et **garde la rangée
+  spéciale**, donc NAV et ÉCHAP restent atteignables depuis les deux pages (un
+  panneau sans NAV ne reviendrait jamais aux lettres). Même nombre de rangées
+  que la page des lettres : la hauteur ne bouge pas. Libellés en mots
+  (`GAUCHE`, `PGPREC`) et pas en symboles : Noto Sans n'est pas garanti de
+  porter les flèches. `Etat::basculer_nav` **borne le curseur** sur la nouvelle
+  page — sans ça il désignerait une case inexistante, dessinée nulle part, et
+  Croix taperait hors table (test `bascule_nav_borne_le_curseur`).
+- **Échap existe** (rangée spéciale, `Genre::Echap`) : Rond **ferme le
+  clavier**, il n'annule pas une boîte de dialogue — l'ancienne justification
+  (« Rond ferme, le clavier n'en a pas besoin ») confondait les deux. La
+  rangée spéciale porte aussi **ALT collante** (Alt+Tab avec START, Alt+flèche
+  = historique) ; `TAB` et `ENTREE` en ont été retirés (doublons exacts de
+  START et R2) pour lui faire de la place, et l'ESPACE est passé de 150 à
+  132 px : le panneau reste **707×367**.
 - **Tampon = panneau** (707×367) : on repeint entièrement à chaque image
-  (~0,3 ms), et un déplacement ne redessine **rien** (seules les marges
-  changent, le tampon n'est pas renvoyé).
+  (~0,3 ms, 0,2 ms sur la couche NAV), et un déplacement ne redessine **rien**
+  (seules les marges changent, le tampon n'est pas renvoyé).
+  `--bench-clavier --dump-clavier <préfixe>` écrit les deux pages en PPM pour
+  l'inspection visuelle (le tampon est opaque : le dump ne dépend d'aucun
+  compositeur).
 - **Retour visuel de frappe** (`Etat::presse`, `PRESSE_DUREE` 120 ms) : la
   touche frappée s'allume en **aplat d'accent + liseré clair** et s'éteint
   seule. Il en fallait un : Croix tape la touche **sélectionnée**, donc la
@@ -380,7 +402,7 @@ overlay orphelin).
 | Geste | Effet |
 |---|---|
 | D-pad / stick gauche | curseur entre les touches (400 ms puis 110 ms) |
-| Stick droit | déplacer le clavier (courbe `gpad-mouse` : zone morte 0,08, 2→12 px/frame) |
+| Stick droit | déplacer le clavier (courbe `gpad-mouse`, zone morte 0,08, mais **2 → 26 px/frame** : 12 était trop lent pour traverser un 2560 px, demande du 26/11/2026) |
 | Croix | taper la touche (400 ms puis 80 ms) |
 | Carré | retour arrière (répétition) |
 | Triangle | espace (répétition) |
@@ -390,6 +412,13 @@ overlay orphelin).
 | R2 | Entrée |
 | L3 | Maj collante ; R3 | Ctrl collant ; SELECT | AltGr collante |
 | START | Tab |
+| **NAV** (case) | bascule la couche de navigation : Suppr, Inser, Début, Fin, Page préc./suiv., flèches, F1-F12 |
+| **ÉCHAP** (case) | envoie Échap à la fenêtre active (Rond ne ferme que le clavier) |
+| **ALT** (case) | Alt collante → Alt+Tab avec START, Alt+flèche = historique |
+
+Sur la couche NAV, Croix tape la touche de navigation (répétition 80 ms : une
+flèche tenue avance dans le texte) et les modificateurs collants s'appliquent
+(`Ctrl`+flèche = mot par mot, L2+flèche = sélection).
 
 Disposition calquée sur les OSK console (Steam Deck : `X` = backspace, `Y` =
 espace, `L2` = Maj, `R2` = Entrée ; PS5 : croix tape, carré efface, triangle
@@ -398,6 +427,14 @@ ne demande de tenir un petit bouton : la sélection est **index gauche (L2) +
 index droit (L1/R1)**, les pouces restent sur le D-pad et les boutons. Un chord
 « Select tenu + D-pad » a été écarté : Select est sous le pouce déjà posé sur
 le D-pad.
+
+Les touches qu'un OSK console ne montre pas (Échap, Suppr, flèches verticales,
+Début/Fin, F1-F12) sont sur la **couche NAV** plutôt que dans une cinquième
+rangée ou un chord : une case se voit, un chord se devine. Deux touches de la
+rangée spéciale ont été sacrifiées pour ça (`TAB`, `ENTREE`, doublons exacts de
+START et R2) et l'ESPACE a maigri de 18 px, ce qui laisse le panneau à
+**707×367** — la taille du tampon ne change pas, donc ni la position mémorisée
+ni l'allocation des tampons ne bougent.
 
 Mesuré (banc vpad, `--clavier` sur la manette virtuelle) : `KBD OPEN` →
 `KBD ch/fr ecran=2560x1440 pos=(926,993)` → deux pas + Croix tapent `a` puis

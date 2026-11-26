@@ -14,6 +14,12 @@
 //! carré efface, triangle espace, rond ferme, L1/R1 = curseur de texte,
 //! L2 = Maj maintenue (donc L2+L1/R1 = sélection, deux index, pouces libres),
 //! R2 = Entrée, L3 = Maj collante, SELECT = AltGr, R3 = Ctrl, START = Tab.
+//!
+//! Une **couche NAV** (case `NAV`, comme le `?123` des claviers de téléphone)
+//! échange les rangées de lettres contre Échap, Suppr, Inser, Début, Fin,
+//! Page préc./suiv., flèches et F1-F12 : sans elle le clavier ne pouvait ni
+//! annuler une boîte de dialogue ni déplacer le curseur verticalement dans un
+//! champ de saisie (constaté le 26/11/2026).
 
 use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
@@ -44,12 +50,14 @@ const SEL: u32 = argb_p(0xf2, 0xf2, 0xf6, 0xfa);
 const SEL_TXT: u32 = argb(0xff, 0x0c, 0x11, 0x17);
 const SEL_DIM: u32 = argb(0xff, 0x46, 0x55, 0x63);
 
-/// Déplacement au stick droit : mêmes constantes que `gpad-mouse` (zone morte
-/// 0,08, 2 → 12 px par frame à 60 Hz), pour que le clavier glisse exactement
-/// comme le pointeur.
+/// Déplacement au stick droit. Mêmes constantes de **courbe** que
+/// `gpad-mouse` (zone morte 0,08), mais une vitesse maximale plus élevée
+/// **volontairement** : le panneau fait ~800 px de large et 2→12 px/frame
+/// demandait plusieurs secondes pour traverser un écran 2560 px de large
+/// (« pas assez rapide », demande du 26/11/2026).
 const ZONE_MORTE: f64 = 0.08;
 const VITESSE_MIN: f64 = 2.0;
-const VITESSE_MAX: f64 = 12.0;
+const VITESSE_MAX: f64 = 26.0;
 const REPETE_DELAI: Duration = Duration::from_millis(400);
 const REPETE_PERIODE: Duration = Duration::from_millis(80);
 const REPETE_NAV: Duration = Duration::from_millis(110);
@@ -63,9 +71,11 @@ const PRESSE_DUREE: Duration = Duration::from_millis(120);
 
 pub const CTRL: u16 = 29;
 pub const SHIFT: u16 = 42;
+pub const ALT: u16 = 56;
 pub const ALTGR: u16 = 100;
 pub const LEFT: u16 = 105;
 pub const RIGHT: u16 = 106;
+pub const ESC: u16 = 1;
 pub const BACKSPACE: u16 = 14;
 pub const ENTER: u16 = 28;
 pub const SPACE: u16 = 57;
@@ -243,10 +253,13 @@ impl Injection {
         self.combo(code, &[]);
     }
 
-    pub fn touche_couches(&self, code: u16, maj: bool, altgr: bool, ctrl: bool) {
+    pub fn touche_couches(&self, code: u16, maj: bool, altgr: bool, ctrl: bool, alt: bool) {
         let mut mods = Vec::new();
         if ctrl {
             mods.push(CTRL);
+        }
+        if alt {
+            mods.push(ALT);
         }
         if maj {
             mods.push(SHIFT);
@@ -358,6 +371,39 @@ const RANGEES_EVDEV: [&[u16]; 4] = [
     &[44, 45, 46, 47, 48, 49, 50, 51, 52, 53],
 ];
 
+/// Couche NAV : les touches qui n'ont pas leur place sur la page des lettres
+/// (Échap reste sur la rangée spéciale, jamais à deux touches de distance).
+/// Les libellés sont des mots, pas des symboles : Noto Sans n'est pas garanti
+/// de porter les flèches, et « GAUCHE » se lit sans convention.
+/// Quatre rangées, comme la page des lettres : le panneau garde sa hauteur.
+const NAV_RANGEES: [&[(u16, &str, i32)]; 4] = [
+    &[
+        (111, "SUPPR", 70),
+        (110, "INSER", 70),
+        (102, "DEBUT", 70),
+        (107, "FIN", 70),
+        (104, "PGPREC", 70),
+        (109, "PGSUIV", 70),
+    ],
+    &[(105, "GAUCHE", 96), (103, "HAUT", 96), (108, "BAS", 96), (106, "DROITE", 96)],
+    &[
+        (59, "F1", 108),
+        (60, "F2", 108),
+        (61, "F3", 108),
+        (62, "F4", 108),
+        (63, "F5", 108),
+        (64, "F6", 108),
+    ],
+    &[
+        (65, "F7", 108),
+        (66, "F8", 108),
+        (67, "F9", 108),
+        (68, "F10", 108),
+        (87, "F11", 108),
+        (88, "F12", 108),
+    ],
+];
+
 /// Disposition de la session : surcharge d'environnement (banc), sinon
 /// `kxkbrc` (KDE), sinon le défaut suisse de l'image.
 pub fn layout_session() -> (String, String) {
@@ -427,15 +473,22 @@ pub fn charger(layout: &str, variant: &str) -> Result<Vec<Vec<Touche>>, String> 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Genre {
     Physique(u16),
+    /// Touche de la couche NAV (Échap, Suppr, flèches, F1-F12…) : code evdev
+    /// tel quel, libellé dans `s[0]` (aucun niveau XKB).
+    Cle(u16),
     Maj,
     Altgr,
     Ctrl,
+    Alt,
+    Nav,
     Espace,
     Retour,
     Tab,
     Entree,
+    Echap,
 }
 
+#[derive(Clone)]
 pub struct Case {
     pub genre: Genre,
     pub w: i32,
@@ -469,11 +522,16 @@ impl Repete {
 
 pub struct Etat {
     pub rangees: Vec<Vec<Case>>,
+    /// Couche NAV (rangées de navigation + la même rangée spéciale).
+    nav: Vec<Vec<Case>>,
+    pub nav_actif: bool,
     pub r: usize,
     pub c: usize,
     pub maj: bool,
     pub altgr: bool,
     pub ctrl: bool,
+    /// Alt collante : Alt+Tab (avec START), Alt+flèche (historique).
+    pub alt: bool,
     /// Maj maintenue (L2) : n'affecte que l'affichage, la touche est déjà
     /// enfoncée dans le clavier virtuel.
     pub maj_tenue: bool,
@@ -506,29 +564,61 @@ impl Etat {
                     .collect()
             })
             .collect();
-        // ÉCHAP n'est pas ici : Rond ferme, le clavier n'en a pas besoin.
+        // La rangée spéciale ne contient plus TAB ni ENTREE : les deux sont
+        // déjà sur les boutons (START = Tab, R2 = Entrée) et étaient donc en
+        // double. La place libérée porte NAV (couche de navigation) et ÉCHAP.
+        // Rond ferme le clavier, il n'annule pas une boîte de dialogue : Échap
+        // devait exister pour de vrai (constaté le 26/11/2026).
         let speciales: &[(Genre, i32)] = &[
             (Genre::Maj, 70),
             (Genre::Altgr, 70),
             (Genre::Ctrl, 70),
-            (Genre::Espace, 150),
+            (Genre::Alt, 70),
+            (Genre::Espace, 132),
             (Genre::Retour, 92),
-            (Genre::Tab, 70),
-            (Genre::Entree, 94),
+            (Genre::Nav, 70),
+            (Genre::Echap, 70),
         ];
-        r.push(
-            speciales
-                .iter()
-                .map(|(g, w)| Case {
-                    genre: *g,
-                    w: *w,
-                    s: Default::default(),
-                })
-                .collect(),
-        );
+        let speciales: Vec<Case> = speciales
+            .iter()
+            .map(|(g, w)| Case {
+                genre: *g,
+                w: *w,
+                s: Default::default(),
+            })
+            .collect();
+        r.push(speciales.clone());
 
+        // Couche NAV : ses rangées puis la même rangée spéciale (sans NAV ni
+        // Échap on ne pourrait pas revenir aux lettres).
+        let nav: Vec<Vec<Case>> = NAV_RANGEES
+            .iter()
+            .map(|rangee| {
+                rangee
+                    .iter()
+                    .map(|(code, nom, w)| Case {
+                        genre: Genre::Cle(*code),
+                        w: *w,
+                        s: [
+                            Some(Sym {
+                                txt: (*nom).to_string(),
+                                morte: false,
+                            }),
+                            None,
+                            None,
+                            None,
+                        ],
+                    })
+                    .collect()
+            })
+            .chain(std::iter::once(speciales))
+            .collect();
+
+        // largeur : le max des DEUX pages (les rangées NAV sont plus courtes,
+        // la largeur ne bouge pas)
         let besoin = r
             .iter()
+            .chain(nav.iter())
             .map(|rangee| rangee.iter().map(|c| c.w).sum::<i32>() + GAP * (rangee.len() as i32 - 1))
             .max()
             .unwrap_or(0);
@@ -541,11 +631,14 @@ impl Etat {
         };
         let mut etat = Self {
             rangees: r,
+            nav,
+            nav_actif: false,
             r: 0,
             c: 0,
             maj: false,
             altgr: false,
             ctrl: false,
+            alt: false,
             maj_tenue: false,
             presse: None,
             pied_presse: None,
@@ -570,8 +663,31 @@ impl Etat {
         self.borner(ecran);
     }
 
+    /// Rangées affichées : lettres ou couche NAV.
+    fn page(&self) -> &Vec<Vec<Case>> {
+        if self.nav_actif {
+            &self.nav
+        } else {
+            &self.rangees
+        }
+    }
+
+    /// Bascule lettres ⇄ NAV et borne le curseur sur la nouvelle page (sinon
+    /// il pointerait une case inexistante, dessinée nulle part).
+    fn basculer_nav(&mut self) {
+        self.nav_actif = !self.nav_actif;
+        let (nr, nc) = {
+            let page = self.page();
+            let r = self.r.min(page.len() - 1);
+            (r, page[r].len())
+        };
+        self.r = nr;
+        self.c = self.c.min(nc - 1);
+    }
+
     fn case_courante(&self) -> &Case {
-        &self.rangees[self.r][self.c]
+        let page = self.page();
+        &page[self.r][self.c]
     }
 
     /// Allume la touche frappée. Sans elle on ne voyait rien : la touche tapée
@@ -604,15 +720,16 @@ impl Etat {
     }
 
     fn naviguer(&mut self, dx: i32, dy: i32) {
+        let n_r = self.page().len();
         if dy != 0 {
             let r = self.r as i32 + dy;
-            if r >= 0 && (r as usize) < self.rangees.len() {
+            if r >= 0 && (r as usize) < n_r {
                 self.r = r as usize;
-                self.c = self.c.min(self.rangees[self.r].len() - 1);
+                self.c = self.c.min(self.page()[self.r].len() - 1);
             }
         }
         if dx != 0 {
-            let n = self.rangees[self.r].len() as i32;
+            let n = self.page()[self.r].len() as i32;
             self.c = (self.c as i32 + dx).clamp(0, n - 1) as usize;
         }
     }
@@ -640,6 +757,8 @@ impl Etat {
         cv.text_brut(px + PAD, py + PAD - 4, &self.titre, 2, TXT);
         let mut pill_x = px + lw - PAD;
         for (actif, nom) in [
+            (self.nav_actif, "NAV"),
+            (self.alt, "ALT"),
             (self.ctrl, "CTRL"),
             (self.altgr, "ALTGR"),
             (self.maj || self.maj_tenue, "MAJ"),
@@ -656,12 +775,13 @@ impl Etat {
 
         // touches
         let y0 = py + PAD + HEADER;
-        for (ir, rangee) in self.rangees.iter().enumerate() {
+        let page = self.page();
+        for (ir, rangee) in page.iter().enumerate() {
             let total: i32 =
                 rangee.iter().map(|c| c.w).sum::<i32>() + GAP * (rangee.len() as i32 - 1);
             let mut kx = px + (lw - total) / 2;
             let ky = y0 + ir as i32 * (KEY_H + GAP)
-                + if ir == self.rangees.len() - 1 { GAP } else { 0 };
+                + if ir == page.len() - 1 { GAP } else { 0 };
             for (ic, k) in rangee.iter().enumerate() {
                 self.dessiner_case(cv, k, kx, ky, ir == self.r && ic == self.c);
                 kx += k.w + GAP;
@@ -669,7 +789,7 @@ impl Etat {
         }
 
         // pied : les gestes, deux lignes (découvrabilité sans doc)
-        let ligne1 = "X TAPER   CARRE EFFACER   TRIANGLE ESPACE   ROND FERMER   R2 ENTREE   START TAB   D-PAD/STICK G: TOUCHES";
+        let ligne1 = "X TAPER   CARRE EFFACER   TRIANGLE ESPACE   ROND FERMER   R2 ENTREE   START TAB   NAV AUTRES TOUCHES";
         let ligne2 = "L1/R1 CURSEUR TEXTE   L2 MAJ (L2+L1/R1: SELECTION)   L3 MAJ COLLEE   SELECT ALTGR   R3 CTRL   STICK D: DEPLACER";
         let y_pied = py + lh - FOOTER + 1;
         cv.text_brut(px + PAD, y_pied, ligne1, 1, DIM);
@@ -693,6 +813,8 @@ impl Etat {
             Genre::Maj => self.maj || self.maj_tenue,
             Genre::Altgr => self.altgr,
             Genre::Ctrl => self.ctrl,
+            Genre::Alt => self.alt,
+            Genre::Nav => self.nav_actif,
             _ => false,
         };
         // Frappe : liseré clair + aplat d'accent. Le liseré clair la distingue
@@ -723,7 +845,7 @@ impl Etat {
         };
 
         match k.genre {
-            Genre::Physique(_) => {
+            Genre::Physique(_) | Genre::Cle(_) => {
                 let txt = self.libelle_actif(k);
                 let morte = k.s[self.niveau()].as_ref().map(|s| s.morte).unwrap_or(false);
                 let scale = if txt.chars().count() > 2 { 1 } else { 2 };
@@ -765,11 +887,14 @@ impl Etat {
                     Genre::Maj => "MAJ",
                     Genre::Altgr => "ALTGR",
                     Genre::Ctrl => "CTRL",
+                    Genre::Alt => "ALT",
+                    Genre::Nav => "NAV",
                     Genre::Espace => "ESPACE",
                     Genre::Retour => "RETOUR",
                     Genre::Tab => "TAB",
                     Genre::Entree => "ENTREE",
-                    Genre::Physique(_) => "",
+                    Genre::Echap => "ECHAP",
+                    Genre::Physique(_) | Genre::Cle(_) => "",
                 };
                 let c = if actif { SEL_TXT } else { c_txt };
                 let scale = if cv.largeur(nom, 2) <= w - 8 { 2 } else { 1 };
@@ -879,6 +1004,13 @@ impl Clavier {
         (self.etat.x, self.etat.y)
     }
 
+    /// Bascule lettres ⇄ NAV (banc de rendu : mesurer les deux pages).
+    pub fn page_nav(&mut self, nav: bool) {
+        if self.etat.nav_actif != nav {
+            self.etat.basculer_nav();
+        }
+    }
+
     pub fn placer(&mut self, x: i32, y: i32) {
         self.etat.x = x;
         self.etat.y = y;
@@ -896,17 +1028,19 @@ impl Clavier {
 
     fn taper(&mut self) {
         let genre = self.etat.case_courante().genre;
-        let (maj, altgr, ctrl) = (self.etat.maj, self.etat.altgr, self.etat.ctrl);
+        let (maj, altgr, ctrl, alt) = (self.etat.maj, self.etat.altgr, self.etat.ctrl, self.etat.alt);
         self.etat.marquer_presse(genre);
         match genre {
-            Genre::Physique(code) => {
+            Genre::Physique(code) | Genre::Cle(code) => {
                 if let Some(inj) = &self.inj {
-                    inj.touche_couches(code, maj, altgr, ctrl);
+                    inj.touche_couches(code, maj, altgr, ctrl, alt);
                 }
             }
             Genre::Maj => self.etat.maj = !self.etat.maj,
             Genre::Altgr => self.etat.altgr = !self.etat.altgr,
             Genre::Ctrl => self.etat.ctrl = !self.etat.ctrl,
+            Genre::Alt => self.etat.alt = !self.etat.alt,
+            Genre::Nav => self.etat.basculer_nav(),
             autre => self.speciale(autre),
         }
     }
@@ -921,6 +1055,7 @@ impl Clavier {
             Genre::Retour => BACKSPACE,
             Genre::Tab => TAB,
             Genre::Entree => ENTER,
+            Genre::Echap => ESC,
             _ => return,
         };
         inj.touche(code);
@@ -1242,5 +1377,96 @@ impl Clavier {
         ] {
             r.arreter();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rangées de lettres factices : la largeur de chaque rangée compte (le
+    /// curseur doit être borné quand on passe d'une page à l'autre).
+    fn lettres() -> Vec<Vec<Touche>> {
+        let t = |code: u16, nom: &str| Touche {
+            code,
+            s: [
+                Some(Sym {
+                    txt: nom.to_string(),
+                    morte: false,
+                }),
+                None,
+                None,
+                None,
+            ],
+        };
+        vec![
+            vec![t(16, "q"), t(17, "w"), t(18, "e"), t(19, "r"), t(20, "t")],
+            vec![
+                t(30, "a"),
+                t(31, "s"),
+                t(32, "d"),
+                t(33, "f"),
+                t(34, "g"),
+                t(35, "h"),
+                t(36, "j"),
+                t(37, "k"),
+                t(38, "l"),
+                t(39, "m"),
+                t(40, "n"),
+            ],
+            vec![t(44, "z")],
+            vec![t(45, "x")],
+        ]
+    }
+
+    /// La couche NAV remplace les quatre rangées et garde la rangée spéciale :
+    /// NAV et ÉCHAP doivent rester visibles sur les deux pages, sinon on ne
+    /// peut plus revenir aux lettres.
+    #[test]
+    fn couche_nav_garde_les_touches_speciales() {
+        let e = Etat::neuf(lettres(), "ch", "fr", (2560, 1440));
+        assert_eq!(e.page().len(), 5, "4 rangées de lettres + la rangée spéciale");
+        assert!(e.page()[4].iter().any(|c| c.genre == Genre::Nav));
+        assert!(e.page()[4].iter().any(|c| c.genre == Genre::Echap));
+
+        let mut e = e;
+        e.basculer_nav();
+        assert!(e.nav_actif);
+        assert_eq!(e.page().len(), 5, "même nombre de rangées : pas de trou");
+        // rangées NAV : navigations, flèches, F1-F6, F7-F12, et la rangée
+        // spéciale en dernier
+        assert!(e.page()[0].iter().any(|c| c.genre == Genre::Cle(111)), "Suppr");
+        assert!(e.page()[1].iter().any(|c| c.genre == Genre::Cle(105)), "gauche");
+        assert_eq!(e.page()[2].len(), 6, "F1-F6");
+        assert_eq!(e.page()[3].len(), 6, "F7-F12");
+        assert!(e.page()[2].iter().any(|c| c.genre == Genre::Cle(59)));
+        assert!(e.page()[3].iter().any(|c| c.genre == Genre::Cle(88)));
+        assert!(e.page()[4].iter().any(|c| c.genre == Genre::Nav));
+        assert!(e.page()[4].iter().any(|c| c.genre == Genre::Echap));
+    }
+
+    /// Changer de page ne doit pas laisser le curseur sur une case inexistante
+    /// (il serait dessiné nulle part et Croix taperait hors table).
+    #[test]
+    fn bascule_nav_borne_le_curseur() {
+        let mut e = Etat::neuf(lettres(), "ch", "fr", (2560, 1440));
+        e.r = 1;
+        e.c = 10; // dernière touche de la 2e rangée de lettres (11 cases)
+        e.basculer_nav();
+        assert_eq!(e.r, 1);
+        assert_eq!(e.c, 3, "la 2e rangée NAV n'a que 4 flèches");
+        // retour : la position reste bornée (on ne devine pas l'ancienne)
+        e.basculer_nav();
+        assert_eq!((e.r, e.c), (1, 3));
+    }
+
+    /// Le panneau garde la même taille dans les deux pages (surface = tampon) :
+    /// une page plus étroite ne doit pas réduire la surface au redessin.
+    #[test]
+    fn les_deux_pages_ont_la_meme_taille() {
+        let mut c = Clavier::neuf(lettres(), "ch", "fr", (2560, 1440));
+        let lettres = c.taille();
+        c.page_nav(true);
+        assert_eq!(c.taille(), lettres);
     }
 }

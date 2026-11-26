@@ -2,16 +2,23 @@
 // Repris de src/gamepadshortcuts/mouse.c (banc gablue-pad).
 // Remplace l'ancien mouse.py (python-uinput casse sur Python 3.14, distutils supprime)
 //
-// Fonctionnement :
-//   - Stick droit        : deplacement souris (courbe progressive style FPS)
-//   - R1 / L1            : clic gauche / clic droit
+// Fonctionnement (remaniement du 26/11/2026) :
+//   - Stick gauche       : deplacement du pointeur (courbe progressive style FPS)
+//   - Stick droit        : molette, proportionnelle a la deflection
+//                          (Y = verticale, X = horizontale)
+//   - Croix / Rond / R3  : clic gauche / clic droit / clic milieu
+//   - Carre / Triangle   : Retour arriere / Espace
 //   - D-pad              : fleches du clavier
 //   - L3                 : Echap
-//   - L2 / R2            : Alt gauche / Shift gauche
-//   - Start / Select     : Entree / F11
-//   - Croix / Rond       : Espace / Tab
-//   - Carre / Triangle   : Retour arriere / F4
+//   - L1 / R1            : Alt gauche / Super gauche (a tenir)
+//   - L2 / R2            : Ctrl gauche / Shift gauche (a tenir)
+//   - Select / Start     : Tab / Entree
 //   - Home + R3          : quitter (gere aussi par gamepadshortcuts)
+//
+// Le clic est sur Croix, sous le pouce DROIT : le pointeur ne peut donc pas
+// etre le stick droit, sinon le pouce qui vise devrait lacher pour cliquer.
+// Pointeur = stick gauche, et le stick droit se libere pour la molette. Le
+// glisser-deposer se fait a deux mains (Croix tenue + stick gauche).
 //
 // Le binaire est lance/arrete par gpad-trigger (Home + R3).
 //
@@ -49,6 +56,12 @@
 #define BASE_SENSITIVITY 2.0
 #define MAX_SENSITIVITY 12.0
 #define UPDATE_RATE 120
+
+// Molette au stick droit : crans par seconde, proportionnels a la deflection
+// (1 cran/s au ras de la zone morte, 22 a fond). Pas de courbe quadratique :
+// sur une molette elle donnerait un depart mou puis incontrolable.
+#define MOLETTE_MIN 1.0
+#define MOLETTE_MAX 22.0
 
 // Sons : surchargeables par environnement, sinon ceux du banc (importés).
 #define START_SOUND_DEFAUT "clic.wav"
@@ -147,6 +160,25 @@ static bool has_abs(int fd, int code)
     return ioctl(fd, EVIOCGABS(code), &info) == 0;
 }
 
+/* Un axe lu a l'ouverture : presence, valeur courante (repos), plage. */
+struct axe {
+    bool present;
+    int value;
+    int minimum;
+    int maximum;
+};
+
+static void lire_axe(int fd, int code, struct axe *a)
+{
+    struct input_absinfo info;
+    a->present = ioctl(fd, EVIOCGABS(code), &info) == 0;
+    if (a->present) {
+        a->value = info.value;
+        a->minimum = info.minimum;
+        a->maximum = info.maximum;
+    }
+}
+
 // Cherche une manette valide parmi /dev/input/event*
 // Retourne le chemin du device (buffer statique) ou NULL
 static const char *find_controller(void)
@@ -237,8 +269,9 @@ static int create_virtual_device(void)
     // Boutons souris
     ioctl(fd, UI_SET_KEYBIT, BTN_LEFT);
     ioctl(fd, UI_SET_KEYBIT, BTN_RIGHT);
+    ioctl(fd, UI_SET_KEYBIT, BTN_MIDDLE);
 
-    // Touches clavier (meme liste que mouse.py)
+    // Touches clavier (meme liste que la table `buttons` ci-dessous)
     ioctl(fd, UI_SET_KEYBIT, KEY_LEFT);
     ioctl(fd, UI_SET_KEYBIT, KEY_RIGHT);
     ioctl(fd, UI_SET_KEYBIT, KEY_UP);
@@ -247,14 +280,16 @@ static int create_virtual_device(void)
     ioctl(fd, UI_SET_KEYBIT, KEY_ESC);
     ioctl(fd, UI_SET_KEYBIT, KEY_LEFTSHIFT);
     ioctl(fd, UI_SET_KEYBIT, KEY_LEFTALT);
+    ioctl(fd, UI_SET_KEYBIT, KEY_LEFTCTRL);
+    ioctl(fd, UI_SET_KEYBIT, KEY_LEFTMETA);
     ioctl(fd, UI_SET_KEYBIT, KEY_BACKSPACE);
     ioctl(fd, UI_SET_KEYBIT, KEY_SPACE);
     ioctl(fd, UI_SET_KEYBIT, KEY_TAB);
-    ioctl(fd, UI_SET_KEYBIT, KEY_F4);
-    ioctl(fd, UI_SET_KEYBIT, KEY_F11);
 
     ioctl(fd, UI_SET_RELBIT, REL_X);
     ioctl(fd, UI_SET_RELBIT, REL_Y);
+    ioctl(fd, UI_SET_RELBIT, REL_WHEEL);
+    ioctl(fd, UI_SET_RELBIT, REL_HWHEEL);
 
     struct uinput_setup usetup = {0};
     snprintf(usetup.name, sizeof(usetup.name), "virtual-mouse");
@@ -370,19 +405,50 @@ struct button_map {
 };
 
 static struct button_map buttons[] = {
-    { BTN_TR,     BTN_LEFT,      0, 0 },
-    { BTN_TL,     BTN_RIGHT,     0, 0 },
-    { BTN_THUMBL, KEY_ESC,       0, 0 },
-    { BTN_TL2,    KEY_LEFTALT,   0, 0 },
-    { BTN_TR2,    KEY_LEFTSHIFT, 0, 0 },
+    { BTN_SOUTH,  BTN_LEFT,      0, 0 },   // Croix : clic gauche
+    { BTN_EAST,   BTN_RIGHT,     0, 0 },   // Rond : clic droit
+    { BTN_THUMBR, BTN_MIDDLE,    0, 0 },   // R3 : clic milieu
+    { BTN_WEST,   KEY_BACKSPACE, 0, 0 },   // Carre : retour arriere
+    { BTN_NORTH,  KEY_SPACE,     0, 0 },   // Triangle : espace
+    { BTN_TL,     KEY_LEFTALT,   0, 0 },   // L1 : Alt (tenir)
+    { BTN_TR,     KEY_LEFTMETA,  0, 0 },   // R1 : Super (tenir)
+    { BTN_TL2,    KEY_LEFTCTRL,  0, 0 },   // L2 : Ctrl (tenir)
+    { BTN_TR2,    KEY_LEFTSHIFT, 0, 0 },   // R2 : Maj (tenir)
+    { BTN_THUMBL, KEY_ESC,       0, 0 },   // L3 : Echap
+    { BTN_SELECT, KEY_TAB,       0, 0 },
     { BTN_START,  KEY_ENTER,     0, 0 },
-    { BTN_SELECT, KEY_F11,       0, 0 },
-    { BTN_WEST,   KEY_BACKSPACE, 0, 0 },
-    { BTN_SOUTH,  KEY_SPACE,     0, 0 },
-    { BTN_EAST,   KEY_TAB,       0, 0 },
-    { BTN_NORTH,  KEY_F4,        0, 0 },
 };
 #define NB_BUTTONS (sizeof(buttons) / sizeof(buttons[0]))
+
+// =============================================================================
+// MOLETTE (stick droit) : crans discrets, proportionnels a la deflection
+// =============================================================================
+
+/* `v` > 0 = cran positif. On ne peut PAS envoyer une valeur fractionnaire :
+ * les compositeurs ne lisent que des crans entiers et les valeurs inferieures
+ * a 1 sont perdues. On accumule donc dans `carry` et on n'emet qu'au
+ * franchissement de l'unite (meme logique que l'accumulateur sub-pixel du
+ * pointeur, mais par axe). */
+static void molette_axe(int ufd, double v, double *carry, uint16_t code, double dt)
+{
+    double a = fabs(v);
+    if (a < DEAD_ZONE) {
+        *carry = 0.0;
+        return;
+    }
+    double m = (a - DEAD_ZONE) / (1.0 - DEAD_ZONE);
+    if (m > 1.0)
+        m = 1.0;
+
+    double vitesse = MOLETTE_MIN + (MOLETTE_MAX - MOLETTE_MIN) * m;
+    *carry += (v > 0.0 ? vitesse : -vitesse) * dt;
+
+    int crans = (int)*carry;
+    if (crans != 0) {
+        emit_events(ufd, EV_REL, code, crans);
+        *carry -= crans;
+    }
+}
 
 // =============================================================================
 // BOUCLE PRINCIPALE
@@ -471,14 +537,26 @@ int main(int argc, char **argv)
             fprintf(stderr, "[WARN] gate %s : open refusé\n", gate_socket);
     }
 
-    // Plages reelles du stick droit
-    struct input_absinfo abs_rx = {0}, abs_ry = {0};
-    if (ioctl(ctrl, EVIOCGABS(ABS_RX), &abs_rx) < 0 ||
-        ioctl(ctrl, EVIOCGABS(ABS_RY), &abs_ry) < 0) {
-        fprintf(stderr, "[ERREUR] Impossible de lire les axes du stick droit.\n");
+    // Plages reelles des quatre axes. Le pointeur est le stick GAUCHE (le
+    // pouce droit tient les boutons : Croix = clic gauche) ; le stick droit
+    // sert de molette. Si la manette n'a pas de stick gauche (banc, manette
+    // exotique), on retombe sur l'ancien comportement : stick droit =
+    // pointeur, pas de molette.
+    struct axe gx = {0}, gy = {0}, dx = {0}, dy = {0};
+    lire_axe(ctrl, ABS_X, &gx);
+    lire_axe(ctrl, ABS_Y, &gy);
+    lire_axe(ctrl, ABS_RX, &dx);
+    lire_axe(ctrl, ABS_RY, &dy);
+
+    bool pointeur_gauche = gx.present && gy.present;
+    if (!pointeur_gauche && !(dx.present && dy.present)) {
+        fprintf(stderr, "[ERREUR] Aucun stick utilisable (ABS_X/Y ni ABS_RX/RY).\n");
         close(ctrl);
         return 1;
     }
+    bool molette = pointeur_gauche && dx.present && dy.present;
+    if (!pointeur_gauche)
+        fprintf(stderr, "[WARN] pas de stick gauche : pointeur sur le stick droit, molette absente\n");
 
     int ufd = create_virtual_device();
     if (ufd < 0) {
@@ -490,8 +568,6 @@ int main(int argc, char **argv)
     fprintf(stderr, "[INFO] Son de demarrage lance en arriere-plan.\n");
 
     // Etats courants
-    int rx_value = abs_rx.value;
-    int ry_value = abs_ry.value;
     int hat_x = 0, hat_y = 0;
     int last_hat_up = 0, last_hat_down = 0, last_hat_left = 0, last_hat_right = 0;
     int mode_state = 0, r3_state = 0;
@@ -502,8 +578,10 @@ int main(int argc, char **argv)
      * panneau ouvert et aveugle — Home « marchait une fois sur deux ». */
     double pause_reprise = 0.0;
 
-    // Accumulateur de mouvement sub-pixel (reprise de mouse.py)
+    // Accumulateur de mouvement sub-pixel (reprise de mouse.py) + crans de
+    // molette en attente (un cran n'est emis qu'entier)
     double carry_x = 0.0, carry_y = 0.0;
+    double carry_mx = 0.0, carry_my = 0.0;
 
     double last_time = now_seconds();
     const double update_interval = 1.0 / UPDATE_RATE;
@@ -531,8 +609,10 @@ int main(int argc, char **argv)
 
             if (ev.type == EV_ABS) {
                 switch (ev.code) {
-                case ABS_RX:    rx_value = ev.value; break;
-                case ABS_RY:    ry_value = ev.value; break;
+                case ABS_X:     gx.value = ev.value; break;
+                case ABS_Y:     gy.value = ev.value; break;
+                case ABS_RX:    dx.value = ev.value; break;
+                case ABS_RY:    dy.value = ev.value; break;
                 case ABS_HAT0X: hat_x = ev.value; break;
                 case ABS_HAT0Y: hat_y = ev.value; break;
                 }
@@ -558,9 +638,11 @@ int main(int argc, char **argv)
                         pause_reprise = now_seconds() + 2.0;
                         demander_panneau(device_path);
                     }
-                } else if (ev.code == BTN_THUMBR) {
-                    r3_state = ev.value;
                 } else {
+                    // R3 est aussi le combo de sortie (Home+R3) : on garde son
+                    // etat *et* on le mappe (clic milieu)
+                    if (ev.code == BTN_THUMBR)
+                        r3_state = ev.value;
                     for (size_t b = 0; b < NB_BUTTONS; b++) {
                         if (buttons[b].in_code == ev.code) {
                             buttons[b].state = ev.value;
@@ -586,9 +668,11 @@ int main(int argc, char **argv)
         if (dt > 0.1)
             dt = 0.1;
 
-        // ----- Mouvement souris (stick droit, courbe progressive) -----
-        double norm_x = normalize_axis(rx_value, abs_rx.minimum, abs_rx.maximum);
-        double norm_y = normalize_axis(ry_value, abs_ry.minimum, abs_ry.maximum);
+        // ----- Mouvement souris (stick gauche, courbe progressive) -----
+        const struct axe *ax = pointeur_gauche ? &gx : &dx;
+        const struct axe *ay = pointeur_gauche ? &gy : &dy;
+        double norm_x = normalize_axis(ax->value, ax->minimum, ax->maximum);
+        double norm_y = normalize_axis(ay->value, ay->minimum, ay->maximum);
         double raw_magnitude = sqrt(norm_x * norm_x + norm_y * norm_y);
 
         double magnitude = 0.0, dir_x = 0.0, dir_y = 0.0;
@@ -617,6 +701,17 @@ int main(int argc, char **argv)
                 emit_events(ufd, EV_REL, REL_X, int_x);
             if (int_y != 0)
                 emit_events(ufd, EV_REL, REL_Y, int_y);
+        }
+
+        // ----- Molette (stick droit) : Y = verticale, X = horizontale -----
+        // Le noyau donne Y positif vers le bas ; une molette positive fait
+        // monter le contenu : d'ou le signe inverse. REL_HWHEEL positif va
+        // vers la droite, comme X.
+        if (molette) {
+            double wx = normalize_axis(dx.value, dx.minimum, dx.maximum);
+            double wy = normalize_axis(dy.value, dy.minimum, dy.maximum);
+            molette_axe(ufd, wx, &carry_mx, REL_HWHEEL, dt);
+            molette_axe(ufd, -wy, &carry_my, REL_WHEEL, dt);
         }
 
         // ----- Boutons : emission sur changement d'etat -----
@@ -672,6 +767,12 @@ int main(int argc, char **argv)
     // Sortie : on rend la manette et on referme la gate, toujours.
     gate_fermer();
     fprintf(stderr, "[INFO] mode souris : manette rendue (grab relâché).\n");
+    // relâche les boutons encore enfoncés : un clic ou un modificateur ne doit
+    // pas survivre au périphérique (R1 = Super tenu au moment de Home+R3)
+    for (size_t b = 0; b < NB_BUTTONS; b++) {
+        if (buttons[b].last)
+            emit_events(ufd, EV_KEY, buttons[b].out_code, 0);
+    }
     ioctl(ctrl, EVIOCGRAB, 0);
     close(ctrl);
     ioctl(ufd, UI_DEV_DESTROY);

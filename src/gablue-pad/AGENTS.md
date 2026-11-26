@@ -213,6 +213,32 @@ grab, ne quitte pas le mode : il prête la manette (relâche le grab) et demande
 `open` au résident via `--ipc`, puis la reprend à la fermeture du panneau. La boucle attend en `nanosleep` (interruptible par
 un signal), pas en `usleep`, pour que l'arrêt soit immédiat.
 
+**Mapping du mode souris** (remanié le 26/11/2026). Le clic est sur **Croix**,
+sous le pouce **droit** : le pointeur ne peut donc pas être le stick droit
+(le pouce qui vise lâcherait pour cliquer). Pointeur = **stick gauche**, et le
+stick droit se libère pour la **molette** :
+
+| Entrée | Rôle |
+|---|---|
+| Stick gauche | pointeur (courbe 2 → 12 px/frame, zone morte 0,08) |
+| Stick droit | molette proportionnelle : Y = verticale, X = horizontale (`REL_WHEEL`/`REL_HWHEEL`, accumulateur de crans — une valeur fractionnaire est perdue) |
+| Croix / Rond / R3 | clic gauche / droit / milieu (tenir Croix + stick gauche = glisser-déposer) |
+| Carré / Triangle | Retour arrière / Espace |
+| D-pad | flèches |
+| L1 / R1 | Alt / Super (à tenir) |
+| L2 / R2 | Ctrl / Maj (à tenir) → Ctrl+stick gauche = zoom, Maj+molette = horizontale |
+| L3 / Select / Start | Échap / Tab / Entrée |
+
+Contrairement au **login** (`gpad-login`, stick gauche **ou** droit, le plus
+écarté gagne), le mode souris n'a qu'un stick pour le pointeur : ici la molette
+occupe l'autre, un choix « au plus écarté » serait indécidable. Un réglage
+d'échange des sticks n'aurait pas de sens non plus — les boutons sont à droite
+quelle que soit la main dominante. Si la manette n'a pas de stick gauche, le
+binaire retombe sur l'ancien comportement (pointeur au stick droit, pas de
+molette) et le dit sur la sortie d'erreur. À la sortie il relâche aussi les
+boutons encore enfoncés, pour qu'un clic ou un modificateur ne survive pas au
+périphérique virtuel.
+
 **Changement de session** (`MODE JEU` sur le bureau, `MODE BUREAU` en console) :
 la ligne vit dans SYSTEME, entre la veille et les sorties — elle passe par
 `/usr/libexec/gablue-session-mode` (root via pkexec, règle polkit wheel), qui

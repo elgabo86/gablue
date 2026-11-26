@@ -7896,35 +7896,60 @@ fn main() {
     if args.iter().any(|a| a == "--bench-clavier") {
         let (layout, variant) = clavier::layout_session();
         let rangees = clavier::charger(&layout, &variant).expect("keymap");
-        let c = clavier::Clavier::neuf(rangees, &layout, &variant, (2560, 1440));
+        let mut c = clavier::Clavier::neuf(rangees, &layout, &variant, (2560, 1440));
         let police = charger_police();
         let (pw, ph) = c.taille();
         let (w, h) = (pw as usize, ph as usize);
         let mut px = vec![0u32; w * h];
+        // `--dump-clavier <préfixe>` : écrit les deux pages en PPM (P6) pour
+        // l'inspection visuelle — le panneau est un buffer ARGB opaque, donc
+        // le dump ne dépend d'aucun compositeur.
+        let dump = arg_value(&args, "--dump-clavier");
         let n = 40;
-        let t = Instant::now();
-        for _ in 0..n {
-            let mut cv = Canvas {
-                px: &mut px,
-                w,
-                h,
-                police: police.as_ref(),
-                ox: 0,
-                clip: None,
-            };
-            cv.px.fill(0);
-            c.dessiner(&mut cv);
+        // les deux pages : la couche NAV doit coûter le même prix et garder la
+        // même taille de tampon (surface = panneau)
+        for page in [false, true] {
+            c.page_nav(page);
+            let t = Instant::now();
+            for _ in 0..n {
+                let mut cv = Canvas {
+                    px: &mut px,
+                    w,
+                    h,
+                    police: police.as_ref(),
+                    ox: 0,
+                    clip: None,
+                };
+                cv.px.fill(0);
+                c.dessiner(&mut cv);
+            }
+            let (pw2, ph2) = c.taille();
+            println!(
+                "BENCH page {} panneau {:.2} ms | {pw2}x{ph2} dans {w}x{h}",
+                if page { "NAV" } else { "lettres" },
+                t.elapsed().as_secs_f64() * 1000.0 / n as f64
+            );
+            if let Some(prefixe) = &dump {
+                let chemin = format!("{prefixe}{}.ppm", if page { "-nav" } else { "" });
+                let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
+                for p in &px {
+                    // ARGB prémultiplié → RVB (le fond est opaque en pratique)
+                    ppm.extend_from_slice(&[
+                        ((p >> 16) & 0xff) as u8,
+                        ((p >> 8) & 0xff) as u8,
+                        (p & 0xff) as u8,
+                    ]);
+                }
+                let _ = std::fs::write(&chemin, ppm);
+                println!("DUMP {chemin}");
+            }
         }
-        let dessin = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
         let t = Instant::now();
         for _ in 0..n {
             px.fill(0);
         }
         let vide = t.elapsed().as_secs_f64() * 1000.0 / n as f64;
-        println!(
-            "BENCH panneau {:.2} ms | surface videe {:.2} ms | {pw}x{ph} dans {w}x{h}",
-            dessin, vide
-        );
+        println!("BENCH surface videe {vide:.2} ms");
         return;
     }
 
