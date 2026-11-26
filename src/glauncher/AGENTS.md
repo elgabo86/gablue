@@ -102,8 +102,8 @@ leurs icônes, pour l'interface.
   (JPEG) sur un fil de fond, cache `<cache>/gallery/`, date locale
   (`localtime_r`), minuteur de lecture
 - `src/play.rs` — lecture d'un enregistrement : `mpv` plein écran piloté par
-  socket IPC (pause, ±5 s, sortie), `PR_SET_PDEATHSIG` contre les films
-  orphelins
+  socket IPC (pause, ±5 s, sortie), barre de progression en `osd-overlay` ASS
+  (fil dédié), `PR_SET_PDEATHSIG` contre les films orphelins
 - `src/gamepad.rs` — manettes via `evdev`, boutons normalisés (`BTN_SOUTH`…)
 - `src/launch.rs` — construit la commande, lance le jeu, attend sa fin
 - `src/playtime.rs` — temps de jeu cumulé, dans les dossiers de sauvegardes
@@ -353,10 +353,21 @@ même launcher).
   (`--keep-open=yes`) — le dernier plan est affiché à l'arrêt, c'est `Rond` qui
   referme (puis `try_wait` relève la sortie, le voile se lève et le launcher
   reprend le focus) ; avant, la fenêtre disparaissait au moment où l'on
-  regarde la fin. **Progression** : `--osd-level=3` fait afficher à `mpv`
-  « ▶ 00:01:12 / 01:44:20 (69 %) » à chaque saut (`--osd-duration=2500`,
-  police 44) — mesuré au banc : le niveau 1 n'affiche rien et le niveau 2 la
-  position seule, d'où l'impression d'avancer à l'aveugle.
+  regarde la fin.
+- **Barre de progression dessinée par nous** (`osd-overlay` ASS, 26/11) : un
+  fil dédié lit `time-pos` et `duration` sur **sa propre connexion IPC** puis
+  pose une capsule arrondie en bas de l'écran — piste noire translucide,
+  remplissage à l'accent (`#4F99FF`), temps `0:05 / 0:20` au-dessus, dessin en
+  1920×1080 que `mpv` met à l'échelle (mêmes proportions en 1080p, 2K, 4K).
+  Elle s'affiche à chaque **avance/recul et à la pause**, reste 2,4 s puis
+  s'efface en fondu (trois alphas, 70 ms) : elle ne cache pas la vidéo.
+  `--osd-level=0` coupe l'OSD natif (son rectangle blanc au milieu de l'écran
+  et son texte en haut à gauche). Une nouvelle demande pendant l'affichage
+  redessine sans passer par l'effacement — la barre repart sans clignoter.
+  **Piège mesuré le 26/11** : `osd-overlay` exige les **cinq paramètres
+  positionnels même pour `none`** ; `["osd-overlay", id, "none"]` est ignoré
+  en silence et la barre reste figée à son dernier alpha. Debug :
+  `GLAUNCHER_OSD_DEBUG=1` trace position et effacement.
 - **Effacement confirmé** : `Carré` arme (« effacer ? Croix = oui »), `Croix`
   efface pour de bon, `Rond` annule, **tout déplacement désarme**. Le fichier
   est supprimé du disque (`remove_file`) : c'est la seule action destructive du
