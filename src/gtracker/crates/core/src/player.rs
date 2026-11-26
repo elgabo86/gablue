@@ -55,6 +55,10 @@ struct LoopSource {
     /// attaque), ce qui s'entend comme un flam (vécu 20/11 : « quelques ms de
     /// décalage » avec 10 ms).
     xfade: usize,
+    /// Échantillons de tête du segment suivant **déjà entendus** dans le fondu
+    /// de couture (voir `seam_skip` dans `next`) : la reprise les saute, sinon
+    /// les 2 ms du raccord seraient rejouées (flam).
+    seam_skip: usize,
 }
 
 impl Iterator for LoopSource {
@@ -85,10 +89,16 @@ impl Iterator for LoopSource {
                 if ne > ns && ne <= self.data.len() {
                     self.shared.stop.store(ne as u64, Ordering::Relaxed);
                     self.shared.jumps.fetch_add(1, Ordering::Relaxed);
-                    self.pos = self.audible_start(ns, ne);
+                    // reprise après ce que le fondu de couture a déjà fait
+                    // entendre du début du segment suivant
+                    let debut = self.audible_start(ns, ne) + self.seam_skip;
+                    self.pos = debut.min(ne.saturating_sub(1));
+                    self.seam_skip = 0;
                 } else {
                     return None;
                 }
+            } else if let Some(v) = self.seam(stop) {
+                return Some(v);
             }
         }
         if looping {
@@ -155,6 +165,54 @@ impl LoopSource {
             p = p.min(end.saturating_sub(1));
         }
         p
+    }
+
+    /// Fondu croisé de **couture de suite** : sur les `xfade` derniers
+    /// échantillons du segment courant, mélange sa fin avec le début du segment
+    /// suivant programmé, puis la reprise saute ce qui vient d'être entendu.
+    ///
+    /// Sans lui, deux tranches contiguës se raccordent sur une marche : la
+    /// dernière tranche s'arrête au milieu de la musique et l'attaque suivante
+    /// démarre net — « léger grésillement saccadé mal découpé » à chaque
+    /// enchaînement (vécu 26/11). Même rampe en cosinus et même durée que la
+    /// couture de boucle (2 ms) : au-delà, on mélange deux moments différents.
+    ///
+    /// Rend `None` quand il n'y a rien à faire (pas de suivant en file, ou pas
+    /// encore dans la fenêtre) : la source rend alors l'échantillon courant.
+    fn seam(&mut self, stop: usize) -> Option<f32> {
+        if stop == 0 || self.pos >= self.data.len() {
+            return None;
+        }
+        // rampe **par trame** : un nombre impair d'échantillons en stéréo
+        // donnerait un gain différent à gauche et à droite, et la reprise
+        // tomberait sur le canal de l'autre côté (vécu 21/11 sur le blanc de
+        // tête : « une fois à gauche, une fois à droite »)
+        let ch = (self.channels.max(1)) as usize;
+        let mut xf = (self.xfade.min(stop / 2) / ch) * ch;
+        if xf <= ch || self.pos + xf < stop {
+            return None;
+        }
+        let queued = self.shared.seg_next.load(Ordering::Relaxed);
+        let ns = (queued & 0xffff_ffff) as usize;
+        let ne = (queued >> 32) as usize;
+        if ne <= ns || ne > self.data.len() {
+            return None;
+        }
+        // jamais plus de la moitié d'un segment : un raccord ne doit pas
+        // devenir une transition
+        xf = xf.min(((ne - ns) / 2 / ch) * ch);
+        if xf <= ch {
+            return None;
+        }
+        let k = self.pos - (stop - xf);
+        let g = 0.5 - 0.5 * (std::f32::consts::PI * k as f32 / xf as f32).cos();
+        let tail = self.data[self.pos];
+        let debut = self.audible_start(ns, ne);
+        let first = self.data[(debut + k).min(self.data.len() - 1)];
+        self.seam_skip = (k + 1).min(ne.saturating_sub(debut));
+        self.pos += 1;
+        self.shared.pos.store(self.pos as u64, Ordering::Relaxed);
+        Some(tail * (1.0 - g) + first * g)
     }
 }
 
@@ -319,6 +377,7 @@ impl Player {
             shared: self.shared.clone(),
             xfade: ((0.002 * fps).round() as usize / self.channels as usize)
                 * self.channels as usize,
+            seam_skip: 0,
         });
     }
 
@@ -699,6 +758,7 @@ mod tests {
             head: 0,
             shared: shared(0, 500),
             xfade: 10,
+            seam_skip: 0,
         };
         let mut prev = 0.0f32;
         let mut max_jump = 0.0f32;
@@ -734,6 +794,7 @@ mod tests {
             head: 0,
             shared: sh.clone(),
             xfade: 0,
+            seam_skip: 0,
         };
         let got: Vec<f32> = (0..2000)
             .map(|_| src.next().expect("la couture ne doit pas rendre None"))
@@ -762,6 +823,7 @@ mod tests {
             head: 0,
             shared: sh.clone(),
             xfade: 10,
+            seam_skip: 0,
         };
         // plus de trois tours de 500 échantillons : la bascule doit avoir eu lieu
         for _ in 0..1500 {
@@ -804,6 +866,7 @@ mod tests {
             head,
             shared: sh.clone(),
             xfade: 0,
+            seam_skip: 0,
         };
         let vals: Vec<f32> = (&mut src).take(400).collect();
         assert_eq!(vals[0], 40.0, "démarrage sur la première attaque");
@@ -825,6 +888,7 @@ mod tests {
             head,
             shared: sh.clone(),
             xfade: 10,
+            seam_skip: 0,
         };
         let vals: Vec<f32> = (&mut src).take(700).collect();
         assert!(vals.iter().all(|v| *v > 0.0), "aucun zéro dans la boucle");
@@ -855,6 +919,7 @@ mod tests {
             head: samples, // échantillons entrelacés
             shared: sh,
             xfade: 0,
+            seam_skip: 0,
         };
         let vals: Vec<f32> = (&mut src).take(4).collect();
         assert_eq!(vals, [1.0, -1.0, 1.0, -1.0], "canaux alignés après le saut");
@@ -878,11 +943,71 @@ mod tests {
             head: 40,
             shared: sh.clone(),
             xfade: 10,
+            seam_skip: 0,
         };
         let vals: Vec<f32> = (&mut src).take(50).collect();
         assert_eq!(vals.len(), 50, "la source ne doit pas s'arrêter");
         let p = sh.pos.load(Ordering::Relaxed);
         assert!(p <= 20, "position hors fenêtre : {p}");
+    }
+
+    /// Le raccord de deux tranches est fondu sur 2 ms : une marche d'échantillon
+    /// (fin de tranche + attaque suivante) s'entend comme un grésillement à
+    /// chaque enchaînement (vécu 26/11). Le fondu ne doit ni perdre ni rejouer
+    /// d'échantillon du segment suivant.
+    #[test]
+    fn couture_de_segments_fondue_sans_clic() {
+        // sinus de période 64 : aux indices 1000 et 5000 les phases diffèrent,
+        // donc la couture nue ferait une marche d'environ 1,3
+        let data: Arc<Vec<f32>> = Arc::new(
+            (0..10_000)
+                .map(|i| (i as f32 * std::f32::consts::TAU / 64.0).sin())
+                .collect(),
+        );
+        let sh = Arc::new(Shared::default());
+        sh.stop.store(1000, Ordering::Relaxed);
+        sh.seg_next.store((6000u64 << 32) | 5000, Ordering::Relaxed);
+        let mut src = LoopSource {
+            data: data.clone(),
+            channels: 1,
+            rate: 1000,
+            pos: 0,
+            head: 0,
+            shared: sh.clone(),
+            xfade: 16,
+            seam_skip: 0,
+        };
+        // le fondu **remplace** les 16 derniers échantillons de la tranche par
+        // le mélange (il n'ajoute rien) : la suite perd 16 échantillons, soit
+        // 2 ms par couture — inaudible, et aucun échantillon du segment suivant
+        // n'est perdu ni rejoué
+        let got: Vec<f32> = (0..1984).map(|_| src.next().expect("pas de trou")).collect();
+        assert_eq!(got.len(), 1984);
+        let max_jump = got
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_jump < 0.35, "saut de couture {max_jump} (clic)");
+        // le segment suivant est rejoué en entier, sans doublon : ses 16
+        // premiers échantillons passent sous le fondu, puis on reprend à 5016
+        assert!((got[1000] - data[5016]).abs() < 1e-6, "reprise après le fondu");
+        assert!((got[1983] - data[5999]).abs() < 1e-6, "fin du segment suivant");
+        assert_eq!(sh.jumps.load(Ordering::Relaxed), 1);
+        // sans suivant programmé, aucun fondu ne retarde la fin
+        let sh2 = Arc::new(Shared::default());
+        sh2.stop.store(300, Ordering::Relaxed);
+        let mut seul = LoopSource {
+            data: data.clone(),
+            channels: 1,
+            rate: 1000,
+            pos: 0,
+            head: 0,
+            shared: sh2,
+            xfade: 16,
+            seam_skip: 0,
+        };
+        let n = (&mut seul).count();
+        assert_eq!(n, 300, "la source s'arrête au stop, sans fondu");
     }
 
     /// Suite : la source saute au segment programmé sans rendre `None`, donc
@@ -901,6 +1026,7 @@ mod tests {
             head: 0,
             shared: sh.clone(),
             xfade: 0,
+            seam_skip: 0,
         };
         let vals: Vec<f32> = (&mut src).take(500).collect();
         assert_eq!(

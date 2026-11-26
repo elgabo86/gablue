@@ -65,6 +65,17 @@ impl Db {
                 .execute("UPDATE tracks SET loop = NULL, loop_start = NULL", [])?;
             self.conn.execute_batch("PRAGMA user_version = 3")?;
         }
+        // version 4 : le blanc numérique de tête du rendu zxtune (28 à 75 ms)
+        // est retiré du PCM ; les fenêtres mesurées sur la timeline précédente
+        // sont décalées d'autant → on les oublie pour les re-mesurer
+        let version: i64 = self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version < 4 {
+            self.conn
+                .execute("UPDATE tracks SET loop = NULL, loop_start = NULL", [])?;
+            self.conn.execute_batch("PRAGMA user_version = 4")?;
+        }
         Ok(())
     }
 

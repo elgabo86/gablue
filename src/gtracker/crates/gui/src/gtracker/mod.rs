@@ -24,7 +24,7 @@ use gtracker_core::model::Track as AudioTrack;
 use gtracker_core::peaks::Wave;
 use gtracker_core::player::Player;
 use gtracker_core::project::{self, project_path, Clip, Id, Project, Role, Source, StretchMode};
-use gtracker_core::tempo::Tempo;
+use gtracker_core::tempo::{self, Tempo};
 
 use wave::{WaveCache, WaveKey};
 
@@ -2546,24 +2546,55 @@ impl Gtracker {
                 (a, b)
             })
             .unwrap_or((0.0, total));
-        let len = self
-            .tempos
+        // La période des tuiles est celle **réellement découpée** par l'éditeur
+        // (`tempo::fitted`, ajustée sur les attaques), pas `beat × pas` : un
+        // BPM estimé 0,1 % faux dérive de quelques ms par tranche, soit 300 ms
+        // en fin de piste — « les séquences se décalent de plus en plus, plus
+        // elles sont loin du départ du son » (vécu 26/11, USF N64).
+        let looped = self
+            .project
+            .sources
             .get(idx)
-            .and_then(|t| *t)
-            .map(|t| t.beat * self.clip_beats)
-            .filter(|l| *l > 0.0)
-            .unwrap_or((to - from).max(0.1) / 8.0);
-        let mut out = Vec::new();
-        let mut t = from;
-        while t < to - 1e-3 {
-            let end = (t + len).min(to);
-            if end - t > 0.02 {
-                out.push((t, end));
+            .map(|s| s.loop_start.is_some())
+            .unwrap_or(false);
+        let env = self
+            .audio
+            .get(idx)
+            .and_then(|a| a.as_ref())
+            .and_then(|d| d.envelope.as_ref());
+        let (t, len) = match self.tempos.get(idx).and_then(|t| *t) {
+            Some(mut tempo) => {
+                // même règle que `App::grid` : la boucle ancre la grille, sans
+                // boucle on garde la phase détectée
+                if looped {
+                    tempo.phase = from;
+                }
+                match tempo::fitted(env, &tempo, self.clip_beats, to) {
+                    Some((anchor, len)) if len > 0.0 => (anchor.max(from).min(to), len),
+                    _ => (from, tempo.beat * self.clip_beats.max(1.0)),
+                }
             }
-            t = end;
-            if out.len() > 512 {
-                break;
-            }
+            None => (from, (to - from).max(0.1) / 8.0),
+        };
+        let len = if len > 1e-3 { len } else { (to - from).max(0.1) };
+        // Mêmes règles de tête que l'éditeur (`tempo::cut_from`) : une tête
+        // **courte est absorbée par la première tuile**, une vraie intro reste
+        // une tuile à part. Démarrer directement à l'ancre perdait les
+        // premières dizaines/centaines de ms de musique dans l'arrangement
+        // (« il manque un petit bout de musique au tout début », vécu 26/11) :
+        // l'éditeur les gardait, la pile de tuiles non.
+        let mut out: Vec<(f64, f64)> = tempo::cut_from(to, t, len)
+            .into_iter()
+            .take(512)
+            .filter_map(|w| {
+                // une source qui déclare sa boucle ne fait pas de tuile dans
+                // l'intro (genh, VGM) : on rogne au début de boucle
+                let start = w.start.max(from);
+                (w.end - start > 0.02).then_some((start, w.end))
+            })
+            .collect();
+        if out.is_empty() {
+            out.push((from, to));
         }
         out
     }
@@ -2739,6 +2770,123 @@ mod tests {
         let id = g.project.add_clip(clip);
         g.sel_clip = Some(id);
         g
+    }
+
+    /// Les tuiles de l'arrangement suivent la grille **ajustée** sur les
+    /// attaques (`tempo::fitted`), pas `beat × pas` : avec un BPM 0,2 % faux,
+    /// la dernière tuile finissait 300 ms à côté (vécu 26/11, USF N64 : « les
+    /// séquences se décalent de plus en plus, plus elles sont loin du départ »).
+    #[test]
+    fn tuiles_de_larrangement_ne_derivent_pas() {
+        let rate = 8_000u32;
+        let total = 20.0;
+        let beat = 0.5; // 120 BPM réels
+        let n = (total * rate as f64) as usize;
+        let mut pcm = vec![0.0f32; n];
+        let mut t = 0.0;
+        while t < total {
+            let i = (t * rate as f64) as usize;
+            for k in 0..8 {
+                if i + k < n {
+                    pcm[i + k] = 0.8;
+                }
+            }
+            t += beat;
+        }
+        let envelope = gtracker_core::tempo::envelope(&pcm, 1, rate);
+        assert!(envelope.is_some(), "enveloppe d'impulsions");
+        let d = Decoded {
+            pcm: std::sync::Arc::new(pcm),
+            channels: 1,
+            rate,
+            total,
+            window: None,
+            window_passes: None,
+            tempo: None,
+            envelope,
+            peaks: std::sync::Arc::new(vec![(-0.8, 0.8); 2400]),
+        };
+        let mut g = Gtracker::new();
+        let idx = g.add_audio(&track(), d, true);
+        // le tempo annoncé est 0,2 % trop lent : sans ajustement, les tuiles
+        // dérivent de 4 ms par tranche, soit 36 ms en fin de piste
+        g.tempos[idx] = Some(Tempo {
+            bpm: 60.0 / (beat * 1.002),
+            beat: beat * 1.002,
+            phase: 0.0,
+            confidence: 0.9,
+        });
+        g.clip_beats = 4.0;
+        let slices = g.slices_for(idx);
+        assert!(slices.len() > 5, "{} tuiles", slices.len());
+        let len = slices[1].1 - slices[1].0;
+        assert!((len - 4.0 * beat).abs() < 0.006, "période de tuile {len}");
+        for (i, (start, _)) in slices.iter().enumerate() {
+            let grille = (start / (4.0 * beat)).round() * 4.0 * beat;
+            assert!(
+                (start - grille).abs() < 0.010,
+                "tuile {i} à {start:.3} s, grille {grille:.3} s"
+            );
+        }
+    }
+
+    /// Une tête de piste **courte** est de la musique : elle doit rester dans la
+    /// première tuile de l'arrangement (absorbée), comme dans l'éditeur. Avant,
+    /// `slices_for` démarrait à l'ancre et les premières dizaines de ms de la
+    /// piste n'appartenaient à aucune tuile — « il manque un petit bout de
+    /// musique au tout début » (vécu 26/11).
+    #[test]
+    fn la_tete_courte_reste_dans_la_premiere_tuile() {
+        let rate = 8_000u32;
+        let total = 10.0;
+        let beat = 0.5;
+        let phase = 0.30;
+        let n = (total * rate as f64) as usize;
+        let mut pcm = vec![0.0f32; n];
+        let mut t = phase;
+        while t < total {
+            let i = (t * rate as f64) as usize;
+            for k in 0..8 {
+                if i + k < n {
+                    pcm[i + k] = 0.8;
+                }
+            }
+            t += beat;
+        }
+        let envelope = gtracker_core::tempo::envelope(&pcm, 1, rate);
+        let d = Decoded {
+            pcm: std::sync::Arc::new(pcm),
+            channels: 1,
+            rate,
+            total,
+            window: None,
+            window_passes: None,
+            tempo: None,
+            envelope,
+            peaks: std::sync::Arc::new(vec![(-0.8, 0.8); 2400]),
+        };
+        let mut g = Gtracker::new();
+        let idx = g.add_audio(&track(), d, true);
+        g.tempos[idx] = Some(Tempo {
+            bpm: 120.0,
+            beat,
+            phase,
+            confidence: 0.9,
+        });
+        g.clip_beats = 4.0;
+        let slices = g.slices_for(idx);
+        assert!(slices.len() > 3, "{} tuiles", slices.len());
+        assert_eq!(slices[0].0, 0.0, "la tuile 1 doit commencer à 0");
+        assert!(
+            (slices[0].1 - (phase + 4.0 * beat)).abs() < 0.06,
+            "tête non absorbée : {slices:?}"
+        );
+        assert!(
+            (slices[1].0 - slices[0].1).abs() < 1e-9,
+            "aucun trou entre les tuiles : {slices:?}"
+        );
+        let len = slices[1].1 - slices[1].0;
+        assert!((len - 4.0 * beat).abs() < 0.02, "période de tuile {len}");
     }
 
     fn frame(ctx: &egui::Context, g: &mut Gtracker, events: Vec<Event>) -> Vec<Cmd> {

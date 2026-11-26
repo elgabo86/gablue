@@ -92,10 +92,22 @@ pub fn analyse_tempo(
     total: f64,
     window: Option<(f64, f64)>,
 ) -> crate::tempo::Tempo {
-    crate::beats::detect(pcm, channels, rate, total, window)
+    let base = crate::beats::detect(pcm, channels, rate, total, window)
         .or_else(|| crate::tempo::detect(pcm, channels, rate, total))
         .or_else(|| crate::tempo::detect_weak(pcm, channels, rate, total))
-        .unwrap_or_else(crate::tempo::Tempo::fallback)
+        .unwrap_or_else(crate::tempo::Tempo::fallback);
+    // Dernier recalage sur les attaques : la détection peut poser la grille un
+    // demi-temps à côté (vécu 26/11 : « toutes les séquences ont un bout en trop
+    // à la fin »). **Pas** quand le format déclare son point de boucle : ce
+    // point est le bon ancrage par construction (PSF, VGM, genh), seule la
+    // découpe le raffine de ±60 ms (`fit_grid`).
+    if window.is_some() {
+        return base;
+    }
+    match crate::tempo::envelope(pcm, channels, rate) {
+        Some(env) => crate::tempo::pulse(&env, &base),
+        None => base,
+    }
 }
 
 /// Mémorise la grille dans l'entrée mémoire de la piste : revenir sur le mode
@@ -285,15 +297,35 @@ fn decode_uncached(zxtune: &Path, track: &Track) -> Result<Decoded> {
     if crate::util::is_common_audio(&track.file) {
         trim_edge_silence(&mut pcm, channels.max(1) as usize, rate);
     }
+    // **Tout rendu de zxtune commence par un blanc numérique** : la montée en
+    // régime de son moteur. Mesuré 26/11 : 74,94 ms à l'identique sur les USF
+    // N64 (Banjo-Tooie), 28 à 39 ms sur les PSF (FF8). La lecture l'enjambait
+    // déjà (`head_silence`), mais la timeline le gardait : la grille se cale
+    // dessus, la première tranche démarre quelques ms après 0 et le tout début
+    // de la piste n'appartient à aucune tranche — « il manque un mini bout au
+    // début de chaque musique, du coup ça fausse la découpe » (vécu 26/11).
+    // On le retire donc du **PCM**, comme pour un fichier audio courant ; les
+    // durées et fenêtres absolues (en-tête VGM/SPC, `.m3u`) sont décalées
+    // d'autant, sinon elles désigneraient un autre instant du morceau.
+    let ch = channels.max(1) as usize;
+    let lead = head_zeros(&pcm, ch, rate);
+    let shift = lead as f64 / rate as f64;
+    if lead > 0 {
+        pcm.drain(..lead * ch);
+    }
     let total = pcm.len() as f64 / (channels as f64 * rate as f64);
     // PSF : `length` vaut N tours entiers de la séquence (zxtune rend la boucle
     // plusieurs fois), donc boucler sur la durée du tag rejoue la même partie.
     // On retrouve la période réelle dans le rendu ; à défaut, l'appelant
     // retombe sur la durée du tag.
     let (window, window_passes) = if is_vgm_file(&track.file) {
-        (vgm_window(&track.file, total).ok().flatten(), None)
-    } else if let Some((start, end)) = crate::spc::loop_window(&track.file)
-        .filter(|(_, end)| *end > 2.0 && *end < total - 0.3)
+        (
+            shift_window(vgm_window(&track.file, total).ok().flatten(), shift),
+            None,
+        )
+    } else if let Some((start, end)) =
+        shift_window(crate::spc::loop_window(&track.file), shift)
+            .filter(|(_, end)| *end > 2.0 && *end < total - 0.3)
     {
         // boucle **du fichier** (tag ID666), pas une détection : `passes` reste
         // vide pour que la GUI annonce « boucle du format »
@@ -305,7 +337,11 @@ fn decode_uncached(zxtune: &Path, track: &Track) -> Result<Decoded> {
             Some((start, end, passes)) => (Some((start, end)), Some(passes)),
             None => (None, None),
         }
-    } else if let Some(len) = track.length.filter(|l| *l > 4.0 && total > *l * 1.5) {
+    } else if let Some(len) = track
+        .length
+        .map(|l| l - shift)
+        .filter(|l| *l > 4.0 && total > *l * 1.5)
+    {
         // Durée annoncée par le `.m3u` (NSF/GBS/SPC/USF…) : un arrondi à la
         // seconde, presque toujours un peu court, donc on perd un bout à chaque
         // tour (vécu 21/11, Kirby NES : 38 s annoncés, 38,405 s réels). Le rendu
@@ -384,21 +420,12 @@ fn trim_edge_silence(pcm: &mut Vec<f32>, ch: usize, rate: u32) {
     pcm.drain(..head * ch);
 }
 
-/// Zéros **exacts** en tête d'un rendu, capés à 200 ms, **rendus en
-/// échantillons entrelacés** (trames × canaux) : c'est l'unité de tous les
-/// index de `LoopSource`/`Player`. zxtune/le SPU laisse quelques dizaines de ms
-/// à zéro avant la première attaque (mesuré 36 ms sur FF8 « Force Your Way »,
-/// 0,0 sur les tranches suivantes). Ce n'est pas de la musique : le rejouer à
-/// chaque retour au début fabrique un faux trou. On ne touche qu'à la
-/// **lecture** (timeline, boucle, export inchangés), et on ne coupe jamais un
-/// départ doux : seuls les zéros numériques comptent.
-///
-/// Renvoyer des **trames** ici a déjà coûté cher : une trame impaire en stéréo
-/// donnait un index impair, donc les canaux inversés (vécu 21/11 : « une fois
-/// ça joue plus à gauche, une fois plus à droite »).
-pub fn head_silence(pcm: &[f32], channels: usize, rate: u32) -> usize {
-    let ch = channels.max(1);
-    let cap = (rate as usize / 5).max(1); // 200 ms
+/// Zéros **exacts** en tête d'un rendu, en **trames**, capés à 200 ms
+/// (l'artefact de démarrage de zxtune fait 28 à 75 ms ; au-delà c'est un blanc
+/// voulu par le rip, on n'y touche pas).
+fn head_zeros(pcm: &[f32], ch: usize, rate: u32) -> usize {
+    let ch = ch.max(1);
+    let cap = (rate as usize / 5).max(1);
     let frames = (pcm.len() / ch).min(cap);
     let mut n = 0;
     for f in 0..frames {
@@ -408,7 +435,34 @@ pub fn head_silence(pcm: &[f32], channels: usize, rate: u32) -> usize {
             break;
         }
     }
-    n * ch
+    n
+}
+
+/// Décale une fenêtre de boucle **absolue** (en-tête VGM/SPC, durée `.m3u`) du
+/// blanc retiré au décodage. Sans ce décalage la boucle désignerait un autre
+/// instant du morceau (voir `decode_uncached`).
+fn shift_window(win: Option<(f64, f64)>, shift: f64) -> Option<(f64, f64)> {
+    if shift <= 0.0 {
+        return win;
+    }
+    win.map(|(start, end)| ((start - shift).max(0.0), (end - shift).max(0.0)))
+}
+
+/// Zéros **exacts** en tête d'un rendu, capés à 200 ms, **rendus en
+/// échantillons entrelacés** (trames × canaux) : c'est l'unité de tous les
+/// index de `LoopSource`/`Player`. zxtune/le SPU laisse quelques dizaines de ms
+/// à zéro avant la première attaque (mesuré 36 ms sur FF8 « Force Your Way »,
+/// 75 ms sur les USF N64). Ce n'est pas de la musique : le rejouer à chaque
+/// retour au début fabrique un faux trou. Le blanc est **retiré du PCM** au
+/// décodage pour les rendus zxtune ; il ne reste ici qu'un filet pour un PCM
+/// encore précédé de zéros (vgmstream), et la timeline n'est jamais touchée par
+/// cette fonction.
+///
+/// Renvoyer des **trames** ici a déjà coûté cher : une trame impaire en stéréo
+/// donnait un index impair, donc les canaux inversés (vécu 21/11 : « une fois
+/// ça joue plus à gauche, une fois plus à droite »).
+pub fn head_silence(pcm: &[f32], channels: usize, rate: u32) -> usize {
+    head_zeros(pcm, channels, rate) * channels.max(1)
 }
 
 /// Décodage par vgmstream (un tour, sans fondu) + boucle du format.
@@ -639,6 +693,43 @@ mod tests {
             envelope: None,
             peaks: Arc::new(Vec::new()),
         }
+    }
+
+    /// Le blanc numérique de tête d'un rendu zxtune (montée en régime du
+    /// moteur : 75 ms sur les USF N64, 28 à 39 ms sur les PSF) est retiré du
+    /// PCM, et les fenêtres absolues suivent le décalage. Sans ça la première
+    /// tranche démarre quelques ms après 0 et le début de la piste n'appartient
+    /// à aucune tranche (vécu 26/11, Banjo-Tooie et FF8 : « il manque un mini
+    /// bout au début de chaque musique, du coup ça fausse la découpe »).
+    #[test]
+    fn blanc_numerique_de_tete_retire() {
+        let rate = 1000; // 1 kHz : 1 trame = 1 ms
+        let ch = 2;
+        let mut pcm = vec![0.0f32; 75 * ch]; // 75 ms de zéros exacts
+        for i in 0..500 {
+            // départ franc mais pas à zéro : sin(0) serait pris pour du blanc
+            let v = 0.3 * ((i as f32 + 1.0) * 0.02).sin();
+            pcm.push(v);
+            pcm.push(v);
+        }
+        assert_eq!(head_zeros(&pcm, ch, rate), 75);
+        // `head_silence` rend des échantillons entrelacés, pas des trames
+        assert_eq!(head_silence(&pcm, ch, rate), 150);
+        let close = |a: (f64, f64), b: (f64, f64)| {
+            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6
+        };
+        // fenêtre de format (tag ID666, en-tête VGM) : décalée d'autant
+        assert!(close(
+            shift_window(Some((10.0, 120.0)), 0.075).unwrap(),
+            (9.925, 119.925)
+        ));
+        assert!(close(
+            shift_window(Some((0.0, 120.0)), 0.075).unwrap(),
+            (0.0, 119.925)
+        ));
+        assert_eq!(shift_window(None, 0.075), None);
+        // un blanc de plus de 200 ms n'est pas un artefact de moteur : capé
+        assert_eq!(head_zeros(&vec![0.0f32; 5000], ch, rate), 200);
     }
 
     /// Un blanc numérique de tête et de queue est retiré du PCM (fichier audio

@@ -263,7 +263,8 @@ et le nombre de tours en quelques centaines de ms.
 - `tracks.loop` / `tracks.loop_start` : `NULL` = jamais mesuré, `0` = mesuré sans
   boucle distincte, `> 0` = fenêtre. C'est ce qui évite de relancer la sonde à chaque
   ouverture. `PRAGMA user_version` invalide les mesures d'une version précédente
-  (v2 : fenêtres PSF fausses ; v3 : boucle `.spc` non lue → `UPDATE tracks SET
+  (v2 : fenêtres PSF fausses ; v3 : boucle `.spc` non lue ; v4 : blanc de tête
+  du rendu retiré, la timeline a bougé de 28 à 75 ms → `UPDATE tracks SET
   loop = NULL, loop_start = NULL`).
 - Boucle activable à tout moment, y compris après la fin du morceau : rodio a
   consommé la source, donc `Player` garde les PCM et `queue_from()` réinjecte une
@@ -344,28 +345,41 @@ et le nombre de tours en quelques centaines de ms.
   WAV écrit un en-tête provisoire et a besoin d'un fichier cherchable. La piste
   boucle donc sur `total`, ce qui inclut l'intro éventuelle — le manuel A/B reste
   la solution pour ces sets.
-- **Blanc numérique de tête de rendu** (vécu 21/11, FF8 « Force Your Way ») :
-  zxtune écrit **36 ms de zéros exacts** au début du WAV rendu (mesuré avec
-  `examples/silencecheck` : 18 colonnes à 0 sur 50 ms, puis l'attaque ; les
-  tranches suivantes n'ont aucun blanc). Ce n'est pas un trou d'enchaînement :
-  `queue_segment` saute à l'échantillon près. Mais toute lecture qui revient à
-  0 (première tranche, boucle depuis 0, couture « dernière → première »)
-  rejouait ce blanc, ce qui s'entend comme une coupure « au lieu du début de
-  musique ». `LoopSource.head` (via `head_silence`, zéros **exacts** seulement,
-  cap 200 ms) l'enjambe : au démarrage, au saut de montage vers 0, au bouclage et
-  dans le fondu croisé (qui mêle le vrai début, pas les zéros).
-  **`head_silence` rend des échantillons entrelacés, pas des trames** — tout
+- **Blanc numérique de tête de rendu : retiré du PCM** (vécu 21/11 sur FF8
+  « Force Your Way », 36 ms ; étendu le 26/11). zxtune écrit **des zéros exacts**
+  au début de chaque WAV rendu — la montée en régime de son moteur : mesuré
+  74,94 ms à l'identique sur les USF N64 (Banjo-Tooie) et 28 à 39 ms sur les PSF
+  (FF8), les tranches suivantes n'ayant aucun blanc. Au départ, seul
+  `LoopSource.head` (`head_silence`) l'enjambait à la lecture : la timeline le
+  gardait, la grille se calait dessus et la **première tranche démarrait
+  quelques ms après 0** — le début de la piste n'appartenait à aucune tranche
+  (« il manque un mini bout au début de chaque musique, du coup ça fausse la
+  découpe », retour user 26/11, N64 **et** PSX). `decode_uncached` le retire
+  donc du PCM (`head_zeros`, zéros exacts seulement, cap 200 ms) et décale
+  d'autant les durées et fenêtres **absolues** (en-tête VGM/SPC, longueur
+  `.m3u`) avec `shift_window` : sans ça la boucle désignerait un autre instant.
+  Mesure après : `silencecheck` donne `0.00 ms` de blanc enjambé et la première
+  tranche à `0.000` (Banjo-Tooie « Cauldron Keep », FF8 « Blue Fields »).
+  `head_silence`/`LoopSource.head` restent en filet (PCM vgmstream ou piste
+  déjà décodée), **rendus en échantillons entrelacés, pas en trames** — tout
   `pos` de `LoopSource` est un index d'échantillon. Version trames = index
   impair dès que la tête compte un nombre impair de trames (mesuré 1661 trames,
   impair, sur FF8) → **canaux inversés** : « une fois ça joue plus à gauche, une
-  fois plus à droite » (vécu 21/11). Test : `le_blanc_de_tete_ne_decale_pas_les_canaux`. La **timeline
-  n'est pas touchée** (durées, boucle, `window`, export restent ceux du rendu) :
-  décaler le PCM aurait désaligné les points de boucle de `probe`/en-têtes.
+  fois plus à droite » (vécu 21/11). Test : `le_blanc_de_tete_ne_decale_pas_les_canaux`,
+  plus `blanc_numerique_de_tete_retire` (rognage + décalage de fenêtre). Les
+  fenêtres mesurées en base sont oubliées (`user_version` 4, comme v2/v3)
+  puisque la timeline a bougé de ces quelques dizaines de ms.
   L'**export d'un montage** (`convert::segment_ranges`) applique la même règle :
   blanc retiré quand l'export commence à 0 (une tranche entièrement dans le
   blanc disparaît), intact au milieu d'un montage. L'export d'une piste entière
   passe par zxtune et garde son lead-in (normal pour un rip, et le refaire
   imposerait un décodage + réencodage ffmpeg).
+- **Une tête de piste plus longue qu'un artefact de moteur suit la règle de
+  découpe** : au-delà des zéros exacts (une intro douce, « Banjo's House Blues »
+  0,6 s), `cut_on` la garde en tuile « intro » si elle vaut ≥ 35 % d'une tranche
+  et la jette sinon — c'est la demande du 21/11 (« ils doivent être tous du même
+  temps »). Ne pas confondre avec le blanc numérique ci-dessus, qui n'est pas de
+  la musique : lui n'a aucune raison d'exister dans la timeline.
 - **Blanc de tête/queue d'un fichier audio courant : retiré du PCM**
   (`decode::trim_edge_silence`, demande user 21/11 : « certains sons ont du blanc
   au début et ça fausse tout »). Un `.wav`/`.mp3`/`.flac`/`.ogg` déposé sur la
@@ -383,7 +397,8 @@ et le nombre de tours en quelques centaines de ms.
   par zxtune et garde donc son lead-in : c'est le montage (PCM) qui est trimé.
 - **Pas** de fondu de sortie : une piste se termine net (demande utilisateur, 20/11). Le
   rendu de lecture n'a pas de fondu (retiré pour la boucle), donc la fin est sèche et
-  c'est voulu — ne pas réintroduire de `fade` de sortie dans `LoopSource`.
+  c'est voulu — ne pas réintroduire de `fade` de sortie dans `LoopSource`. (Un
+  raccord *entre deux tranches* est fondu, lui : voir la couture de suite.)
 - Fondu croisé de couture en boucle : **2 ms**, rampe en cosinus (`LoopSource.xfade`).
   Plus long (10 ms) = on mélange la fin de phrase et l'attaque suivante → flam audible
   (« quelques ms de décalage », vécu 20/11) ; plus court = la marche de la couture
@@ -437,15 +452,33 @@ et le nombre de tours en quelques centaines de ms.
   Saga » donnait +191 ms, soit une fausse intro de 0,93 s). `cut_on` découpe
   ensuite **strictement périodique** : mesuré après, 2,737 s pour *toutes* les
   tranches de FF8 (`cutjitter`, `RP_CUT_DEBUG=1` affichent la grille ajustée).
+  Un ajustement **robuste** (Theil–Sen) et un garde-fou élargi à ±½ temps ont
+  été essayés le 26/11 puis **annulés** : ils déplaçaient l'ancre d'un demi-temps
+  sur plusieurs pistes et « tout était faux » à l'écoute (retour user). Le
+  moindre-carré borné à ±60 ms est le comportement retenu ; l'écart résiduel de
+  phase vient de l'enveloppe (pic de flux ~20 ms après l'attaque), pas d'un
+  réglage à élargir.
   **Phase négative** (bouton « − mesure ») : `fit_grid` ramenait la phase sur
   la première ligne ≥ 0 (`phase -= floor(phase/len0) · len0`), comme `cut` ;
   sans ça la fenêtre de l'ancre était `clamp(0.0, phase + 60 ms)` avec une borne
   haute négative → panique Rust « min > max » et le programme **quittait** au
   clic sur « − mesure » (vécu 21/11). Test : `decalage_negatif_ne_plante_pas`.
+  **Ancre ajustée négative** (la grille commence avant 0) : `cut_from` avance
+  d'une tranche et garde la tête comme **première tranche** — sinon les
+  premières secondes de la piste n'appartenaient à aucune tranche (« il manque
+  un petit bout de musique au tout début », vécu 26/11).
   Tête : une vraie intro (ancre ≥ 35 % d'une tranche) reste une tranche à part ;
-  une tête **courte est jetée**, silencieuse ou non — la fondre dans la première
-  tranche la rendait plus longue que les autres (GoldenEye « Bunker 1 » : 4,084 s
-  contre 4,004, demande user 21/11 : « ils doivent être tous du même temps »).
+  une tête **courte est absorbée par la première tranche** (demande user 26/11) :
+  la jeter faisait commencer le montage quelques dizaines de ms après le début
+  de la piste (« il manque un mini bout au début de chaque musique »). Cette tête
+  est de la musique (anacrouse), pas un artefact de moteur, et le démarrage de
+  la grille est désormais recollé sur les attaques (`tempo::pulse`), donc plus
+  sur une phase décalée qui gonflait la première tranche. Conséquence : la
+  **première** tranche peut être un peu plus longue que les autres (de la tête),
+  et ses voisines restent rigoureusement égales. Le 21/11, la tête courte était
+  jetée pour que toutes les tranches durent pareil (GoldenEye « Bunker 1 » :
+  4,084 s contre 4,004) — c'est ce compromis qui est abandonné, pas la règle de
+  durée égale.
   Seule la **dernière** tranche peut différer : la fin de boucle n'est pas
   forcément un multiple de la tranche (FF8 boucle sur 107,996 s ≈ 39,4 tranches
   de 2 mesures → 1,23 s ; Lockjaw's Saga → 7,03 s). Mesure de contrôle :
@@ -453,6 +486,29 @@ et le nombre de tours en quelques centaines de ms.
   la 1 (Bunker 1 : 4,004 s partout).
   L'enveloppe d'attaque du rendu entier vit dans `Decoded.envelope` (calculée une
   fois avec le tempo), pas dans `Tempo` (qui reste `Copy`).
+- **La grille ajustée est la seule vérité de découpe** (vécu 26/11 : « les
+  séquences se décalent de plus en plus, plus elles sont loin du départ du son »).
+  `tempo::fitted(env, tempo, pas, fin)` expose l'ancre et la période que
+  `cut_on` a réellement retenues, et `tempo::cut_from(fin, ancre, période)` la
+  découpe strictement périodique extraite de `cut_on`. Tout ce qui **dessine ou
+  découpe** une source passe par ces deux fonctions : `App::fit`
+  (`refresh_fit` dans `recut`/`recut_clips`) alimente `cut_now`, les repères de
+  la forme d'onde, les battements et l'aimant via `App::grid`, et
+  `slices_for` (tuiles de l'arrangement) refait le même ajustement. Utiliser
+  `Tempo::beat × pas` à la place fait dériver de 0,1 % — mesuré le 26/11 avant
+  le recalage du pouls sur Banjo-Tooie « Cauldron Keep: Gun Chamber » :
+  115,13 BPM détectés contre 2,0867 s réels (repli de l'enveloppe sur la
+  période : contraste 1,81 contre 0,42), soit **2,2 ms par mesure et 280 ms en
+  fin de piste**, alors que la découpe de l'éditeur, elle, était juste. Après le
+  recalage (`tempo::pulse`), l'écart résiduel entre période ajustée et théorique
+  reste ≤ 0,05 % (Cloud Race +0,04 %) — c'est justement ce que la découpe doit
+  suivre. `grid_base` est l'entrée de
+  l'ajustement : ne jamais y réinjecter le résultat (chaque passage cumulerait
+  jusqu'à 60 ms de raffinement d'ancre). Grille **posée à la main** (`cut_anchor`
+  ou `bpm_manual`) = rigide : `fit` est vidé et `cut_now` repasse par
+  `tempo::cut`, un BPM réglé à 120,00 ne doit pas redevenir 120,31 en douce.
+  Tests : `grille_ajustee_ne_derive_pas_en_fin_de_piste` (moteur) et
+  `tuiles_de_larrangement_ne_derivent_pas` (GUI).
 - **Choix du tempo en deux étages** (vécu 21/11, « la coupe n'est pas au bon
   endroit » sur les PSF d'Ape Escape) :
   1. le peigne d'harmoniques favorise les sous-multiples ; dans la bande ≥ 85 % du
@@ -587,6 +643,30 @@ et le nombre de tours en quelques centaines de ms.
      une grille imparfaite que pas de découpe.
   4. `Tempo::fallback()` — 120 BPM, phase 0, `confidence = 0` : le mode Découpe
      reste utilisable partout, et l'interface affiche « grille régulière ».
+  Puis `decode::analyse_tempo` passe la grille retenue par **`tempo::pulse`**
+  (sauf quand le format déclare son point de boucle : `window.is_some()`, ce
+  point est le bon ancrage par construction) : la phase est recherchée sur
+  **±½ temps** avec une fenêtre étroite (±8 ms) qui maximise le flux des temps,
+  et l'octave est doublée si la grille détectée tombe à plus de 0,15 temps des
+  attaques **et** que le double couvre ≥ 0,90 des temps. Mesuré le 26/11 sur
+  Banjo-Tooie « Cauldron Keep: Gun Chamber » : détection à 115,13 BPM phase
+  0,0017, soit **0,27 temps (144 ms) avant** les attaques → chaque frontière
+  tombait *après* l'attaque (« toutes les séquences ont un bout en trop à la
+  fin ») ; après recalage, 230,27 BPM (4 temps = 1,043 s, couverture 0,96) et
+  frontières ~10 ms avant l'attaque PCM. Les quatre autres pistes mesurées
+  (Banjo's House Blues 84,97, Cloud Race 180,01, FF8 « Blue Fields » 160,00,
+  « CAVERN » 73,05) ont une erreur de phase < 0,05 temps : elles ne bougent pas.
+  **La force ne peut pas décider de l'octave** : les temps ajoutés par un
+  doublement sont systématiquement moins forts (rapport 0,44 à 0,75), et les
+  doubler à tort aurait cassé les deux pistes lentes. Le **doublement est la
+  partie ambiguë** : le repli d'enveloppe de « Cauldron Keep » donne une période
+  de 2,0866 s (= 4 temps à 115,13), donc doubler fait des tuiles d'une
+  demi-mesure. L'essai de le retirer (26/11) a donné un « tout est faux » à
+  l'écoute et a été **annulé** — ne pas retoucher l'octave dans la détection,
+  c'est le réglage du badge (alt+molette ×2/÷2) qui tranche.
+  Une phase ramenée près de 0 temps est préférée **juste avant 0** (`origin_phase`,
+  ±¾ de temps) : à 0,98 temps la première tranche absorberait presque une mesure
+  de plus.
   Mesures (21/11) : réseau exact sur synthétique 120 BPM (résidu 2 ms) et sur un
   chiptune 170 BPM réverbéré (7 ms, y compris le petit modèle) ; sur les pistes
   où il est cohérent il tombe d'accord avec l'enveloppe à 0,1 BPM près (7 pistes
@@ -713,6 +793,16 @@ et le nombre de tours en quelques centaines de ms.
   d'horloge à la GUI). Aucun trou d'une frame entre deux tranches (vécu 21/11 :
   « y a une coupure entre les deux »). Le montage (arrangement) peut répéter un
   segment ; `exhausted()` ne sert plus qu'à la fin du montage.
+- **Couture de suite fondue sur 2 ms** (`LoopSource::seam`) : sur les derniers
+  échantillons du segment, la source mélange sa fin avec le début du segment
+  suivant **déjà programmé**, puis reprend après ce qui vient d'être entendu
+  (`seam_skip`). Sans elle, le raccord est une marche — fin de tranche au milieu
+  de la musique + attaque nette — entendue comme un « léger grésillement
+  saccadé » à chaque enchaînement (vécu 26/11). Même durée et même rampe en
+  cosinus que la boucle ; le fondu **remplace** ces échantillons au lieu de
+  s'ajouter, donc la suite perd 2 ms par raccord (inaudible) et n'en rejoue
+  aucun. Il ne s'applique que si un suivant est en file : le dernier segment
+  s'arrête net. Test : `couture_de_segments_fondue_sans_clic`.
 - Éditeur de source (espace « Éditeur » de la coquille, ex-mode Découpe) :
   en-tête (piste, BPM, longueur, grille), grille de tuiles à gauche, montage à droite,
   transport en bas. **Clic sur une tuile = jouer le segment une fois** ; un clic

@@ -264,7 +264,29 @@ pub fn cut_on(
     // demande user 21/11 « ils doivent être tous du même temps, bordel »).
     // Elle est de toute façon hors mesure (moins de 35 % d'une tranche) et
     // `loop_win.start`/l'ancre suivent le premier temps, pas 0.
+    let out = cut_from(whole, anchor, len);
+    if out.is_empty() {
+        return grid;
+    }
+    out
+}
+
+/// Découpe **strictement périodique** à partir d'une grille déjà ajustée :
+/// toutes les tranches durent `len`, l'intro (≥ 35 % d'une tranche) reste une
+/// tranche à part et seule la dernière peut être plus courte.
+///
+/// Extraite de `cut_on` pour que l'arrangement et la forme d'onde découpent
+/// avec **exactement** la même grille que l'éditeur. Sans ça, l'arrangement
+/// recalculait `beat × pas` avec le BPM détecté (faux de 0,1 % sur un morceau
+/// N64) : les tuiles dérivaient de quelques ms par tranche, soit 300 ms au bout
+/// de la piste — « les séquences se décalent de plus en plus loin du départ »
+/// (vécu 26/11).
+pub fn cut_from(whole: f64, anchor: f64, len: f64) -> Vec<crate::model::LoopWindow> {
     let mut out: Vec<crate::model::LoopWindow> = Vec::new();
+    if len <= 0.05 || whole <= 0.5 || !whole.is_finite() || !len.is_finite() {
+        return out;
+    }
+    let anchor = if anchor.is_finite() { anchor } else { 0.0 };
     let mut t;
     if anchor > 0.02 && anchor >= len * 0.35 {
         out.push(crate::model::LoopWindow {
@@ -272,9 +294,32 @@ pub fn cut_on(
             end: anchor,
         });
         t = anchor;
+    } else if anchor > 0.02 {
+        // Tête courte : elle est **absorbée** par la première tranche (demande
+        // user 26/11). Avant, elle était jetée pour que toutes les tranches
+        // durent pareil (demande 21/11), mais cette tête est une **anacrouse**
+        // — de la musique — et la jeter faisait commencer le montage quelques
+        // dizaines de ms après le début de la piste (« il manque un mini bout
+        // au début de chaque musique »). Seule la première tranche est un peu
+        // plus longue, et la grille reste sur les attaques.
+        let end = (anchor + len).min(whole);
+        out.push(crate::model::LoopWindow { start: 0.0, end });
+        t = end;
     } else {
-        // tête courte : jetée (la tranche 1 commence sur le premier temps)
-        t = anchor.max(0.0);
+        // ancre négative : la grille commence **avant** 0, on avance d'une
+        // tranche pour que la tête reste une tranche (même règle que `cut`).
+        // Sans ça, `t = 0` perdait le demi-temps qui sépare la grille du corps
+        // du morceau (vécu 26/11).
+        t = anchor;
+        if t < 0.0 && len > 0.0 {
+            t -= (t / len).floor() * len;
+        }
+        t = t.max(0.0);
+        if t > 0.02 {
+            // la tête (avant la première ligne de grille) est de la musique :
+            // elle reste une tranche, éventuellement plus courte
+            out.push(crate::model::LoopWindow { start: 0.0, end: t });
+        }
     }
     while t + len <= whole - 0.05 {
         out.push(crate::model::LoopWindow {
@@ -296,8 +341,199 @@ pub fn cut_on(
             });
         }
     }
-    if out.is_empty() {
-        return grid;
+    out
+}
+
+/// Grille **réellement** utilisée par `cut_on` : ancre ajustée et période de
+/// tranche (ancre, période). `None` = pas d'enveloppe, pas de grille.
+///
+/// Publique pour que tout ce qui *dessine* ou *découpe* une source (tuiles de
+/// l'arrangement, repères de la forme d'onde, aimant) utilise la même période
+/// que la découpe. Utiliser `tempo.beat` à la place fait dériver les tuiles de
+/// 0,1 % par tranche (vécu 26/11 : « les séquences se décalent de plus en plus,
+/// plus elles sont loin du départ du son »).
+pub fn fitted(
+    env: Option<&Envelope>,
+    tempo: &Tempo,
+    beats: f64,
+    whole: f64,
+) -> Option<(f64, f64)> {
+    let env = env?;
+    let len0 = tempo.beat * beats.max(1.0);
+    if len0 <= 0.05 || whole <= 0.5 || !whole.is_finite() || !tempo.beat.is_finite() {
+        return None;
+    }
+    Some(fit_grid(env, tempo, beats, whole))
+}
+
+/// Flux maximal dans ±`win` autour de `t` (0 hors du signal).
+fn peak_flux(env: &Envelope, t: f64, win: f64) -> f64 {
+    let n = env.flux.len();
+    if n < 3 || env.hop <= 0.0 || t <= 0.0 {
+        return 0.0;
+    }
+    let i0 = ((t - win) / env.hop).max(0.0) as usize;
+    let i1 = (((t + win) / env.hop) as usize + 1).min(n);
+    let mut vmax = 0.0f64;
+    for j in i0..i1 {
+        if env.flux[j] > vmax {
+            vmax = env.flux[j];
+        }
+    }
+    vmax
+}
+
+/// Force d'une attaque **franche** autour de `t` (0 si le maximum est noyé
+/// dans la moyenne : sur du bruit, aucune attaque ne se détache).
+fn attack_strength(env: &Envelope, t: f64, win: f64) -> f64 {
+    let n = env.flux.len();
+    if n < 3 || env.hop <= 0.0 || t <= 0.0 {
+        return 0.0;
+    }
+    let i0 = ((t - win) / env.hop).max(0.0) as usize;
+    let i1 = (((t + win) / env.hop) as usize + 1).min(n);
+    if i1 <= i0 + 2 {
+        return 0.0;
+    }
+    let (mut vmax, mut sum) = (0.0f64, 0.0f64);
+    for j in i0..i1 {
+        let v = env.flux[j];
+        sum += v;
+        if v > vmax {
+            vmax = v;
+        }
+    }
+    let mean = sum / (i1 - i0) as f64;
+    if vmax <= 1e-9 || vmax < mean * 1.8 {
+        0.0
+    } else {
+        vmax
+    }
+}
+
+/// Qualité d'une grille de temps : fraction des temps qui tombent sur une
+/// attaque franche, et force moyenne de ces attaques.
+fn beat_quality(env: &Envelope, beat: f64, phase: f64, total: f64) -> (f64, f64) {
+    let win = (beat * 0.12).min(0.06);
+    let (mut n, mut hit, mut sum) = (0.0, 0.0, 0.0);
+    let mut t = phase;
+    while t < total - 0.05 {
+        let v = attack_strength(env, t, win);
+        if v > 0.0 {
+            hit += 1.0;
+            sum += v;
+        }
+        n += 1.0;
+        t += beat;
+    }
+    if n <= 0.0 {
+        return (0.0, 0.0);
+    }
+    (hit / n, sum / n)
+}
+
+/// Phase la plus juste pour une période donnée : balayage sur **±½ temps**.
+///
+/// La détection (réseau comme enveloppe) peut poser la grille un demi-temps à
+/// côté — mesuré sur Banjo-Tooie « Cauldron Keep: Gun Chamber » : la grille du
+/// réseau tombait 144 ms (0,27 temps) avant les attaques, et `fit_grid` ne
+/// pouvait alors pas la corriger (son garde-fou était de ±60 ms). Résultat :
+/// la frontière de chaque tranche tombait **après** l'attaque — « toutes les
+/// séquences ont un bout en trop à la fin » (vécu 26/11). Le garde-fou est
+/// passé à ±½ temps et l'ajustement est robuste, mais `pulse` reste le point de
+/// départ : c'est lui qui donne à `fit_grid` une phase à moins d'un demi-temps,
+/// et il couvre le cas où l'ajustement échoue (moins de 4 attaques suivies).
+fn refine_phase(env: &Envelope, beat: f64, phase: f64, total: f64) -> f64 {
+    // Fenêtre **étroite** (±8 ms) : une fenêtre large rendrait l'objectif plat
+    // (le maximum d'une attaque est le même pour tout décalage qui la contient)
+    // et la phase resterait jusqu'à 60 ms à côté de l'attaque — exactement le
+    // défaut qu'on corrige.
+    let win = 0.008;
+    let mut best = (f64::NEG_INFINITY, phase);
+    let mut o = -beat / 2.0;
+    while o <= beat / 2.0 + 1e-9 {
+        let p = phase + o;
+        let mut sum = 0.0;
+        let mut n = 0.0;
+        let mut t = p;
+        while t < total - 0.05 {
+            sum += peak_flux(env, t, win);
+            n += 1.0;
+            t += beat;
+        }
+        let score = if n > 0.0 { sum / n } else { 0.0 };
+        if score > best.0 {
+            best = (score, p);
+        }
+        o += env.hop;
+    }
+    best.1
+}
+
+/// Ramène une phase dans la tuile en préférant l'origine **juste avant 0** :
+/// une phase à 0,98 temps ferait commencer la grille un temps après le début du
+/// morceau (la première tranche absorberait presque une mesure de plus) ; à
+/// −0,02 temps la tête est négligeable. Les deux sont musicalement équivalentes.
+fn origin_phase(phase: f64, beat: f64) -> f64 {
+    let mut p = phase.rem_euclid(beat);
+    if p > beat * 0.75 {
+        p -= beat;
+    }
+    p
+}
+
+/// Recalage final du pouls : phase remise sur les attaques, et **octave** quand
+/// la grille détectée ne tombe sur rien.
+///
+/// Mesuré sur cinq pistes (Banjo-Tooie ×3, FF8, un PSF) : les temps ajoutés par
+/// un doublement sont systématiquement ~la moitié moins forts (rapport 0,44 à
+/// 0,75), donc la force ne peut pas décider de l'octave — « Banjo's House
+/// Blues » (84,97 BPM) et « Blue Fields » (160) seraient doublés à tort. Le seul
+/// signal retenu est l'**erreur de phase** : quand la grille détectée est à plus
+/// de 0,15 temps des attaques (Cauldron Keep : 0,27), c'est que la détection a
+/// pris un niveau de subdivision ; on passe au double s'il tombe juste (0,97 de
+/// couverture mesurée). Les autres pistes mesurées sont à moins de 0,05 temps
+/// et gardent leur tempo.
+///
+/// **Limite assumée** : l'octave est la partie ambiguë (le repli d'enveloppe de
+/// « Cauldron Keep » donne une période de 2,0866 s = 4 temps à 115,13 BPM, donc
+/// le doublement fait des tuiles d'une demi-mesure). L'essai de le supprimer a
+/// été **annulé** le 26/11 après un « tout est faux » à l'écoute : on revient au
+/// comportement que l'utilisateur jugeait meilleur, et le BPM reste réglable au
+/// badge (alt+molette = ×2/÷2, « auto » pour revenir).
+pub fn pulse(env: &Envelope, tempo: &Tempo) -> Tempo {
+    let total = env.flux.len() as f64 * env.hop;
+    if total < 8.0 || !(tempo.beat > 0.0) || !tempo.bpm.is_finite() {
+        return *tempo;
+    }
+    let phase = refine_phase(env, tempo.beat, tempo.phase, total);
+    let mut err = (phase - tempo.phase).abs() / tempo.beat;
+    err = err.min(1.0 - err);
+    let mut out = Tempo {
+        bpm: tempo.bpm,
+        beat: tempo.beat,
+        phase: origin_phase(phase, tempo.beat),
+        confidence: tempo.confidence,
+    };
+    let bpm2 = tempo.bpm * 2.0;
+    if err > 0.15 && bpm2 <= 260.0 {
+        let beat2 = 60.0 / bpm2;
+        let phase2 = refine_phase(env, beat2, tempo.phase, total);
+        let (cov2, _) = beat_quality(env, beat2, phase2, total);
+        if std::env::var("RP_GRID_DEBUG").is_ok() {
+            eprintln!(
+                "pouls : phase {:.4} (détectée {:.4}, erreur {:.2} temps) · octave 2× {:.2} BPM couverture {:.2} phase {:.4}",
+                phase, tempo.phase, err, bpm2, cov2, phase2
+            );
+        }
+        if cov2 >= 0.90 {
+            out = Tempo {
+                bpm: bpm2,
+                beat: beat2,
+                phase: origin_phase(phase2, beat2),
+                confidence: tempo.confidence,
+            };
+        }
     }
     out
 }
@@ -391,22 +627,31 @@ fn fit_grid(env: &Envelope, tempo: &Tempo, beats: f64, whole: f64) -> (f64, f64)
         line
     };
     // garde-fous : ±2 % sur la période (au-delà, l'appariement est douteux) et
-    // ±¼ de temps sur l'ancre
+    // ±60 ms sur l'ancre : au-delà, c'est l'appariement des premières attaques
+    // qui est douteux, pas la grille (vécu 21/11, SPC « Lockjaw's Saga » :
+    // +191 ms, soit une fausse intro de 0,93 s). Un essai d'élargir à ±½ temps
+    // (26/11) a été **annulé** : l'ancre partait sur un autre appui et tout le
+    // morceau sonnait faux — « tout est faux maintenant » (retour user 26/11).
     if !len.is_finite() || !anchor.is_finite() || (len / len0 - 1.0).abs() > 0.02 {
         return (phase, len0);
     }
-    // L'ancre n'est qu'un **raffinement** de la phase : au-delà de 60 ms, c'est
-    // l'appariement des premières attaques qui est douteux (vécu 21/11, SPC
-    // « Lockjaw's Saga » : +191 ms, soit une fausse intro de 0,93 s).
     let awin = win.min(0.06);
     let lo = (phase - awin).max(0.0);
     let hi = (phase + awin).max(lo);
     let anchor = anchor.clamp(lo, hi);
+    if std::env::var("RP_CUT_DEBUG").is_ok() {
+        eprintln!(
+            "fit_grid : ancre {:.4} (phase {:.4}) · période {:.4} (théorique {:.4}) · gardés {}/{}",
+            anchor, phase, len, len0, kept.len(), pts.len()
+        );
+    }
     (anchor, len)
 }
 
 /// Moindres carrés `attaque = ancre + k × période`, l'ancre étant exprimée en
 /// absolu (départ de grille, pas un écart à la phase).
+/// Ajuste une droite sur `(k, attaque)` : moindres carrés, puis refus des
+/// quelques points aberrants (fait par l'appelant).
 fn fit_line(pts: &[(f64, f64)]) -> Option<(f64, f64)> {
     let n = pts.len() as f64;
     if n < 2.0 {
@@ -884,8 +1129,112 @@ mod tests {
         assert!((f.bpm - t.bpm).abs() < 1e-9);
     }
 
-    fn noise(n: usize, seed: u64) -> Vec<f32> {
-        let mut s = seed;
+    /// Enveloppe jouet : un pic net toutes les `step` secondes.
+    fn pulse_env(total: f64, step: f64, phase: f64) -> Envelope {
+        let hop = 0.005;
+        let n = (total / hop) as usize;
+        let mut flux = vec![0.0f64; n];
+        let mut t = phase;
+        while t < total {
+            let i = (t / hop).round() as usize;
+            if i > 1 && i + 1 < n {
+                flux[i] = 1.0;
+            }
+            t += step;
+        }
+        Envelope { flux, hop }
+    }
+
+    /// **La grille ajustée ne dérive pas** : un BPM détecté 0,2 % faux décale
+    /// les dernières tranches de plusieurs centaines de ms si la découpe suit
+    /// `beat`. `cut_on` recolle aux attaques, et `fitted`/`cut_from` (utilisés
+    /// par l'arrangement et les repères) doivent rendre **exactement** la même
+    /// grille — sinon les tuiles et les traits dérivent chacun de leur côté
+    /// (vécu 26/11 : « les séquences se décalent de plus en plus, plus elles
+    /// sont loin du départ du son »).
+    #[test]
+    fn grille_ajustee_ne_derive_pas_en_fin_de_piste() {
+        let beat = 0.5; // vraie période d'un temps : 120 BPM
+        let total = 60.0;
+        let env = pulse_env(total, beat, 0.0);
+        // BPM annoncé 0,2 % trop lent (le cas mesuré : 115,13 pour 115,37)
+        let t = fixed(60.0 / (beat * 1.002), 0.0);
+        // sans ajustement, la dernière tranche serait 240 ms à côté
+        let brut = cut(total, &t, 4.0);
+        let fin_brute = brut.last().map(|c| c.start).unwrap_or(0.0);
+        assert!(
+            (fin_brute - (fin_brute / 2.0).round() * 2.0).abs() > 0.05,
+            "la grille théorique devait dériver, fin {fin_brute}"
+        );
+        let clips = cut_on(total, &t, 4.0, Some(&env));
+        assert!(clips.len() > 20, "{} tranches", clips.len());
+        let len = clips[1].len();
+        assert!((len - 4.0 * beat).abs() < 0.006, "période de tranche {len}");
+        // la dernière tranche colle encore à une attaque (une trame de 5 ms)
+        let last = clips.last().unwrap();
+        let k = (last.start / beat).round();
+        assert!(
+            (last.start - k * beat).abs() < 0.010,
+            "fin de piste décalée de {:.0} ms",
+            (last.start - k * beat) * 1000.0
+        );
+        // `fitted` + `cut_from` = exactement la découpe de `cut_on`
+        let (anchor, period) = fitted(Some(&env), &t, 4.0, total).expect("grille ajustée");
+        let again = cut_from(total, anchor, period);
+        assert_eq!(again.len(), clips.len());
+        for (a, b) in again.iter().zip(clips.iter()) {
+            assert!(
+                (a.start - b.start).abs() < 1e-9 && (a.end - b.end).abs() < 1e-9,
+                "{a:?} ≠ {b:?}"
+            );
+        }
+        // sans enveloppe, pas d'ajustement : la grille théorique reste seule
+        assert!(fitted(None, &t, 4.0, total).is_none());
+    }
+
+    /// La phase détectée peut tomber près d'un demi-temps à côté : `pulse` la
+    /// remet sur les attaques, et double l'octave quand la grille détectée ne
+    /// tombe sur **rien** alors que le double tombe juste (vécu 26/11,
+    /// « Cauldron Keep » : frontières après chaque attaque → « un bout en trop
+    /// à la fin », et 115 BPM pour un pouls à 230).
+    #[test]
+    fn pouls_recale_sur_les_attaques() {
+        let rate = 22050;
+        let total = 30.0;
+        let true_beat = 0.2608; // 230 BPM de pouls réel
+        let pcm = click_track(60.0 / true_beat, total, 0.146, rate);
+        let env = envelope(&pcm, 1, rate).expect("enveloppe");
+        // détection : la moitié du pouls (115 BPM), et posée 144 ms à côté
+        let detected = fixed(60.0 / (2.0 * true_beat), 0.0017);
+        let got = pulse(&env, &detected);
+        assert!(
+            (got.bpm - 60.0 / true_beat).abs() < 3.0,
+            "octave non corrigée : {} BPM",
+            got.bpm
+        );
+        let mut t = got.phase;
+        while t < total - 0.2 {
+            // la grille de 115 BPM doit tomber sur un clic sur deux
+            let k = ((t - 0.146) / true_beat).round();
+            // l'enveloppe d'attaque avance de ~20 ms sur le clic (trame de
+            // 20 ms, saut de 5 ms) : la grille tombe juste **avant** l'attaque,
+            // ce qui est le bon côté pour couper
+            assert!(
+                (t - (0.146 + k * true_beat)).abs() < 0.030,
+                "temps {t:.3} hors attaque"
+            );
+            t += got.beat;
+        }
+        // une grille déjà juste n'est pas déplacée
+        let pcm2 = click_track(120.0, total, 0.0, rate);
+        let env2 = envelope(&pcm2, 1, rate).expect("enveloppe");
+        let same = pulse(&env2, &fixed(120.0, 0.0));
+        assert!((same.bpm - 120.0).abs() < 0.5, "BPM {}", same.bpm);
+        // la grille reste sur le clic, ~20 ms avant (avance de l'enveloppe)
+        assert!(same.phase.abs() < 0.03, "phase {}", same.phase);
+    }
+
+    fn noise(n: usize, seed: u64) -> Vec<f32> {        let mut s = seed;
         (0..n)
             .map(|_| {
                 s = s
@@ -1078,19 +1427,19 @@ mod tests {
         }
         // sans enveloppe, on garde la grille telle quelle
         assert_eq!(cut_on(total, &bad, 4.0, None).len(), plain.len());
-        // une tête courte (< 35 % d'une tranche) est **jetée** : la première
-        // tranche commence sur le premier temps et dure une tranche pleine
-        // (GoldenEye « Bunker 1 » : 4,084 s au lieu de 4,004, vécu 21/11)
+        // une tête courte (< 35 % d'une tranche) est **absorbée** par la
+        // première tranche (demande user 26/11 : le début de la piste ne doit
+        // pas manquer) : elle commence à 0 et dure une tranche **plus la tête**
         assert!(
-            fixed[0].start >= phase - 0.06,
-            "première tranche avant l'ancre : {} (phase {})",
-            fixed[0].start,
-            phase
+            fixed[0].start.abs() < 1e-9,
+            "première tranche à {} au lieu de 0",
+            fixed[0].start
         );
         assert!(
-            (fixed[0].len() - 2.0).abs() < 0.02,
-            "première tranche de {} s au lieu de 2",
-            fixed[0].len()
+            (fixed[0].len() - (2.0 + phase)).abs() < 0.02,
+            "première tranche de {} s au lieu de {}",
+            fixed[0].len(),
+            2.0 + phase
         );
     }
 
@@ -1168,11 +1517,19 @@ mod tests {
         let t0 = fixed(120.0, phase);
         let clips = cut_on(total, &t0, 4.0, Some(&env));
         assert!(clips.len() > 8, "{} tranches", clips.len());
-        // la **première** tranche est comparée aussi : une tête courte est
-        // jetée, jamais fondue (seule la dernière, reste de boucle, diffère)
+        // La première tranche absorbe la tête (elle dure une tranche **plus**
+        // la phase, demande user 26/11) et la dernière suit la fin de boucle :
+        // toutes les tranches du milieu doivent durer exactement une mesure.
+        assert!(
+            (clips[0].len() - (2.0 + phase)).abs() < 0.02,
+            "première tranche de {} s au lieu de {}",
+            clips[0].len(),
+            2.0 + phase
+        );
         let inner: Vec<f64> = clips
             .iter()
-            .take(clips.len().saturating_sub(1))
+            .skip(1)
+            .take(clips.len().saturating_sub(2))
             .map(|c| c.len())
             .collect();
         let mini = inner.iter().cloned().fold(f64::MAX, f64::min);

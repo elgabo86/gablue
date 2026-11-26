@@ -83,6 +83,9 @@ fn main() -> anyhow::Result<()> {
         println!("  {i}: {:.3} → {:.3} ({:.3})", c.start, c.end, c.len());
     }
 
+    // grille **réellement** utilisée par la découpe (ancre + période ajustées)
+    let (ga, gp) = core::tempo::fitted(d.envelope.as_ref(), &t, beats, whole)
+        .unwrap_or((t.phase, len));
     // l'attaque **réelle** dans le PCM (RMS 1 ms) contre celle de l'enveloppe :
     // dit si l'écart médian est un décalage du morceau ou un biais de mesure
     {
@@ -103,9 +106,9 @@ fn main() -> anyhow::Result<()> {
             (e / (n * ch).max(1) as f64).sqrt()
         };
         let env = d.envelope.as_ref().unwrap();
-        println!("frontière · attaque PCM (RMS 1 ms) · attaque enveloppe");
+        println!("frontière ajustée · attaque PCM (RMS 1 ms) · attaque enveloppe");
         for k in 0..6 {
-            let pred = t.phase + k as f64 * len;
+            let pred = ga + k as f64 * gp;
             if pred > whole {
                 break;
             }

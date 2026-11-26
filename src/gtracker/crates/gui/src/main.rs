@@ -405,6 +405,14 @@ struct App {
     /// Enveloppe d'attaque du rendu : recale chaque coupe sur une attaque
     /// réelle, sinon un BPM estimé 0,1 % faux décale les dernières mesures.
     envelope: Option<Envelope>,
+    /// Grille **réellement découpée** `(ancre, période de tranche)`, calculée
+    /// une fois par `recut` : c'est ce que `cut_from` découpe et ce que les
+    /// repères de la forme d'onde / l'aimant affichent. Utiliser `tempo.beat`
+    /// à la place laissait les traits dériver de 0,1 % par tranche (vécu 26/11
+    /// sur un USF N64 : 2,0845 s détectés contre 2,0867 s réels, soit 300 ms
+    /// d'écart en fin de piste). `None` = pas d'enveloppe ou grille posée à la
+    /// souris (rigide).
+    fit: Option<(f64, f64)>,
     /// Forme d'onde du rendu (min/max par tranche) : dans le mode Découpe, elle
     /// montre où tombent les temps et les frontières de coupe — un tempo faux ne
     /// s'entend qu'à l'oreille, mais se voit d'un coup d'œil (vécu 21/11).
@@ -595,6 +603,7 @@ impl App {
             right_consumed: false,
             maximized_once: false,
             envelope: None,
+            fit: None,
             peaks: None,
             wave_zoom: 0.0,
             wave_center: 0.0,
@@ -915,15 +924,9 @@ impl App {
                     }
                     self.loop_manual = manual && self.loop_win.is_some();
                     self.anchor = self.loop_win.map(|l| l.start).unwrap_or(0.0);
-                    self.clips = match self.grid() {
-                        Some(t) => tempo::cut_on(
-                            self.cut_whole(decoded.total),
-                            &t,
-                            self.clip_beats,
-                            self.envelope.as_ref(),
-                        ),
-                        None => Vec::new(),
-                    };
+                    let whole = self.cut_whole(decoded.total);
+                    self.refresh_fit(whole);
+                    self.clips = self.cut_now(whole);
                     self.apply_skip_intro();
                     self.arrange.clear();
                     self.seq.clear();
@@ -990,6 +993,7 @@ impl App {
                         self.open_entry = None;
                         self.peaks = None;
                         self.tempo = None;
+                        self.fit = None;
                         self.clips.clear();
                         self.seq.clear();
                     }
@@ -2707,6 +2711,28 @@ impl App {
     /// Beat This!, sinon enveloppe d'attaque), sans aucun réglage manuel.
     /// `None` = piste sans rythme exploitable.
     fn grid(&self) -> Option<Tempo> {
+        let mut g = self.grid_base()?;
+        // La découpe ne suit pas `tempo.beat` mais la grille ajustée sur les
+        // attaques (`fit`) : les repères de la forme d'onde, les battements,
+        // l'aimant et les tuiles doivent afficher **cette** période, sinon ils
+        // dérivent de 0,1 % par tranche et se retrouvent 300 ms à côté en fin
+        // de piste (vécu 26/11, USF N64 : « les séquences se décalent de plus
+        // en plus, plus elles sont loin du départ du son »).
+        if let Some((anchor, len)) = self.fit {
+            if self.cut_anchor.is_none() && len > 0.0 && self.clip_beats > 0.0 {
+                g.phase = anchor;
+                g.beat = len / self.clip_beats;
+                g.bpm = 60.0 / g.beat;
+            }
+        }
+        Some(g)
+    }
+
+    /// Grille **avant** ajustement sur les attaques : point de boucle, BPM à la
+    /// main, origine posée à la souris, décalage en temps. C'est l'entrée de
+    /// `tempo::fitted` — ne jamais y réinjecter le résultat, sinon chaque
+    /// passage cumulerait un raffinement d'ancre (jusqu'à 60 ms par appel).
+    fn grid_base(&self) -> Option<Tempo> {
         let mut g = self.tempo?;
         // La grille passe **toujours** par le début de la boucle : un PSF
         // commence par une intro, et les mesures de la boucle ne sont pas
@@ -2835,6 +2861,7 @@ impl App {
         self.cut_anchor = None;
         self.loop_snap = 0.0;
         self.envelope = None;
+        self.fit = None;
         self.peaks = None;
         self.bpm_manual = None;
         self.bpm_wheel = 0.0;
@@ -4428,20 +4455,43 @@ impl App {
     fn recut_clips(&mut self) {
         let total = self.player.as_ref().map(|p| p.total()).unwrap_or(0.0);
         let whole = self.cut_whole(total);
+        self.refresh_fit(whole);
         self.clips = self.cut_now(whole);
         self.apply_skip_intro();
     }
 
-    /// Découpe de la grille courante. Avec une origine **posée à la souris**,
-    /// elle est rigide (`tempo::cut`, pas de réajustement sur les attaques —
-    /// sinon les traits bougeraient sous le curseur) et la tuile d'intro
-    /// partielle est **jetée** : une grille déplacée à la main ne doit pas
-    /// fabriquer une tranche de longueur différente (demande user 21/11).
+    /// Recalcule la grille ajustée sur les attaques (`fit`). Appelée dès que la
+    /// grille théorique bouge (tempo, pas, boucle, décalage) : `recut` et
+    /// `recut_clips` — c'est le **seul** endroit qui sonde l'enveloppe, et il
+    /// part toujours de `grid_base` (jamais de `grid`, qui porte déjà le
+    /// résultat) pour ne pas cumuler les raffinements.
+    fn refresh_fit(&mut self, whole: f64) {
+        self.fit = if self.cut_anchor.is_some() || self.bpm_manual.is_some() {
+            // grille posée à la main : rigide, elle ne doit pas être re-ajustée
+            // en douce (un BPM réglé à 120,00 ne doit pas redevenir 120,31)
+            None
+        } else {
+            match self.grid_base() {
+                Some(t) => tempo::fitted(self.envelope.as_ref(), &t, self.clip_beats, whole),
+                None => None,
+            }
+        };
+    }
+
+    /// Découpe de la grille courante. Avec une origine **posée à la souris** ou
+    /// un BPM réglé à la main, elle est rigide (`tempo::cut`, pas de
+    /// réajustement sur les attaques — sinon les traits bougeraient sous le
+    /// curseur) et la tuile d'intro partielle est **jetée** : une grille
+    /// déplacée à la main ne doit pas fabriquer une tranche de longueur
+    /// différente (demande user 21/11).
     fn cut_now(&self, whole: f64) -> Vec<LoopWindow> {
         let Some(t) = self.grid() else {
             return Vec::new();
         };
-        if self.cut_anchor.is_none() {
+        if self.cut_anchor.is_none() && self.bpm_manual.is_none() {
+            if let Some((anchor, len)) = self.fit {
+                return tempo::cut_from(whole, anchor, len);
+            }
             return tempo::cut_on(whole, &t, self.clip_beats, self.envelope.as_ref());
         }
         let mut clips = tempo::cut(whole, &t, self.clip_beats);
@@ -4458,10 +4508,12 @@ impl App {
     fn recut(&mut self) {
         let Some(t) = self.grid() else {
             self.clips.clear();
+            self.fit = None;
             return;
         };
         let total = self.player.as_ref().map(|p| p.total()).unwrap_or(0.0);
         let whole = self.cut_whole(total);
+        self.refresh_fit(whole);
         self.clips = self.cut_now(whole);
         self.apply_skip_intro();
         // une suite en cours n'a plus de sens sur la nouvelle grille : le

@@ -180,3 +180,20 @@ Aucune touche ne doit agir quand un champ de saisie a le focus.
   badges courts, infobulles pour le détail.
 - La capture d'écran ne prouve rien sur l'audio : la vérification passe par les
   tests du moteur et `mixcheck`, jamais par « ça a l'air bon ».
+- **Les tuiles et les repères suivent la grille ajustée, pas le BPM détecté**
+  (vécu 26/11 : « les séquences se décalent de plus en plus, plus elles sont loin
+  du départ du son »). `slices_for` et `App::grid` passent par
+  `tempo::fitted` / `App::fit` (rempli par `refresh_fit` dans
+  `recut`/`recut_clips`) : `Tempo::beat × pas` dérive de 0,1 % par tranche, soit
+  280 ms en fin de piste sur un USF N64, alors que la découpe de l'éditeur était
+  juste. Ne jamais recalculer une période à la main dans l'interface.
+- **Une tête de piste courte appartient à la première tuile** (vécu 26/11 :
+  « il manque un petit bout de musique au tout début »). `slices_for` découpe
+  par `tempo::cut_from` comme l'éditeur : tête courte absorbée par la tuile 1,
+  ancre ajustée **négative** (grille qui commence avant 0) → la tête est une
+  première tuile plus courte qui commence à 0, vraie intro en tuile à part.
+  Démarrer la pile à l'ancre faisait disparaître les premières dizaines de ms
+  de la piste — invisibles dans l'éditeur, absentes du montage et de l'export.
+- **Grille posée à la main = rigide** : `cut_anchor` (origine glissée) ou
+  `bpm_manual` vide `App::fit` et `cut_now` repasse par `tempo::cut` ; sinon un
+  BPM réglé à 120,00 redevenait 120,31 au recalcul suivant.
