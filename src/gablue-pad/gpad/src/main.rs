@@ -949,6 +949,17 @@ fn liste_accueil(console: bool, session_console: bool, manette_bt: bool, dispo: 
     }
 }
 
+/// Curseur d'ouverture propre à la session console : l'accueil y commence par
+/// `FERMER`, donc on vise le premier volume (demandé le 25/11/2026) pour qu'un
+/// appui réflexe en ouvrant ne ferme pas le jeu. Au bureau, `None` : c'est la
+/// fenêtre active qui décide, dans la boucle (`index_entete`).
+fn curseur_console(session_console: bool, liste: &[Entree]) -> Option<usize> {
+    if !session_console {
+        return None;
+    }
+    liste.iter().position(|e| *e == Entree::Volume)
+}
+
 /// Page `FENETRE` (A sur l'en-tête) : les actions de la fenêtre active. Elles
 /// ne sont **pas** sur l'accueil (demandé le 25/11/2026) — `FERMER` et
 /// `PLEIN ECRAN` sans fenêtre n'auraient aucune cible, et l'en-tête ouvre
@@ -4785,10 +4796,13 @@ impl App {
         self.selected = 0;
         // CONSOLE : le panneau s'ouvre TOUJOURS curseur sur le volume
         // (demandé le 25/11/2026) — l'accueil commence par `FERMER`, on ne
-        // veut pas risquer un appui dessus en ouvrant.
-        if self.console {
+        // veut pas risquer un appui dessus en ouvrant. `self.session_console`
+        // (session GablueGaming), pas `self.console` (drapeau `--console` du
+        // menu système) : le panneau latéral n'est jamais lancé avec ce
+        // drapeau, d'où un curseur resté sur `FERMER` jusqu'au 26/11/2026.
+        if self.session_console {
             self.maj_accueil();
-            if let Some(i) = self.liste().iter().position(|e| *e == Entree::Volume) {
+            if let Some(i) = curseur_console(self.session_console, self.liste()) {
                 self.selected = i;
             }
         }
@@ -8548,7 +8562,10 @@ fn main() {
                 || app.depart.elapsed() >= Duration::from_millis(600);
             if decide {
                 app.page_initiale = true;
-                if !app.console && !app.focus_impose {
+                // Session console : la décision est prise à l'ouverture
+                // (`curseur_console`), et `index_entete()` y vaudrait `None`
+                // (pas d'en-tête) donc `unwrap_or(0)` retombait sur `FERMER`.
+                if !app.console && !app.session_console && !app.focus_impose {
                     if !app.a_fenetre() {
                         app.page = Page::Applis;
                         app.selected = app.premier_action();
@@ -9268,6 +9285,26 @@ mod tests {
             &plein[1..4],
             &[Entree::Volume, Entree::VolumeJeu, Entree::VolumeApp]
         );
+    }
+
+    /// Ouverture du panneau en session console (`GablueGaming`) : le curseur
+    /// vise le premier volume, jamais `FERMER` — première ligne de l'accueil
+    /// console, donc `selected = 0` suffisait à fermer le jeu sur un appui
+    /// réflexe en ouvrant (signalé le 26/11/2026 ; le code testait `--console`,
+    /// drapeau du menu système, jamais posé sur le panneau latéral).
+    #[test]
+    fn ouverture_console_sur_le_volume() {
+        let console = accueil_items(Dispo {
+            console: true,
+            bascule: true,
+            ..Dispo::default()
+        });
+        assert_eq!(console.first(), Some(&Entree::Action("FERMER")));
+        let i = curseur_console(true, &console).expect("volume présent en console");
+        assert_eq!(console.get(i), Some(&Entree::Volume));
+        assert!(i > 0, "le curseur ne tombe jamais sur FERMER");
+        // au bureau, c'est la fenêtre active qui décide (boucle), pas ceci
+        assert_eq!(curseur_console(false, &console), None);
     }
 
     /// Les actions de la fenêtre vivent dans SA page, jamais sur l'accueil :

@@ -257,6 +257,15 @@ ses actions, et la classe sert de nom. Une page atteinte par **L1/R1** s'ouvre,
 elle, sur son **contenu** (`premier_action()`) ; `--focus` (Home+bas) garde la
 ligne qu'il impose (`focus_impose`).
 
+En **session console** (`session_console`, distinct du drapeau `--console` du
+menu système), le curseur se pose sur **`VOLUME GENERAL`** à l'ouverture :
+l'accueil y commence par `FERMER`, et un appui réflexe en ouvrant ne doit pas
+fermer le jeu (demandé le 25/11/2026). `curseur_console` porte cette décision ;
+la boucle ne touche pas non plus à la page/au curseur en console. Vécu le
+26/11/2026 : le test portait sur `self.console` (le drapeau), jamais posé sur
+le panneau latéral — le panneau ouvrait donc sur `FERMER`, et
+`index_entete().unwrap_or(0)` y retombait aussi faute d'en-tête.
+
 Le choix se fait **dans la boucle**, pas au démarrage : l'info de fenêtre arrive
 par D-Bus ~100 ms après le lancement, et décider plus tôt ouvrait
 `APPLICATIONS` alors qu'une fenêtre était active (constaté). `page_initiale`
