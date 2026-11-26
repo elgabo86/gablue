@@ -935,6 +935,20 @@ fn menu_systeme(console: bool, manette_bt: bool) -> Vec<Entree> {
     v
 }
 
+/// Quelle liste reconstruire quand un état change : celle de l'accueil du
+/// panneau, ou celle du **menu système** en `--console`. Un seul point de
+/// décision, testé : `accueil_items` posée en console remplaçait les sorties
+/// par les options du panneau dès que le buffer de replay tournait (vécu le
+/// 26/11/2026 en session jeu — invisible au bureau, où rien n'appelle la
+/// reconstruction dans ce mode).
+fn liste_accueil(console: bool, session_console: bool, manette_bt: bool, dispo: Dispo) -> Vec<Entree> {
+    if console {
+        menu_systeme(session_console, manette_bt)
+    } else {
+        accueil_items(dispo)
+    }
+}
+
 /// Page `FENETRE` (A sur l'en-tête) : les actions de la fenêtre active. Elles
 /// ne sont **pas** sur l'accueil (demandé le 25/11/2026) — `FERMER` et
 /// `PLEIN ECRAN` sans fenêtre n'auraient aucune cible, et l'en-tête ouvre
@@ -1242,6 +1256,14 @@ const BTN_MODE: u16 = 0x13c;
 /// un appui court ferme simplement le panneau (au relâchement).
 const HOME_LONG_MS: u64 = 1200;
 
+/// Bords du panneau laissés visibles sur la **première** image d'une
+/// ouverture, avant le glissement depuis la droite (voir `ouvrir`). Plasma ne
+/// libère pas les tampons d'une surface entièrement transparente (~9 s mesurés
+/// le 25/11/2026) : sans ces quelques pixels opaques, la première image du
+/// glissement ne serait jamais rendue et le panneau resterait invisible. Deux
+/// pixels du bord ne se voient pas.
+const ENTREE_SLIVER: i32 = 2;
+
 /// Deux appuis d'un **même bouton** plus rapprochés que ça sont une seule
 /// frappe. Une membrane qui rebondit (Croix usée) ou un rapport dupliqué du
 /// pilote livrait deux `EV_KEY … 1` pour une pression : sur l'en-tête, le
@@ -1328,12 +1350,6 @@ struct App {
     fondu: Option<Fondu>,
     opacite: f32,
     /// durée du fondu du menu système (banc : `PAD_FONDU_MS`)
-    /// attente avant de lancer le glissement d'entrée : KWin anime l'ouverture
-    /// de cette surface pendant ce temps, et deux mouvements simultanés se
-    /// cumulent (le panneau semblait se poser sur place)
-    panneau_delai_ms: u64,
-    /// instant où l'entrée visible doit commencer (attente du délai ci-dessus)
-    entree: Option<Instant>,
     fondu_ms: u64,
     closing: bool,
     slid_in: bool,
@@ -1847,11 +1863,6 @@ impl App {
             fondu: None,
             opacite: 1.0,
             fondu_ms: 320,
-            // Durée de l'animation d'ouverture de KWin (effet Scale :
-            // `animationTime(200)`, défaut 200 ms), pas 250 : on restait
-            // invisible 50 ms de trop (mesuré 19/11/2026).
-            panneau_delai_ms: 200,
-            entree: None,
             closing: false,
             slid_in: false,
             resident: false,
@@ -2165,6 +2176,23 @@ impl App {
             // la direction suivante en combinaison — y compris panneau OUVERT,
             // puisque c'est nous qui tenons le grab (gpad-trigger nous est aveugle).
             if ev.type_ == EV_KEY && ev.code == BTN_MODE {
+                // Même debounce que les autres boutons : un `value 1`
+                // dupliqué n'est pas un second appui. Sans lui, il réarmait
+                // le minuteur du maintien et pouvait annuler la fermeture
+                // décidée par un combo (Home+direction).
+                match frappe_nouvelle(
+                    &mut self.touches_tenues,
+                    &mut self.derniere_frappe,
+                    ev.code,
+                    ev.value,
+                    Instant::now(),
+                ) {
+                    Frappe::Neuve => {}
+                    rejet => {
+                        println!("FRAPPE ignoree (Home {rejet:?})");
+                        continue;
+                    }
+                }
                 if ev.value == 1 {
                     self.home_down = true;
                     self.home_console = false;
@@ -2415,7 +2443,20 @@ impl App {
     /// `replay_active` ; le curseur est ramené dans les bornes si la ligne
     /// qu'il visait a disparu.
     fn maj_accueil(&mut self) {
-        self.accueil = accueil_items(self.dispo());
+        // Le menu système (`--console`) n'est PAS l'accueil du panneau : sa
+        // liste est celle des sorties. La reconstruire avec `accueil_items`
+        // la remplaçait par les options du panneau dès qu'un état changeait
+        // (replay qui tourne : la passe de `refresh_recorder` appelait ici,
+        // même en console) — le menu Home affichait alors « Fermer / Volume
+        // général / Options de capture… » à la place de « Mise en veille /
+        // Mode bureau / Éteindre… », vécu le 26/11/2026 en session jeu
+        // (invisible au bureau : sans buffer de replay, rien n'appelle ici).
+        self.accueil = liste_accueil(
+            self.console,
+            self.session_console,
+            self.pad_bt.is_some(),
+            self.dispo(),
+        );
         if let Page::Categorie(cat) = self.page {
             self.cat_items = cat.entrees(self.dispo());
         }
@@ -2616,7 +2657,6 @@ impl App {
             self.closing = false;
             self.slid_in = true;
             self.anim = None;
-            self.entree = None;
             self.fondu = None;
             self.opacite = 0.0;
             self.off = self.panel_w;
@@ -4527,9 +4567,6 @@ impl App {
         }
         self.closing = true;
         if self.side {
-            // fermé pendant l'attente d'entrée : rien n'est encore visible,
-            // inutile de lancer le glissement d'entrée ensuite
-            self.entree = None;
             // sortie : le panneau repart vers la DROITE, hors de l'écran
             self.slide(0, self.panel_w, 140);
         } else {
@@ -4732,13 +4769,18 @@ impl App {
         self.visible = true;
         self.closing = false;
         self.slid_in = true; // pas d'attente : la surface est déjà mappée
-        self.entree = None;
         self.anim = None;
         self.fondu = None;
         self.opacite = 1.0;
         // au bureau la surface n'est pas mappée hors usage : la première image
-        // doit être visible et en place (voir le bloc `configured`).
-        self.off = if self.console { self.panel_w } else { 0 };
+        // doit être visible et non transparente (voir le bloc `configured`).
+        // Le panneau latéral part **hors écran à droite** et glisse ensuite ;
+        // le menu système n'utilise pas ce décalage.
+        self.off = if self.side {
+            self.panel_w - ENTREE_SLIVER
+        } else {
+            self.panel_w
+        };
         self.page = Page::Accueil;
         self.selected = 0;
         // CONSOLE : le panneau s'ouvre TOUJOURS curseur sur le volume
@@ -4768,12 +4810,13 @@ impl App {
         self.voir_console = false;
         self.status.clear();
         self.dirty = true;
-        // les réglages (pactl, scripts) sont relus APRÈS la première image
+        // réglages relus APRÈS la première image (pactl, scripts)
         self.a_rafraichir = true;
-        // en console seulement : au bureau la première image est déjà en place
-        // et opaque (une image vide n'y serait jamais libérée par Plasma)
-        if self.console {
-            self.slide(self.panel_w, 0, 200);
+        // Panneau latéral : glissement d'entrée depuis la droite, lancé sur la
+        // première image (déjà opaque sur ENTREE_SLIVER px). Le menu système,
+        // lui, s'efface — pas de bord par lequel sortir (`fondu`).
+        if self.side {
+            self.slide(self.off, 0, 200);
         }
         self.suspendre_vrr();
         println!("OPEN {node}");
@@ -4786,7 +4829,6 @@ impl App {
         self.closing = false;
         self.slid_in = true;
         self.anim = None;
-        self.entree = None;
         self.fondu = None;
         self.opacite = 0.0;
         self.off = self.panel_w;
@@ -7942,12 +7984,6 @@ fn main() {
     if let Some(v) = std::env::var("PAD_FONDU_MS").ok().and_then(|v| v.parse().ok()) {
         app.fondu_ms = v; // banc : ralentir le fondu pour le mesurer
     }
-    if let Some(v) = std::env::var("PAD_PANNEAU_DELAI_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        app.panneau_delai_ms = v; // banc : régler l'attente de l'animation KWin
-    }
     app.side = !fullscreen && !app.console;
     app.panel_w = arg_value(&args, "--width")
         .and_then(|v| v.parse::<i32>().ok())
@@ -8321,11 +8357,7 @@ fn main() {
             if app.clavier_anime() || app.clavier_bouge() { 8 } else { 100 }
         } else if app.resident && !app.visible {
             1000
-        } else if app.anim.is_some()
-            || app.pdep.is_some()
-            || app.fondu.is_some()
-            || app.entree.is_some()
-        {
+        } else if app.anim.is_some() || app.pdep.is_some() || app.fondu.is_some() {
             8
         } else {
             100
@@ -8398,44 +8430,18 @@ fn main() {
                     );
                 }
             } else if app.side {
-                // KWin anime l'ouverture de cette surface comme celle d'une
-                // fenêtre normale (effet Scale, `animationTime(200)`). Deux
-                // mouvements simultanés se CUMULENT : avec notre glissement
-                // par-dessus, le panneau arrivait à sa place en ~100 ms et
-                // semblait « se poser sur place » (constaté 18/11/2026) ; sans
-                // notre glissement, c'est l'animation de KWin qu'on voyait
-                // (« ça zoome »). On reste donc transparent le temps de son
-                // animation, PUIS on fait la nôtre — même remède que la
-                // fermeture du menu système (faire animer une surface
-                // invisible), mais l'entrée visible est bien un glissement.
-                //
-                // AU BUREAU (Plasma) CE REMÈDE EST PIRE QUE LE MAL : KWin
-                // n'anime pas une surface layer-shell et, entièrement
-                // transparente, il ne la considère pas visible — il ne libère
-                // donc jamais ses tampons (aucun `wl_buffer::Release`, d'où
-                // aucune image suivante) : le panneau restait à opacité 0,
-                // INVISIBLE, avec des commits espacés de ~9 s (mesuré le
-                // 25/11/2026 au banc, Plasma 6.8, `WAYLAND_DEBUG`). Là, on
-                // entre directement opaque puis on glisse.
-                if app.console {
-                    app.opacite = 0.0;
-                    app.entree =
-                        Some(Instant::now() + Duration::from_millis(app.panneau_delai_ms));
-                    println!(
-                        "SLIDE IN (attente {} ms puis glissement 200 ms)",
-                        app.panneau_delai_ms
-                    );
-                } else {
-                    // (voir juste au-dessus) : contenu DÈS la première image,
-                    // opaque et en place — une image entièrement transparente
-                    // ne serait pas rendue par Plasma et le panneau resterait
-                    // invisible. Le glissement part de la position finale :
-                    // c'est une ouverture franche, comme les panneaux Plasma.
-                    app.opacite = 1.0;
-                    app.off = 0;
-                    app.dirty = true;
-                    println!("SLIDE IN (bureau : direct)");
-                }
+                // Panneau latéral jetable (repli sans résident, vue `--focus`).
+                // Contenu DÈS la première image, opaque : une image
+                // entièrement transparente ne serait pas rendue par Plasma et
+                // le panneau resterait invisible (mesuré le 25/11/2026). On
+                // laisse donc `ENTREE_SLIVER` px du bord visibles, puis le
+                // panneau glisse depuis la droite (même départ que le
+                // résident, voir `ouvrir`).
+                app.opacite = 1.0;
+                app.off = app.panel_w - ENTREE_SLIVER;
+                app.dirty = true;
+                app.slide(app.off, 0, 200);
+                println!("SLIDE IN (glissement depuis la droite)");
             } else {
                 app.opacite = 0.0;
                 app.fondu = Some(Fondu {
@@ -8448,21 +8454,6 @@ fn main() {
                     vers: 1.0,
                 });
                 println!("FONDU IN");
-            }
-        }
-        if let Some(t) = app.entree {
-            if Instant::now() >= t {
-                app.entree = None;
-                // Opaque d'un coup : à cet instant le contenu est encore
-                // entièrement HORS écran (off = panel_w), donc rien ne
-                // clignote — et le glissement qui suit est vu en entier. Un
-                // fondu ici mangeait le mouvement : les deux easings étant
-                // « ease-out », le panneau était à 87 % de sa course à 90 ms
-                // alors qu'il n'était qu'à moitié opaque (« il apparaît sur
-                // place », constaté 18/11/2026).
-                app.opacite = 1.0;
-                app.fondu = None;
-                app.slide(app.panel_w, 0, 200);
             }
         }
         if app.anim.is_some() {
@@ -9299,6 +9290,30 @@ mod tests {
         assert!(!menu_console.contains(&Entree::Action("MODE JEU")));
         assert!(menu_console.contains(&Entree::Action("DECONNECTER LA MANETTE")));
         assert!(menu_console.contains(&Entree::Action("TOUT FERMER")));
+    }
+
+    /// Le menu système (`--console`) garde SA liste quand un état est
+    /// reconstruit : replay qui tourne, volume relu, etc. `accueil_items` y
+    /// posée affichait « Fermer / Volume général / … » à la place des sorties
+    /// (vécu le 26/11/2026 en session jeu, buffer de replay actif — le bureau
+    /// ne le voyait pas, aucun état n'y déclenche la reconstruction).
+    #[test]
+    fn menu_systeme_garde_sa_liste() {
+        let dispo_console = Dispo {
+            replay: true,
+            jeu: false,
+            app: false,
+            bascule: false,
+            console: true,
+        };
+        let menu = liste_accueil(true, true, false, dispo_console);
+        assert_eq!(menu.first(), Some(&Entree::Action("MISE EN VEILLE")));
+        assert_eq!(menu.last(), Some(&Entree::Action("ETEINDRE")));
+        assert!(!menu.contains(&Entree::Volume));
+        // le panneau, lui, garde la sienne
+        let panneau = liste_accueil(false, true, false, dispo_console);
+        assert_eq!(panneau.first(), Some(&Entree::Action("FERMER")));
+        assert!(panneau.contains(&Entree::Volume));
     }
 
     /// Session console déduite de l'environnement, même règle que

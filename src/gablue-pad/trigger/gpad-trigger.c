@@ -52,6 +52,10 @@ static volatile sig_atomic_t ask_console;
 /* pid de CE gpad-trigger, passé en GPAD_TRIGGER_PID aux overlays : c'est lui qu'ils
  * préviennent quand Home est maintenu pendant qu'ils ont le grab. */
 static char own_pid[16];
+/* Home appuyé et pas encore relâché (« appui vu »). Déclaré ici parce que
+ * `on_chld` doit l'oublier quand un overlay jetable qui tenait le grab sort :
+ * son relâchement ne nous parviendra jamais. */
+static int home_down;
 
 /* Inhibition de l'écran : tant qu'une manette est connectée, on empêche la
  * mise en veille / le verrouillage (même mécanisme que l'ancien
@@ -91,6 +95,9 @@ static void on_chld(int s)
     if (child > 0 && waitpid(child, &st, WNOHANG) == child) {
         fprintf(stderr, "[gpad-trigger] overlay terminé (status %d)\n", st);
         child = -1;
+        /* L'overlay jetable (console, vue) tenait le grab : son relâchement de
+         * Home n'est jamais arrivé jusqu'à nous. L'appui n'existe plus. */
+        home_down = 0;
     }
     if (resident > 0 && waitpid(resident, &st, WNOHANG) == resident) {
         fprintf(stderr,
@@ -589,13 +596,21 @@ static int overlay_kbd_remote(const char *node)
  * n'ouvre plus rien de suite, un combo n'a plus de course avec le panneau. */
 #define HOME_LONG_MS 1200
 
+/* Un `value 1` alors que Home est DÉJÀ déclaré tenu est un rapport dupliqué
+ * du pilote (ou un rebond de membrane), pas un second appui : réarmer le
+ * minuteur remettait `console_done` à zéro (le menu système se relançait
+ * pendant le maintien) et rouvrait le droit au panneau, qui apparaissait au
+ * relâchement d'un Home maintenu (vécu 26/11/2026). Un rapport dupliqué arrive
+ * avec le même appui ; au-delà d'une seconde, c'est forcément un appui neuf
+ * dont le relâchement nous a échappé (grab de l'overlay ou de gpad-mouse). */
+#define HOME_DOUBLON_MS 1000
+
 static char g_recorder[512] = "../recorder.sh";
 static char g_screenshot[512] = "../screenshot.sh";
 static char g_scripts[512] = "../scripts";
 static char g_mouse[512] = "../mouse/gpad-mouse";
 static char g_replay[512] = "../replay.sh";
 static char home_node[64];
-static int home_down;
 static int combo_done;
 static int console_done;
 /* L3 (BTN_THUMBL) tenu : Home+L3 = « Home pour le jeu », aucun panneau. */
@@ -1116,6 +1131,10 @@ int main(int argc, char **argv)
             while ((got = read(fds[i], &ev, sizeof ev)) == (ssize_t)sizeof ev) {
                 if (ev.type == EV_KEY && ev.code == BTN_MODE) {
                     if (ev.value == 1) {
+                        /* Rapport dupliqué : `value 1` déjà en cours. On garde
+                         * le minuteur d'origine (voir HOME_DOUBLON_MS). */
+                        if (home_down && ms_since(&home_at) < HOME_DOUBLON_MS)
+                            continue;
                         home_down = 1;
                         /* L3 déjà tenu = Home+L3 : le geste « Home pour le
                          * jeu ». Aucun panneau au relâchement, aucun menu
@@ -1131,12 +1150,23 @@ int main(int argc, char **argv)
                                     " laisse au jeu (pas de panneau)\n");
                             fflush(stderr);
                         }
-                    } else {
+                    } else if (ev.value == 0) {
+                        /* Relâchement d'un appui qu'on n'a PAS vu (l'overlay
+                         * ou la console tenait le grab et l'a consommé) : ne
+                         * rien faire. C'est ce relâchement qui rouvrait le
+                         * panneau sur un Home maintenu. */
+                        if (!home_down)
+                            continue;
                         home_down = 0;
-                        /* relâché sans combo : on ouvre tout de suite. Le
+                        /* Un maintien n'ouvre JAMAIS le panneau : au-delà du
+                         * seuil c'est le menu système, et lui seul. Le test
+                         * sur la durée le garantit même si un relâchement a
+                         * été manqué ou si `combo_done` a été remis à zéro.
+                         * Relâché sans combo : on ouvre tout de suite, le
                          * résident répond en ~1 ms (aucun exec, aucune
                          * animation KWin) ; sans lui, l'exec classique. */
-                        if (opt_menu && !combo_done && child < 0) {
+                        if (opt_menu && !combo_done && child < 0 &&
+                            ms_since(&home_at) < HOME_LONG_MS) {
                             if (!overlay_open_remote(home_node))
                                 launch(argv, argc, first_free, home_node);
                             combo_done = 1;
@@ -1304,6 +1334,10 @@ int main(int argc, char **argv)
             nf = 0;
             announced = 0;
             last_scan = 0;
+            /* Plus de manette : l'appui en cours n'existe plus (débranchée,
+             * BT coupé, node réénuméré). Sans ce reset, un `value 1` resté
+             * ouvert passait pour un doublon au retour de la manette. */
+            home_down = 0;
         }
     }
 }

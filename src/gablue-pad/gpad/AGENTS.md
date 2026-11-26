@@ -959,6 +959,15 @@ doit donc mettre `dirty = true` **quand il change** — sinon l'écran garde
 l'ancienne valeur : le mode replay restait affiché `ARRET` pendant qu'il
 tournait (constaté 16/11/2026).
 
+**Reconstruire la liste ne touche JAMAIS le menu système** (`liste_accueil`,
+testé) : en `--console`, `maj_accueil` reprend `menu_systeme`, pas
+`accueil_items`. La passe de `refresh_recorder` (replay qui tourne) appelait
+`maj_accueil` même en console : le menu Home affichait alors « Fermer / Volume
+général / Options de capture… » à la place des sorties, ~0,5 s après son
+ouverture — vécu le 26/11/2026 en session jeu (buffer de replay automatique),
+invisible au bureau. Repro au banc : socket `gpad-rec` factice avec
+`replay=true`, capture 2 s après le Home maintenu.
+
 ## Menu système : fondu, pas de zoom
 
 Le panneau latéral **glisse** (il a un bord par lequel sortir) ; le menu
@@ -978,10 +987,11 @@ hors de la surface, `off = panel_w`, ou `opacite = 0`) n'en reçoit plus
 (`wl_buffer::Release` espacé de ~9 s, mesuré au banc avec `WAYLAND_DEBUG`), et
 comme le dessin suivant attend un tampon libre, le panneau restait invisible
 pendant des minutes. En session **console** KWin libère normalement, d'où un
-banc qui ne voyait rien. Donc : entrée transparente + glissement réservées à
-`app.console` ; au **bureau**, la première image est opaque et en place
-(`off = 0`), puis plus aucun état transparent n'est envoyé — l'ouverture est
-franche, comme un panneau Plasma.
+banc qui ne voyait rien. D'où `ENTREE_SLIVER` : la **première** image de chaque
+ouverture garde **2 px** du bord du panneau opaques (invisibles à l'œil) pour
+que le tampon soit libéré, et c'est **de là** que part le glissement
+(`off = panel_w - 2` → `0`). Aucun état entièrement transparent n'est envoyé
+pendant l'entrée ; le menu système, lui, s'efface (fondu).
 
 **Fermeture au bureau : la surface est DÉTRUITE, jamais seulement démontée**
 (25/11/2026) : `attach(None)` + commit laissait KWin la surface vivante mais
@@ -1007,50 +1017,30 @@ Pourquoi : démonter la surface d'un coup laissait KWin animer la fermeture de
 la fenêtre, donc un **dézoom** sur le menu qui part (constaté, « c'est moche »).
 La fondue est la nôtre, KWin zoome une surface déjà invisible.
 
-## Entrée du panneau : attendre KWin, puis glisser (pas de fondu)
+## Entrée du panneau : glissement depuis la droite (pas de fondu)
 
-KWin traite cette surface comme une **fenêtre normale** (`normalWindow=true`,
-`dock=false` mesuré par script KWin) : son animation d'ouverture s'applique donc
-**au-dessus** de notre glissement. L'effet actif par défaut est **`Scale`**
-(`/usr/share/kwin/effects/scale/metadata.json`, `EnabledByDefault=true` ;
-`Glide` et `Fade` sont désactivés), d'où l'impression de « zoom en arrivant de la
-droite ». À la fermeture rien ne se voit : notre glissement de sortie précède
-`wl_surface.destroy()`, KWin n'a plus de client à animer — l'asymétrie est
-normale, pas un bug.
+**Un seul chemin**, résident (IPC) comme overlay jetable : la première image
+est opaque sur `ENTREE_SLIVER` (2 px) et le panneau glisse de
+`panel_w - 2` → `0` en **200 ms** (ease-out cubic). Aucune attente de
+l'animation de KWin : `entree`, `PAD_PANNEAU_DELAI_MS` et la distinction
+console/bureau ont été **retirés le 26/11/2026** — ils laissaient le bureau
+sans glissement (« il apparaît sur place »), et l'attente ne servait qu'aux
+overlays jetables, qui n'existent presque plus (repli sans résident).
 
-Séquence d'entrée d'un overlay **jetable** (exec) — en `--resident`, l'étape 1
-n'existe pas : la surface est déjà mappée (voir plus bas) :
-
-1. `opacite = 0` et attente `PAD_PANNEAU_DELAI_MS` (200 ms — la durée
-   `animationTime(200)` de l'effet `Scale`, pas 250 : on restait invisible
-   50 ms de trop, mesuré 19/11/2026), `entree: Option<Instant>` : KWin anime
-   une surface **invisible**. Le contenu est de toute façon encore hors écran
-   (`off = panel_w`), donc rien ne clignote même une fois opaque.
-   Le décompte part du **premier `configure`**, qui est traité à l'instant où
-   il est lu : sans le `dispatch_pending` frais après `g.read()`, le
-   `configure` n'était vu qu'au tour suivant, après un `poll` de 100 ms au
-   repos — mesuré à 57 ms d'arrivée, entrée traitée à 160 ms (vécu 19/11/2026).
-   Latence mesurée depuis le `exec` : `configure` 53 ms, premier tampon
-   (transparent) 57 ms, révélation 269 ms, panneau en place ~469 ms — contre
-   415 / 615 ms avant ces deux corrections.
-2. Au bout de l'attente : `opacite = 1` d'un coup, puis glissement de 200 ms
-   (`off` `panel_w` → `0`, ease-out cubic).
+Mesuré sur cette machine (2560×1440, captures `gpad-shot` en rafale pendant
+l'entrée, bord gauche du panneau) : **2397 → 2303 → 2229 → 2171 → 2081** px
+(2080 = panneau en place), donc le panneau vient bien de la droite ; trois
+ouvertures/fermetures d'affilée le montrent chaque fois en place à 2081
+(Plasma libère les tampons grâce aux 2 px de la première image).
 
 **Pas de fondu pendant le glissement** : les deux easings étant « ease-out », le
 panneau était à 87 % de sa course à 90 ms alors qu'il n'était qu'à moitié opaque
 — on ne voyait que la fin du mouvement, d'où « il apparaît sur place » (constaté
 le 18/11/2026, après une première version qui fondait pendant le glissement).
-Le fondu ne sert qu'à l'attente, et là c'est `opacite = 0` qui le fait.
 
 `appliquer_opacite()` s'applique donc **au panneau aussi** : la garde
 `if !self.side` qui l'en excluait datait du temps où il ne fondait pas (le fondu
 était alors un no-op silencieux — mesuré : pixel identique avec ou sans).
-
-Mesuré (captures `spectacle`, attente 2500 ms + glissement 4000 ms pour avoir le
-temps de capturer) : pendant l'attente, colonne du panneau = fond
-`srgb(35,38,39)` (rien de visible) ; mi-glissement, `x=2100` fond, `x=2250` et
-`x=2400` panneau **opaque** `srgb(23,29,38)` (aucune translucidité, et le bord
-gauche progresse bien de droite à gauche).
 
 ## Mode résident (`--resident --ipc <socket>`)
 
@@ -1060,17 +1050,17 @@ Le service ne lance **plus** un overlay par appui : `gpad-trigger` démarre
 `ouvrir()` : manette du node grabée, cibles du gate reposées puis `open`, page
 remise sur `ACCUEIL`, curseur en tête, `depart`/`derniere_activite` réinitialisés
 (sinon la passe d'inactivité de 10 s refermait le panneau aussitôt ouvert), puis
-glissement `panel_w → 0` sur 200 ms.
+glissement depuis la droite (`panel_w - ENTREE_SLIVER` → `0`, 200 ms).
 
-- **La surface reste mappée**, transparente (`opacite = 0`) et hors écran
-  (`off = panel_w`) entre deux ouvertures : KWin n'anime l'ouverture **qu'au
-  map**, donc plus d'attente de son effet `Scale` ni d'`exec` à payer. C'est le
-  gain principal : mesuré **6 ms** entre la commande et le premier tampon
-  (**11,5 ms** depuis le relâchement de Home, bout en bout au banc), panneau en
-  place ~205 ms (contre ~470 ms par ouverture avec exec).
-- **Fenêtre invisible mais jamais détruite** : la fenêtre layer-shell n'apparaît
-  pas dans `workspace.windowList()` de KWin (vérifié le 19/11/2026) — ni barre
-  des tâches, ni liste FENÊTRES.
+- **La surface est détruite à la fermeture et recréée à l'ouverture** (voir
+  « Fermeture au bureau ») : ce qui reste de l'ancien résident mappé, c'est
+  l'absence d'`exec` — le socket répond en **0,4 ms** et le premier tampon
+  arrive **6 ms** plus tard (**11,5 ms** depuis le relâchement de Home, bout en
+  bout au banc), panneau en place ~205 ms (contre ~470 ms par ouverture avec
+  exec).
+- **Hors des listes de KWin** : la fenêtre layer-shell n'apparaît pas dans
+  `workspace.windowList()` (vérifié le 19/11/2026) — ni barre des tâches, ni
+  liste FENÊTRES, même quand sa surface existe.
 - **Écran : celui qui a le focus** (double écran, 24/11/2026). Layer-shell
   **fige l'écran à la création** de la surface : un résident mappé une fois
   restait sur l'écran du démarrage et le panneau s'ouvrait à côté du jeu. Le
@@ -1186,7 +1176,6 @@ nettoyer à la main.
 | `PAD_STYLE` | style de démarrage (banc, sans écrire de fichier) |
 | `GPAD_MODE` | `console`\|`desktop` : force le mode de session (banc ; sinon `XDG_SESSION_DESKTOP`/`XDG_CURRENT_DESKTOP`) |
 | `PAD_FONDU_MS` | durée du fondu du menu système (défaut 140 ms ; banc : ralentir pour le mesurer) |
-| `PAD_PANNEAU_DELAI_MS` | attente avant le glissement d'entrée du panneau (défaut 200 ms : `animationTime(200)` de l'effet `Scale` de KWin ; banc) |
 | `PAD_NO_KWIN`, `PAD_ICONE_TEST` | banc : sans KWin, test de résolution d'icône |
 | `KWIN_SCRIPTS` | dossier des scripts KWin (`kwin/`) |
 

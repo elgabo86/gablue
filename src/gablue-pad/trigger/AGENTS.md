@@ -111,6 +111,28 @@ Tous ne partent que si **Home est tenu** et qu'aucun panneau n'est ouvert
 (`child < 0`) : un combo posé sur un appui simple n'a pas de sens, et Home seul
 ouvre le panneau **au relâchement**.
 
+**Ce qui n'ouvre JAMAIS le panneau** (26/11/2026) — quatre gardes dans la boucle,
+toutes payées par le même vécu en session jeu (« un menu en plus du menu
+système », et le panneau qui revient au relâchement d'un maintien) :
+
+- un `value 1` alors que Home est **déjà tenu** est un rapport dupliqué du
+  pilote (`HOME_DOUBLON_MS` = 1 s ; au-delà, c'est un appui neuf dont le
+  relâchement nous a échappé). Il ne réarme **ni** le minuteur **ni**
+  `combo_done` : réarmé, il remettait `console_done` à zéro (le menu système se
+  relançait pendant le même maintien) et rouvrait le droit au panneau ;
+- un **relâchement sans appui vu** est ignoré : l'overlay ou la console tenait
+  le grab et a déjà consommé l'appui — c'est ce relâchement qui rouvrait le
+  panneau ;
+- l'ouverture au relâchement exige une durée **< `HOME_LONG_MS`** : au-delà
+  c'est le menu système, et lui seul, même si un relâchement a été manqué ;
+- l'appui est oublié quand l'overlay jetable sort (`on_chld`) ou quand la
+  manette disparaît (rescan) — un appui dont le relâchement est parti au grab
+  ne doit pas rester « tenu » à vie.
+
+Banc (`reg-home.sh`, vpad) : `fermé`, `fermé-long`, `panneau ouvert puis
+maintien`, `doublon` (appui répété à 0,3 s puis à 1,4 s) → **un seul**
+`CONSOLE items=`, **aucun** `IPC open` après le maintien.
+
 **Deux lecteurs, un seul exécutant** : quand le panneau est ouvert, le résident
 tient le grab et voit le combo le premier ; il le relâche, et ce déclencheur
 relit les **mêmes** appuis — l'action partait donc deux fois (double bip au
