@@ -55,7 +55,7 @@ installer/
      5. Runtimes orphelins : `flatpak --installation=gtarget uninstall --unused`
      - Dépôt Flathub déjà dans `/etc/flatpak/remotes.d/` (posé par build.sh) — pas de `flatpak remote-add`
      - **`restore-flatpak-selinux.ks`** (`%post` chrooté, `%include` juste après) : `setenforce 0` + `restorecon -R /var/lib/flatpak` dans le déploiement ostree (le labeling implicite du kernel couvre le nominal, restorecon garantit la conformité si non joué ; aligné Bazzite `f0bafa6`, partie flatpak seule — Gablue ne touche pas au policy-store). Non bloquant (`|| :`). Cible le `/var/lib/flatpak` du système installé, pas celui RO du live
-3. **Compte utilisateur** : aucun pré-rempli — spoke Anaconda visible, l'utilisateur choisit ; Plasma gère la création au 1er boot si spoke sauté
+3. **Compte utilisateur** : aucun pré-rempli — spoke Anaconda visible, l'utilisateur choisit **et Anaconda crée le compte** dans `/etc/passwd` du déploiement (cf. § 17). Au premier boot, le wizard `plasma-setup` ne crée pas l'utilisateur : il complète la suite (clavier, langue, fuseau) puis pose `/etc/plasma-setup-done`. `files/lorax/disable-user-spoke.tmpl` (masquage du spoke) n'est câblé nulle part — fichier mort, l'écran utilisateur reste visible, ne pas s'appuyer dessus
 4. **Session live** : bureau Plasma complet via `livesys-scripts` ; Anaconda pas lancé auto (l'utilisateur lance `liveinst`). Flatpaks pré-cachés visibles dans le menu (`XDG_DATA_DIRS` via `/etc/environment.d/99-gablue-flatpak-live.conf`)
 5. **plasma-welcome** retiré du live (hook postrootfs — pas de lancement auto au boot)
 6. **Dossier Bureau** : livesys-scripts crée `Desktop` (anglais) avec `liveinst.desktop` avant `xdg-user-dirs-update` (empêche le renommage) — reste en anglais

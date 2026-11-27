@@ -52,13 +52,20 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
 # =============================================================================
 
 # Installation des kmods communs (depuis akmods)
+# zenergy et nct6687d sont ici depuis l'amont du 16/11/2026 (akmods 8231c33,
+# « Upgrade zenergy and nct6687d from extra to common ») : laissés dans le bloc
+# extras, leurs globs ne matchaient plus rien et install-kmods les sautait en
+# silence (« SKIPPED: ») — modules absents des images construites après cette
+# date (constaté 27/11/2026 sur gablue-main/kernel 7.3.4-ogc10.1).
 /ctx/install-kmods \
     /tmp/rpms/{common,kmods}/*framework-laptop*.rpm \
     /tmp/rpms/{common,kmods}/*kvmfr*.rpm \
+    /tmp/rpms/{common,kmods}/*nct6687d*.rpm \
     /tmp/rpms/{common,kmods}/*openrazer*.rpm \
     /tmp/rpms/{common,kmods}/*v4l2loopback*.rpm \
     /tmp/rpms/{common,kmods}/*xone*.rpm \
-    /tmp/rpms/{common,kmods}/*wl*.rpm
+    /tmp/rpms/{common,kmods}/*wl*.rpm \
+    /tmp/rpms/{common,kmods}/*zenergy*.rpm
 
 # Installation des kmods extras (depuis akmods-extra)
 # displaylink : userspace DisplayLink (démon + displaylink.service), embarqué
@@ -68,7 +75,6 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
 # fournit plus → unité absente → systemd (disable) en échec. Sans lui, les
 # docks DisplayLink n'ont pas de démon (kmod-evdi + libevdi seuls inutiles).
 /ctx/install-kmods \
-    /tmp/rpms/{extra,kmods-extra}/*zenergy*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*gcadapter*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*evdi*.rpm \
     /tmp/rpms/extra/displaylink*.rpm \
@@ -79,7 +85,6 @@ dnf5 versionlock add kernel kernel-devel kernel-devel-matched kernel-core kernel
     /tmp/rpms/{extra,kmods-extra}/*hid-fanatecff*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*ryzen_smu*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*sc0710*.rpm \
-    /tmp/rpms/{extra,kmods-extra}/*nct6687d*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*system76*.rpm \
     /tmp/rpms/{extra,kmods-extra}/*vhba*.rpm
 

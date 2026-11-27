@@ -15,10 +15,14 @@
 - **xdg/autostart/gablue-manager-tray.desktop** : lance `gablue-manager --tray` à l'ouverture de session — icône de barre d'état seule, la fenêtre n'est chargée qu'au clic. `NoDisplay=true`, `OnlyShowIn=KDE;`, `X-KDE-autostart-after=panel`. Le mode tray relit `~/.config/gablue/preferences.json` et sort si l'utilisateur a coupé l'icône dans Gablue Manager : l'autostart n'est jamais modifié
 - **profile.d/customperso.sh** : Alias et personnalisations shell
 - **security/limits.d/memlock.conf** : Limites mémoire
-- **skel/.config/gtk-4.0/** : Configuration GTK par défaut
+- **skel/.config/gtk-4.0/** : Configuration GTK par défaut — `gtk.css` importe `colors.css` et `kde_window_geometry.css`, ce dernier alignant les coins des fenêtres GTK4 sur Plasma (**7px**, Bazzite `e0d6aae2` : en 4px les apps GTK4 tranchaient avec le reste du bureau)
 - **sudoers.d/nopasswd** : Sudo sans mot de passe pour `%wheel` — `ryzenadj`, `cpupower`, `efibootmgr --bootnext|--bootorder *`, `bootc upgrade`, `flatpak update --system -y` (arguments **exacts**, aucun joker sur flatpak : ni install, ni remote, ni app id) et les helpers `/usr/libexec/gablue-kargs`, `gablue-cpuid-emu` (`on|off|status`), `gablue-tailscale` (`on --login-server …|off`), `gablue-service` (unités `displaylink.service` et `docker.service` seulement, `on|off`), `gablue-low-latency` (`on|off`), `gablue-broadcom-wl` (`on|off`), `gablue-wifi-powersave` (`on|off|status`), `gablue-rebase` (les cinq variantes publiées seulement), `gablue-auto-update` (`status`, `image on|off`, `flatpak on|off`, `brew on|off`, `schedule daily|weekly` — neuf formes exactes, aucun joker), `gablue-update` (mise à jour bootc avec progression JSONL, **aucun argument**) `gablue-avahi` (`on|off|status`, annonce `_ssh._tcp`), `gablue-clean` (`flatpak`), `gablue-btrfs-compress` (`zstd|none <montage>` — le helper revérifie que le chemin est un montage Btrfs de `findmnt`) `gablue-nvme-thermal` (`status` ; `set <dev> <t1> <t2>` ; `off <dev>` — bornes revérifiées côté root) `gablue-grub` (`status` ; `set 0|1|2` ; `unset` — `menu_auto_hide` dans grubenv, `/boot` remonté en écriture seulement le temps de l'écriture) `gablue-bootnext` (`list` ; `boot <id>` — `id` 4 hexadécimaux ou `esp:/dev/sdX1`, revérifié côté root ; disque du système principal refusé ; entrée NVRAM créée pour une ESP inconnue puis retirée du BootOrder ; `BootNext` une seule fois puis redémarrage) `gablue-secureboot` (`status` ; `enroll` — demande MOK des deux certificats Gablue, mot de passe public `gablue`) et `gablue-ryzenadj` (`status` ; `set <45-110>` ; `off` — limite Tctl dans `/etc/gablue/ryzenadj.conf`, bornes revérifiées côté root, réappliquée au démarrage par `gablue-ryzenadj.service`) `gablue-login` (`status` ; `pad on|off` ; `dark on|off` — réglages de l'écran de connexion, relus par le greeter à son démarrage) — plus trois commandes systemd aux arguments exacts, `enable|disable sshd.service --now` (pastille « Serveur SSH » de Gablue Manager), `reboot|poweroff` (actions distantes, équivalentes au polkit qu'un membre de wheel peut déjà déclencher en session locale) et `reboot --firmware-setup` (menu « Redémarrer dans le BIOS ») — jamais `rpm-ostree kargs` ni une référence d'image libre en direct, un kargs libre en NOPASSWD permettrait `init=/bin/sh` sur le prochain démarrage et un rebase libre permettrait de démarrer n'importe quelle image en root
 - **systemd/** : Timeouts et configuration systemd
 - **yum.repos.d/docker-ce.repo** : Dépôt Docker
+
+## tmpfiles.d (/usr/lib/tmpfiles.d)
+
+- **btrfs-reclaim.conf** : `w /sys/fs/btrfs/*/allocation/data/{dynamic,periodic}_reclaim - - - - 1` (Bazzite `06732aa5`, 11/2026) — sans réclamation dynamique, btrfs peut refuser une écriture avec `ENOSPC` alors qu'il reste de l'espace libre. Posé en `tmpfiles.d` et non par une unité : systemd-tmpfiles l'applique à chaque démarrage, quel que soit l'ordre de montage. À retirer quand le kernel active le reclaim par défaut
 
 ## Configuration d'installation bootc (/usr/lib/bootc/install)
 
@@ -115,8 +119,10 @@
   de premier démarrage de KDE) écrivait `User=plasma-setup` dans
   `99-plasma-setup.conf` à chaque démarrage : sans effet tant que le `zz-`
   l'écrase, mais en mode « écran de connexion » (fichier retiré) il ouvrait
-  l'assistant au lieu du greeter. Neutralisé au build par
-  `/etc/plasma-setup-done` (voir `files/scripts/AGENTS.md`). Trois précautions,
+  l'assistant au lieu du greeter. Le paquet et le wizard sont **conservés**
+  (premier démarrage d'une installation) : c'est `gablue-session-mode` qui doit
+  imposer un `[Autologin] User=` vide en mode greeter, pas un drapeau posé au
+  build (voir `files/scripts/AGENTS.md`). Trois précautions,
   toutes mesurées le 23/11/2026 :
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
   `[Autologin] Session=` à son démarrage et le garde en mémoire (bug KDE

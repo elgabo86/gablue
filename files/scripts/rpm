@@ -294,11 +294,14 @@ dnf5 -y install \
     solaar
 
 # Utilitaires système et bureautique
+# btrfsmaintenance : fournit l'onglet « Maintenance » de btrfs-assistant
+# (Bazzite 83693989) ; sans lui l'interface n'expose ni scrub ni balance.
 dnf5 -y install \
     gnome-disk-utility \
     skanpage \
     snapper \
-    btrfs-assistant
+    btrfs-assistant \
+    btrfsmaintenance
 
 # Gaming et performance (gamescope et mangohud depuis terra-extras comme Bazzite a390d80)
 # mangohud migré du COPR bazzite vers Terra : le COPR bazzite abandonne progressivement
@@ -461,6 +464,11 @@ dnf5 -y install tesseract-langpack-fra
 # =============================================================================
 
 # Suppression des paquets non désirés
+# toolbox : distrobox fait déjà le travail (Bazzite 304bb1e0, Konsole 26.08 ne
+# en dépend plus) ; xwaylandvideobridge : inutile, le partage d'écran passe par
+# le portail PipeWire (Bazzite 1c4f5f19).
+# plasma-setup est CONSERVÉ : c'est le wizard de premier démarrage (clavier,
+# langue, fuseau). Le compte est créé par Anaconda. Ne pas le retirer.
 dnf5 -y remove \
     firefox \
     firefox-langpacks \
@@ -469,7 +477,9 @@ dnf5 -y remove \
     fedora-third-party \
     fedora-workstation-repositories \
     plasma-welcome-fedora \
-    plasma-welcome
+    plasma-welcome \
+    toolbox \
+    xwaylandvideobridge
 
 # Ajout de Flathub manuellement (comme ublue-os/main)
 mkdir -p /etc/flatpak/remotes.d/

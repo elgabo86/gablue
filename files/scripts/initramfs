@@ -15,8 +15,25 @@ fi
 
 # Find the kernel version we just installed using dnf5 repoquery (Bazzite pattern)
 QUALIFIED_KERNEL="$(dnf5 repoquery --installed --queryformat='%{evr}.%{arch}' "kernel${KERNEL_SUFFIX:+-${KERNEL_SUFFIX}}")"
-/usr/bin/dracut --no-hostonly --kver "$QUALIFIED_KERNEL" --reproducible --zstd -v --add ostree --add fido2 -f "/usr/lib/modules/$QUALIFIED_KERNEL/initramfs.img"
+INITRAMFS="/usr/lib/modules/${QUALIFIED_KERNEL}/initramfs.img"
 
-chmod 0600 /usr/lib/modules/"$QUALIFIED_KERNEL"/initramfs.img
+# Initramfs reproductible (Bazzite 0339b418, repris d'Aurora) : dracut embarque
+# /usr/lib/os-release, dont VERSION/OSTREE_VERSION portent la date du build et
+# PRETTY_NAME le numéro de build Gablue (`Gablue 45.20261122.23`) → l'initramfs
+# changeait à CHAQUE build, donc chaque mise à jour réécrivait cette couche
+# (~50 Mo) même sans nouveau kernel. Les clés sont retirées le temps de dracut
+# puis restaurées via une copie temporaire (préserve les permissions).
+# DRACUT_NO_XATTR : les xattrs du build n'entrent pas dans l'archive.
+OS_RELEASE="/usr/lib/os-release"
+TMP_OS_RELEASE=$(mktemp --tmpdir 'os-release-XXXXXXXXXX')
+cp "${OS_RELEASE}" "${TMP_OS_RELEASE}"
+sed -Ei -e '/^((OSTREE_)?(IMAGE_)?VERSION|PRETTY_NAME|BUILD_ID)=/d' "${OS_RELEASE}"
+
+DRACUT_NO_XATTR=1 /usr/bin/dracut --no-hostonly --kver "$QUALIFIED_KERNEL" --reproducible --zstd -v --add ostree --add fido2 -f "${INITRAMFS}"
+
+cp "${TMP_OS_RELEASE}" "${OS_RELEASE}"
+rm "${TMP_OS_RELEASE}"
+
+chmod 0600 "${INITRAMFS}"
 
 echo "::endgroup::"
