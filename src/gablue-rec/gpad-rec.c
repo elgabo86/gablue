@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -396,6 +397,10 @@ struct etat {
 
     /* enregistrement */
     int rec_demande, rec_actif;
+    /* PID du jeu qui tournait au démarrage de l'enregistrement (`pids=` de
+     * `running.txt`, séparés par des virgules). Vide = enregistrement lancé
+     * hors jeu : rien à surveiller, il ne s'arrête pas tout seul. */
+    char rec_jeu[256];
     char rec_fichier[600], rec_part[640];
     int64_t rec_debut, t0;
     AVFormatContext *mux;
@@ -1325,6 +1330,54 @@ static int jeu_paquet(char *out, size_t n)
     return trouve;
 }
 
+/* PID du jeu en cours, lus dans le `running.txt` du launcher ou de la session.
+ * Deux sources : le launcher publie dans son cache (`nom=`, `slug=`, `pids=`,
+ * chemin `cache_dir` de sa config — `GLAUNCHER_CACHE` le surcharge), les
+ * lanceurs gwine/lgplaunch dans `$XDG_RUNTIME_DIR/gablue/running.txt`
+ * (`titre=`, `pids=`). Un enregistrement démarré DANS un jeu doit s'arrêter
+ * quand ce jeu disparaît, même à résolution identique — le scanout ne bouge
+ * alors pas et ne peut pas servir de signal (demandé le 27/11/2026). */
+static int pids_du_jeu(char *out, size_t n)
+{
+    const char *home = getenv("HOME") ?: "";
+    const char *rt = getenv("XDG_RUNTIME_DIR");
+    const char *gl = getenv("GLAUNCHER_CACHE");
+    char chemins[4][600];
+    int nb = 0;
+    out[0] = 0;
+    if (gl && *gl) snprintf(chemins[nb++], 600, "%s/running.txt", gl);
+    snprintf(chemins[nb++], 600, "%s/.local/share/glauncher/running.txt", home);
+    snprintf(chemins[nb++], 600, "%s/.cache/glauncher/running.txt", home);
+    if (rt && *rt) snprintf(chemins[nb++], 600, "%s/gablue/running.txt", rt);
+    for (int i = 0; i < nb; i++) {
+        FILE *fp = fopen(chemins[i], "r");
+        if (!fp) continue;
+        char ligne[1200];
+        while (fgets(ligne, sizeof ligne, fp)) {
+            if (strncmp(ligne, "pids=", 5)) continue;
+            char *v = ligne + 5;
+            v[strcspn(v, "\r\n")] = 0;
+            if (n) snprintf(out, n, "%.*s", (int)(n - 1), v);
+            break;
+        }
+        fclose(fp);
+        if (out[0]) return 1;
+    }
+    return 0;
+}
+
+/* Au moins un PID de la liste est-il vivant ? */
+static int pids_vivants(const char *liste)
+{
+    char tampon[512];
+    snprintf(tampon, sizeof tampon, "%s", liste);
+    for (char *p = strtok(tampon, ","); p; p = strtok(NULL, ",")) {
+        long pid = strtol(p, NULL, 10);
+        if (pid > 1 && pid <= INT_MAX && kill((pid_t)pid, 0) == 0) return 1;
+    }
+    return 0;
+}
+
 /* Date de modification de recorder.conf (nanosecondes, 0 si absent) : le
  * fichier a plusieurs écrivains (overlay, Gablue Manager, un éditeur). Le
  * démon le surveille lui-même — aucun écrivain n'a besoin de connaître la
@@ -1364,6 +1417,21 @@ static void *thread_auto(void *arg)
             conf_vue = m;
             pthread_mutex_lock(&e->verrou);
             e->reload_demande = 1;
+            pthread_mutex_unlock(&e->verrou);
+        }
+        /* Enregistrement lancé DANS un jeu : il s'arrête quand ce jeu
+         * disparaît. Le scanout ne suffit pas (une partie qui tourne à la
+         * résolution du bureau ne change rien à l'écran au retour), et un
+         * oubli d'arrêt ne doit pas produire vingt minutes de menu dans le
+         * fichier. Seul un démarrage pendant une partie arme le suivi : un
+         * enregistrement lancé depuis le menu n'a pas de PID à surveiller. */
+        if (e->rec_jeu[0] && !pids_vivants(e->rec_jeu)) {
+            pthread_mutex_lock(&e->verrou);
+            if (e->rec_demande) {
+                e->rec_demande = 0;
+                logx("enregistrement arrêté (fin du jeu)");
+            }
+            e->rec_jeu[0] = 0;
             pthread_mutex_unlock(&e->verrou);
         }
         int actif = e->cfg.auto_replay && jeu_paquet(jeu, sizeof jeu);
@@ -1506,6 +1574,7 @@ static void *thread_video(void *arg)
             pthread_mutex_lock(&e->verrou);
             if (e->rec_actif) mux_ferme_mp4(e, 1);
             e->rec_demande = 0;
+            e->rec_jeu[0] = 0;
             if (e->replay_actif) ring_ferme(e);
             e->redemarrer = 1;
             pthread_mutex_unlock(&e->verrou);
@@ -1958,10 +2027,18 @@ static void *thread_ctl(void *arg)
             }
             e->rec_fichier[0] = 0;
             e->rec_demande = 1;
+            /* Jeu en cours au moment du départ : on retient ses PID. Un
+             * `running.txt` resté après un plantage porte des PID morts — on
+             * ne l'arme pas, sinon l'enregistrement s'arrêterait aussitôt. */
+            e->rec_jeu[0] = 0;
+            if (pids_du_jeu(e->rec_jeu, sizeof e->rec_jeu) &&
+                !pids_vivants(e->rec_jeu))
+                e->rec_jeu[0] = 0;
             statut_json(e, js, sizeof js);
             repondre(fd, "%s", js);
         } else if (!strcmp(cmd, "record.stop")) {
             e->rec_demande = 0;
+            e->rec_jeu[0] = 0;
             e->curseur_session = -1;
             /* répondre seulement quand le mp4 est fermé (moov écrit) : les
              * scripts relisent le fichier juste après, ils doivent le trouver

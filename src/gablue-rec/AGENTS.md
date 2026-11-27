@@ -217,6 +217,16 @@ Les débits, eux, restent ce qu'ils sont — c'est juste une information :
   sortait, la socket et le replay disparaissaient, et le clip restait anonyme —
   vécu en session jeu (« le record s'arrête tout seul », clip absent de la
   galerie).
+- **Un enregistrement lancé DANS un jeu s'arrête quand ce jeu disparaît**
+  (27/11/2026, demandé) : `record.start` retient les `pids=` de `running.txt`
+  (cache du launcher — `GLAUNCHER_CACHE`, puis `~/.local/share/glauncher` — ou
+  `$XDG_RUNTIME_DIR/gablue/running.txt` pour gwine/lgplaunch), et `thread_auto`
+  (500 ms) coupe dès qu'aucun n'est vivant : `enregistrement arrêté (fin du
+  jeu)`, clip finalisé normalement. Le scanout ne peut pas servir de signal —
+  un jeu à la résolution du bureau ne change rien à l'écran au retour — et un
+  oubli d'arrêt produisait des minutes de menu dans le fichier. Deux gardes :
+  un `running.txt` orphelin (PID morts) n'arme rien, et un démarrage depuis le
+  menu n'arme rien non plus (aucun PID à surveiller, l'enregistrement continue).
 - **`gpad-rec.service` n'est PAS `PartOf=graphical-session.target`** (retiré le
   27/11/2026) : un passage bureau ⇄ console arrête les cibles plasma, donc le
   démon avec elles, et la session console ne redémarre jamais la cible — le
