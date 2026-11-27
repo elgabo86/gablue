@@ -396,11 +396,18 @@ unité systemd + deflate plus coûteux). Aucun paquet nouveau au runtime :
   `~/.config/gablue/recorder.conf` (même fichier que l'enregistreur),
   réglable depuis les Réglages du launcher et Gablue Manager ; clé absente ou
   vide = `~/Images/Screenshots`. `SCREENSHOT_DIR` reste prioritaire (bancs).
-- **Nom du jeu** : `screenshot.sh` passe `--titre=<nom>` (variable
-  `GPAD_SHOT_TITRE` acceptée) → `gpad-shot` écrit un `iTXt Title` (UTF-8, pas
-  `tEXt` Latin-1) **dans le PNG**, jamais dans les pixels, et pose un sidecar
-  `<fichier>.jeu` (`nom=`, `logo=`). `recorder.sh` et `replay.sh` posent le
-  même sidecar sur leurs clips finalisés ; pour un **enregistrement**, le
+- **Nom du jeu et logo, DANS l'image** (27/11) : `screenshot.sh` passe
+  `--titre=<nom>` et `--logo=<chemin>` (`GPAD_SHOT_TITRE` / `GPAD_SHOT_LOGO`
+  acceptées) → `gpad-shot` écrit `Title` et `Logo` **dans le fichier**, jamais
+  dans les pixels ni à côté : iTXt (UTF-8, pas `tEXt` Latin-1) pour un PNG,
+  commentaire `Title=`/`Logo=` (une ligne par clé) pour un JPEG — le format
+  par défaut. Aucun sidecar n'est posé pour une capture : une image seule reste
+  étiquetée, et la galerie du launcher y lit de quoi proposer « copie avec le
+  logo ». Un JPEG n'a pas de morceau de texte, d'où COM ; les captures d'avant
+  le 27/11 n'y mettaient que le titre nu, encore reconnu. `recorder.sh` et
+  `replay.sh`, eux, posent un sidecar `<clip>.jeu` (`nom=`, `logo=`) — un
+  conteneur vidéo n'a pas d'équivalent inscriptible sans remux ; pour un
+  **enregistrement**, le
   sidecar est posé **dès le départ** (`start`), pas seulement à l'arrêt : la
   capture peut s'arrêter ailleurs qu'entre nos mains (résolution changée à la
   fermeture du jeu, démon relancé, session), `stop()` ne tourne alors jamais et

@@ -102,6 +102,30 @@ start() {
 # (`nom`, `logo`), puis celui du lanceur gwine/lgplaunch (`titre`, `nom`). Les
 # PID servent de garde : un fichier qui traîne après un plantage ne doit pas
 # étiqueter un clip avec le dernier jeu.
+# Dossier de cache du launcher : `GLAUNCHER_CACHE`, puis `cache_dir` de
+# `~/.config/glauncher/config.toml`, puis le défaut `~/.local/share/glauncher`.
+# C'est LÀ qu'il publie `running.txt` pendant une partie. Ne jamais y remettre
+# `~/.cache/glauncher` : ce chemin n'a jamais existé, donc `titre` restait vide,
+# donc aucun sidecar n'était posé et la galerie perdait le nom du jeu ET l'option
+# « copie avec le logo » (constaté le 27/11, captures du 26/11 sans `.jeu`).
+cache_launcher() {
+    local conf valeur=""
+    if [[ -n "${GLAUNCHER_CACHE:-}" ]]; then
+        printf '%s\n' "$GLAUNCHER_CACHE"
+        return 0
+    fi
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/glauncher/config.toml"
+    if [[ -f "$conf" ]]; then
+        valeur=$(sed -n 's/^[[:space:]]*cache_dir[[:space:]]*=[[:space:]]*//p' "$conf" | tail -1)
+        valeur="${valeur%\"}"; valeur="${valeur#\"}"
+        valeur="${valeur%\'}"; valeur="${valeur#\'}"
+    fi
+    case "$valeur" in
+        "") printf '%s\n' "$HOME/.local/share/glauncher" ;;
+        "~/"*) printf '%s\n' "$HOME/${valeur#"~/"}" ;;
+        *) printf '%s\n' "$valeur" ;;
+    esac
+}
 champ_fichier() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1; }
 pids_vivants() {
     local p q=0
@@ -110,7 +134,7 @@ pids_vivants() {
 }
 ecrire_sidecar() {
     local f=$1 titre="" logo=""
-    local launcher="${XDG_CACHE_HOME:-$HOME/.cache}/glauncher/running.txt"
+    local launcher; launcher="$(cache_launcher)/running.txt"
     if [[ -f "$launcher" ]] && pids_vivants "$(champ_fichier "$launcher" pids)"; then
         titre=$(champ_fichier "$launcher" nom)
         logo=$(champ_fichier "$launcher" logo)

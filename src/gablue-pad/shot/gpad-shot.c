@@ -313,7 +313,7 @@ static int ecrire_itxt(FILE *f, const char *cle, const char *texte)
 
 static int ecrire_png(const char *chemin, const capture_t *c,
                       const unsigned char *raw, size_t len, const char *titre,
-                      int niveau)
+                      const char *logo, int niveau)
 {
     const int bpp = (c->format == 13) ? 3 : 4;
     /* QImage::Format 16/17/18 = octets R,V,B(,A) ; 4/5 et 13 = B,V,R */
@@ -370,6 +370,7 @@ static int ecrire_png(const char *chemin, const capture_t *c,
     int ok = fwrite(sig, 1, 8, f) == 8 &&
              ecrire_chunk(f, "IHDR", ihdr, sizeof ihdr) &&
              (!titre || !*titre || ecrire_itxt(f, "Title", titre)) &&
+             (!logo || !*logo || ecrire_itxt(f, "Logo", logo)) &&
              ecrire_chunk(f, "IDAT", z, (size_t)zlen) &&
              ecrire_chunk(f, "IEND", NULL, 0);
     free(z);
@@ -448,7 +449,7 @@ static void jpeg_abandon(j_common_ptr cinfo)
 
 static int ecrire_jpeg(const char *chemin, const capture_t *c,
                        const unsigned char *raw, size_t len, const char *titre,
-                       int qualite)
+                       const char *logo, int qualite)
 {
     /* `volatile` : ces trois valeurs sont lues après un `longjmp` (erreur
      * libjpeg), et le compilateur a le droit de les garder en registre sans
@@ -495,9 +496,28 @@ static int ecrire_jpeg(const char *chemin, const capture_t *c,
     cinfo.comp_info[0].h_samp_factor = 2;
     cinfo.comp_info[0].v_samp_factor = 2;
     jpeg_start_compress(&cinfo, TRUE);
-    if (titre && *titre)
-        jpeg_write_marker(&cinfo, JPEG_COM, (const JOCTET *)titre,
-                          (unsigned int)strlen(titre));
+    /* Commentaire JPEG : `Clé=valeur` par ligne, comme les iTXt du PNG —
+     * `Title` (nom du jeu) et `Logo` (chemin du logo, pour la copie
+     * partageable). Un JPEG n'a pas de morceau de texte : COM est le seul
+     * endroit, et la galerie le relit. Les captures antérieures n'y mettaient
+     * que le titre nu : la galerie accepte encore ce cas. */
+    {
+        const size_t lt = titre ? strlen(titre) : 0;
+        const size_t ll = logo ? strlen(logo) : 0;
+        char *com = malloc(lt + ll + 32);
+        if (com) {
+            int n = 0;
+            if (lt)
+                n += snprintf(com + n, lt + ll + 32 - n, "Title=%s", titre);
+            if (ll)
+                n += snprintf(com + n, lt + ll + 32 - n, "%sLogo=%s",
+                              n ? "\n" : "", logo);
+            if (n > 0)
+                jpeg_write_marker(&cinfo, JPEG_COM, (const JOCTET *)com,
+                                  (unsigned int)n);
+            free(com);
+        }
+    }
     while (cinfo.next_scanline < cinfo.image_height) {
         const unsigned char *s =
             raw + (size_t)cinfo.next_scanline * c->stride;
@@ -567,14 +587,17 @@ int main(int argc, char **argv)
     /* --titre=<texte> : nom du jeu (ou de la fenêtre) gravé en métadonnée
      * iTXt, jamais dans les pixels (demandé le 23/11). */
     const char *titre = getenv("GPAD_SHOT_TITRE");
+    const char *logo = getenv("GPAD_SHOT_LOGO");
     const char *fichier = NULL;
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--titre=", 8) == 0)
             titre = argv[i] + 8;
+        else if (strncmp(argv[i], "--logo=", 7) == 0)
+            logo = argv[i] + 7;
         else if (!fichier)
             fichier = argv[i];
         else {
-            fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [fichier.png]\n");
+            fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [--logo=<chemin>] [fichier.png]\n");
             return 2;
         }
     }
@@ -601,7 +624,7 @@ int main(int argc, char **argv)
 
     char *chemin = fichier ? strdup(fichier) : chemin_defaut(jpeg ? "jpg" : "png");
     if (!chemin) {
-        fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [fichier.png]\n");
+        fprintf(stderr, "usage: gpad-shot [--titre=<texte>] [--logo=<chemin>] [fichier.png]\n");
         return 2;
     }
 
@@ -629,8 +652,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int rc = jpeg ? ecrire_jpeg(chemin, &c, buf, len, titre, q)
-                  : ecrire_png(chemin, &c, buf, len, titre, niveau);
+    int rc = jpeg ? ecrire_jpeg(chemin, &c, buf, len, titre, logo, q)
+                  : ecrire_png(chemin, &c, buf, len, titre, logo, niveau);
     fprintf(stderr, "gpad-shot: %s (%s, qualite %s)\n", chemin,
             jpeg ? "jpeg" : "png", qualite);
     free(buf);

@@ -32,7 +32,7 @@ mkdir -p "$DIR"
 
 # --- jeu en cours : nom affiché et logo ------------------------------------
 # Deux sources, dans cet ordre :
-#  - `<cache>/glauncher/running.txt` : écrit par le launcher pendant une partie
+#  - `<cache du launcher>/running.txt` : écrit pendant une partie
 #    (`nom` = nom de la bibliothèque, `logo` = chemin du logo), et supprimé à
 #    la fin du jeu ;
 #  - `$XDG_RUNTIME_DIR/gablue/running.txt` : écrit par `gwine`/`lgplaunch`
@@ -40,6 +40,30 @@ mkdir -p "$DIR"
 # Les PID servent de garde : un fichier qui traîne après un plantage ne doit
 # pas étiqueter une capture de bureau avec le dernier jeu.
 RT=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# Dossier de cache du launcher : `GLAUNCHER_CACHE`, puis `cache_dir` de
+# `~/.config/glauncher/config.toml`, puis le défaut `~/.local/share/glauncher`.
+# C'est LÀ qu'il publie `running.txt` pendant une partie. Ne jamais y remettre
+# `~/.cache/glauncher` : ce chemin n'a jamais existé, donc `titre` restait vide,
+# donc aucun sidecar n'était posé et la galerie perdait le nom du jeu ET l'option
+# « copie avec le logo » (constaté le 27/11, captures du 26/11 sans `.jeu`).
+cache_launcher() {
+    local conf valeur=""
+    if [[ -n "${GLAUNCHER_CACHE:-}" ]]; then
+        printf '%s\n' "$GLAUNCHER_CACHE"
+        return 0
+    fi
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/glauncher/config.toml"
+    if [[ -f "$conf" ]]; then
+        valeur=$(sed -n 's/^[[:space:]]*cache_dir[[:space:]]*=[[:space:]]*//p' "$conf" | tail -1)
+        valeur="${valeur%\"}"; valeur="${valeur#\"}"
+        valeur="${valeur%\'}"; valeur="${valeur#\'}"
+    fi
+    case "$valeur" in
+        "") printf '%s\n' "$HOME/.local/share/glauncher" ;;
+        "~/"*) printf '%s\n' "$HOME/${valeur#"~/"}" ;;
+        *) printf '%s\n' "$valeur" ;;
+    esac
+}
 champ() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1; }
 pids_vivants() {
     local p q=0
@@ -47,7 +71,7 @@ pids_vivants() {
     [[ $q == 1 ]]
 }
 titre=""; logo=""
-run_launcher="${XDG_CACHE_HOME:-$HOME/.cache}/glauncher/running.txt"
+run_launcher="$(cache_launcher)/running.txt"
 if [[ -f "$run_launcher" ]]; then
     if pids_vivants "$(champ "$run_launcher" pids)"; then
         titre=$(champ "$run_launcher" nom)
@@ -62,15 +86,12 @@ if [[ -z "$titre" && -f "$run_session" ]]; then
     fi
 fi
 
-# sidecar `<fichier>.jeu` : la galerie y lit le nom du jeu (et le logo pour la
-# copie avec logo). Écrit même quand gpad-shot échoue (repli spectacle).
-ecrire_sidecar() {
-    local f=$1
-    [[ -n "$titre" ]] || return 0
-    { printf 'nom=%s\n' "$titre"
-      [[ -n "$logo" ]] && printf 'logo=%s\n' "$logo"
-    } > "$f.jeu" 2>/dev/null || true
-}
+# Le nom du jeu et le logo voyagent DANS l'image — iTXt `Title`/`Logo` d'un
+# PNG, commentaire `Title=`/`Logo=` d'un JPEG — et jamais dans un fichier à
+# côté (demandé le 27/11) : une capture seule reste étiquetée, et la galerie
+# affiche le nom et propose « copie avec le logo » sans rien d'autre à
+# transporter. Le repli `spectacle` n'a pas de métadonnée à écrire : sa
+# capture reste sans nom, la galerie affiche alors date et poids.
 
 # son de déclencheur d'abord : sans lui on ne sait pas si la capture est partie
 # (le son ne peut pas se retrouver dans un PNG, rien ne justifie de l'attendre)
@@ -90,14 +111,12 @@ fi
 
 capture_ok=0
 if [[ -n "$SHOT" ]]; then
-    if [[ -n "$titre" ]]; then
-        "$SHOT" --titre="$titre" "$f" && capture_ok=1
-    else
-        "$SHOT" "$f" && capture_ok=1
-    fi
+    meta=()
+    [[ -n "$titre" ]] && meta+=("--titre=$titre")
+    [[ -n "$logo" ]] && meta+=("--logo=$logo")
+    "$SHOT" "${meta[@]}" "$f" && capture_ok=1
 fi
 if [[ $capture_ok == 1 ]]; then
-    ecrire_sidecar "$f"
     echo "capture : $f"
     exit 0
 fi
@@ -117,8 +136,7 @@ fi
 spectacle -f -b -n -o "$f"
 
 if [[ -f "$f" ]]; then
-    ecrire_sidecar "$f"
-    echo "capture : $f"
+    echo "capture : $f (sans métadonnée : repli spectacle)"
 else
     echo "ECHEC: fichier non créé ($f)"
     exit 1
