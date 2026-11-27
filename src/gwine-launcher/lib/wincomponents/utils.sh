@@ -198,7 +198,12 @@ exit "$rc"
 EOS
     chmod +x "$tmp_dir/run.sh"
 
-    env XDG_RUNTIME_DIR="$tmp_dir" DISPLAY= WAYLAND_DISPLAY= \
+    # DISPLAY/WAYLAND_DISPLAY doivent être ABSENTS, pas vides : avec
+    # WAYLAND_DISPLAY="" gamescope tente de se connecter à un socket nommé vide
+    # et meurt (« Failed to connect to wayland socket: . »), le FIFO ne reçoit
+    # jamais rien et l'init attend son timeout. gamescope pose lui-même
+    # DISPLAY/WAYLAND_DISPLAY pour l'enfant.
+    env -u DISPLAY -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$tmp_dir" \
         gamescope --backend headless -W 1280 -H 720 -- \
         "$tmp_dir/run.sh" "$rc_file" env WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "$@" \
         >/dev/null 2>&1 &
