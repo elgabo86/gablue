@@ -41,7 +41,9 @@ Workflow réutilisable de build d'une image. **Inputs** : `image_name`/`image_de
 **Étapes** :
 1. Version kernel auto via `skopeo list-tags` si `kernel_version` vide — retry 3×10 s (timeouts ghcr.io)
 2. Checkout ; maximisation espace disque
-3. Build buildah rootless — retry `nick-fields/retry@v4` (`retry_on: error`, timeout 90 min / 120 min DX — miroirs lents) : le script détecte les erreurs réseau (EOF, TLS handshake, DNS, curl timeout…) → exit 1 (retry) ; erreur de build RUN → exit 2 (échec immédiat)
+3. Build buildah rootless — retry `nick-fields/retry@v4` (`retry_on: error`, timeout 90 min / 120 min DX — miroirs lents) : le script détecte les erreurs réseau (EOF, TLS handshake, DNS, curl timeout…) **et les dépôts tiers transitoires** (`No match for argument`, `Cannot download`, `Failed to download metadata`, `checksum … mismatch`) → exit 1 (retry) ; erreur de build RUN → exit 2 (échec immédiat)
+   - **`No match for argument` est un transitoire, pas un paquet supprimé** : Terra peut servir un repomd partiel pendant une sync — `gablue-main-dx` rouge sur `bpftune-gaming` le 27/11/2026 (métadonnée Terra à 69 Kio au lieu de 1,2 Mio) alors que le job `main` du même commit l'installait 6 min plus tôt et que le paquet était publié. Rejouer coûte 20 s
+   - **Ne JAMAIS « corriger » ça avec `--skip-unavailable`** sur les listes de paquets : c'est exactement ce qui a masqué la disparition de `zenergy`/`nct6687d` (bloc akmods) pendant 10 jours. Le retry ne change pas le résultat d'un paquet réellement absent, il ne fait que retarder le rouge de 20 s
    - **`retry_on_exit_code` NE DOIT PAS être utilisé** : désactive le retry sur timeout (bug nick-fields/retry#145)
    - **`set +e -o pipefail` obligatoire** : l'action n'hérite pas du pipefail de GH Actions ; sans lui `$?` capture le code de `tee` à travers le pipe `| tee` → échec de build masqué (l'étape suivante tente `buildah from raw-img` inexistant → pull registres → 404)
    - `buildah rmi raw-img` au début de chaque tentative

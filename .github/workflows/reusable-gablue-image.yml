@@ -390,8 +390,17 @@ jobs:
               exit 0
             fi
 
-            # Détection erreur réseau vs build
-            if grep -qiE '(TLS handshake timeout|i/o timeout|connection refused|connection reset|no route to host|could not resolve|Temporary failure in name resolution|request canceled while waiting for connection|dial tcp|net/http: request canceled|unexpected EOF|read: connection reset by peer|curl error.*Timeout)' "$BUILD_LOG"; then
+            # Détection erreur réseau / dépôt transitoire vs échec de build
+            # `No match for argument` : un dépôt tiers (Terra) en cours de sync
+            # sert un repomd partiel — le paquet existe, la métadonnée non.
+            # Constaté le 27/11/2026 : gablue-main-dx rouge sur bpftune-gaming
+            # (Terra 45 téléchargé à 69 Kio au lieu de 1,2 Mio), alors que le
+            # job main, 6 min plus tôt, l'installait normalement et que le
+            # paquet était bien publié. Rejouer coûte 20 s, un faux rouge coûte
+            # un run et un diagnostic. NE PAS « corriger » ça avec
+            # --skip-unavailable : c'est ce qui a masqué la disparition de
+            # zenergy/nct6687d pendant 10 jours.
+            if grep -qiE '(TLS handshake timeout|i/o timeout|connection refused|connection reset|no route to host|could not resolve|Temporary failure in name resolution|request canceled while waiting for connection|dial tcp|net/http: request canceled|unexpected EOF|read: connection reset by peer|curl error.*Timeout|No match for argument|Cannot download|Failed to download metadata|checksum (doesn.t match|mismatch))' "$BUILD_LOG"; then
               echo "::warning::Erreur réseau détectée, retry dans 20s..."
               rm -f "$BUILD_LOG"
               exit 1
