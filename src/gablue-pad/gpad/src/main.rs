@@ -871,7 +871,8 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     // CONSOLE : pas d'en-tête cliquable (il ouvrait une page sans objet en
     // jeu) — `FERMER` prend la première ligne, `BASCULER` le suit, AU-DESSUS
     // des volumes (demandé le 25/11/2026). BUREAU : l'en-tête reste un bouton
-    // (page de la fenêtre active) et les volumes gardent leur place sous lui.
+    // (page de la fenêtre active) et les volumes gardent leur place sous lui ;
+    // aucune ligne `BASCULER`, quel que soit l'état des fenêtres.
     let mut items = if dispo.console {
         let mut v = vec![Entree::Action("FERMER")];
         if dispo.bascule {
@@ -890,12 +891,10 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     if dispo.app {
         items.push(Entree::VolumeApp);
     }
-    // le geste du quotidien (regarder une vidéo à côté du jeu) : en tête, il
-    // ne doit pas se chercher dans une catégorie (demandé le 23/11/2026) ;
-    // en console il est déjà passé sous `FERMER`
-    if dispo.bascule && !dispo.console {
-        items.push(Entree::Basculer);
-    }
+    // `BASCULER` n'existe QU'EN MODE JEU (console), sous `FERMER` : au bureau,
+    // il n'a pas de sens (KWin fait Alt-Tab) et il encombrait l'accueil dès
+    // qu'une app compagne tournait — retiré le 27/11/2026, déjà demandé.
+    // Le geste reste accessible hors panneau par Home+L2/R2.
     items.push(Entree::Action("MODE SOURIS"));
     items.push(Entree::Action("CLAVIER VIRTUEL"));
     items.push(Entree::Action("CAPTURE ECRAN"));
@@ -9261,13 +9260,14 @@ mod tests {
         assert_eq!(console.get(1), Some(&Entree::Basculer));
         assert_eq!(console.get(2), Some(&Entree::Volume));
 
-        let avec_bascule = accueil_items(Dispo {
+        // Au BUREAU, aucune ligne `BASCULER` même avec un jeu et une app
+        // compagne : le geste vit en mode jeu (console), ou par Home+L2/R2.
+        let bureau_bascule = accueil_items(Dispo {
             bascule: true,
             ..Dispo::default()
         });
-        // juste après les volumes : c'est le geste du quotidien
-        assert_eq!(avec_bascule.get(2), Some(&Entree::Basculer));
-        assert_eq!(avec_bascule.len(), bureau.len() + 1);
+        assert!(!bureau_bascule.contains(&Entree::Basculer));
+        assert_eq!(bureau_bascule.len(), bureau.len());
 
         assert!(!bureau.contains(&Entree::Action("SAUVER REPLAY")));
         assert!(!bureau.contains(&Entree::VolumeJeu));

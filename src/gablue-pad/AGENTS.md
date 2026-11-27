@@ -297,15 +297,17 @@ publiés (`running.txt`), pas via `jeu_actif()` qui ne désigne que le jeu de la
 fenêtre active — app au premier plan = aucun jeu reconnu, et la bascule cyclait
 les fenêtres au lieu de passer à l'app.
 
-**Bascule en tête de l'accueil** : quand un jeu tourne **et** qu'une app
-compagne est ouverte, `BASCULER` est le **premier geste** de l'accueil, juste
-après le nom de la fenêtre et ses trois volumes au bureau ; en **console** il
-suit `FERMER` et précède les volumes (25/11/2026) —
+**Bascule : mode jeu uniquement** : quand un jeu tourne **et** qu'une app
+compagne est ouverte, `BASCULER` suit `FERMER` et précède les volumes en
+**console** (25/11/2026). Au **bureau la ligne n'existe pas** (retirée le
+27/11/2026, déjà demandé — elle revenait dès qu'une app compagne tournait) :
+KWin fait Alt-Tab, et le geste reste accessible sans panneau par Home+L2/R2 —
 il n'y a plus de pages `JEU` / `FENETRES` : la ligne vit dans
 `accueil_items(dispo)` et `refresh_bascule` est relu après la première image
 (à l'ouverture), jamais avant : `lister.js` prend jusqu'à 400 ms. Sans jeu
-mais avec une app compagne, la bascule va et vient entre l'app et
-**glauncher** — pas de cyclage de fenêtres au hasard.
+mais avec une app compagne, le combo va et vient entre l'app et
+**glauncher** — pas de cyclage de fenêtres au hasard (valable au bureau, où
+la ligne du panneau n'est plus proposée).
 
 **Captures d'écran : format et qualité** (page CAPTURE, `FORMAT PHOTO` /
 `QUALITE PHOTO`) sont écrits dans `~/.config/gablue/recorder.conf`
