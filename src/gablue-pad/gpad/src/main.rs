@@ -895,14 +895,16 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     // il n'a pas de sens (KWin fait Alt-Tab) et il encombrait l'accueil dès
     // qu'une app compagne tournait — retiré le 27/11/2026, déjà demandé.
     // Le geste reste accessible hors panneau par Home+L2/R2.
-    items.push(Entree::Action("MODE SOURIS"));
-    items.push(Entree::Action("CLAVIER VIRTUEL"));
     items.push(Entree::Action("CAPTURE ECRAN"));
     items.push(Entree::Action("ENREGISTRER UNE VIDEO"));
     items.push(Entree::Action("ACTIVER LE REPLAY"));
     if dispo.replay {
         items.push(Entree::Action("SAUVER REPLAY"));
     }
+    // Souris et clavier APRÈS la capture et le replay (demandé le 27/11/2026) :
+    // ce sont les gestes de jeu, ils passent avant les outils ponctuels.
+    items.push(Entree::Action("MODE SOURIS"));
+    items.push(Entree::Action("CLAVIER VIRTUEL"));
     items.extend([
         Entree::SousMenu("OPTIONS D'AFFICHAGE", Cat::Affichage),
         Entree::SousMenu("OPTIONS DE CAPTURE", Cat::Capture),

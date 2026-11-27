@@ -364,6 +364,12 @@ dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
   visible en défilant. L'accueil lui-même tient en 1080p (mesuré le 24/11/2026,
   1920×1080 : seize lignes, pied de page visible, aucun défilement ; quatorze
   depuis le retrait de `FERMER` et `PLEIN ECRAN`, le 25/11/2026).
+- **Ordre de l'accueil** (27/11/2026) : fenêtre active (bureau) ou
+  `FERMER` + `BASCULER` (console), volumes, `CAPTURE ECRAN`,
+  `ENREGISTRER UNE VIDEO`, `ACTIVER LE REPLAY`, `SAUVER REPLAY` (si le buffer
+  tourne), et **seulement ensuite** `MODE SOURIS` / `CLAVIER VIRTUEL` — les
+  gestes de jeu passent avant les outils ponctuels —, puis les deux
+  sous-menus de réglages.
 
 ## Clavier virtuel à la demande (`gpad-clavier`)
 
