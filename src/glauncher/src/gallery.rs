@@ -81,12 +81,134 @@ impl Item {
         )
     }
 
+    /// Date sans l'année quand c'est l'année courante (« 26 nov. · 23:31 ») :
+    /// sur une tuile de galerie, trois caractères gagnés valent mieux qu'un
+    /// « 2026 » que tout le monde connaît. Année différente = date complète.
+    pub fn date_courte(&self, maintenant: SystemTime) -> String {
+        let secondes = |instant: SystemTime| {
+            instant
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|duree| duree.as_secs())
+                .unwrap_or(0)
+        };
+        let (annee, mois, jour, heure, minute) = locale(secondes(self.mtime));
+        if annee == locale(secondes(maintenant)).0 {
+            format!("{jour} {} · {heure:02}:{minute:02}", mois_abrege(mois))
+        } else {
+            self.date_lisible()
+        }
+    }
+
     pub fn poids(&self) -> String {
         if self.taille >= 1024 * 1024 {
             format!("{:.1} Mo", self.taille as f64 / (1024.0 * 1024.0))
         } else {
             format!("{} Ko", self.taille.div_ceil(1024))
         }
+    }
+}
+
+/// Section datée de chaque élément (intertitres de la grille). Calculée en une
+/// passe au chargement de la galerie : la vue ne rappelle pas `localtime_r`
+/// pour chaque tuile à chaque image.
+pub fn sections(items: &[Item], maintenant: SystemTime) -> Vec<&'static str> {
+    let aujourdhui = jour_local(maintenant);
+    items
+        .iter()
+        .map(|item| section_jours(jour_local(item.mtime), aujourdhui))
+        .collect()
+}
+
+/// « Aujourd'hui / Hier / Cette semaine / Ce mois-ci / Plus ancien » sur des
+/// jours ordinaux **locaux** (un changement d'heure ne décale pas la veille).
+fn section_jours(jour: i64, aujourdhui: i64) -> &'static str {
+    // horloge en avance (capture « du futur ») : aujourd'hui, pas « plus
+    // ancien » — la soustraction saturée donnait un écart négatif
+    if aujourdhui <= jour {
+        return "Aujourd'hui";
+    }
+    match aujourdhui - jour {
+        1 => "Hier",
+        2..=6 => "Cette semaine",
+        7..=29 => "Ce mois-ci",
+        _ => "Plus ancien",
+    }
+}
+
+/// Jour ordinal local d'un instant (jours depuis l'époque Unix).
+fn jour_local(instant: SystemTime) -> i64 {
+    let secondes = instant
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duree| duree.as_secs())
+        .unwrap_or(0);
+    let (annee, mois, jour, _, _) = locale(secondes);
+    jours_civils(annee, mois, jour)
+}
+
+/// `days_from_civil` (Howard Hinnant) : date civile → jour ordinal.
+fn jours_civils(annee: i64, mois: u32, jour: u32) -> i64 {
+    let y = if mois <= 2 { annee - 1 } else { annee };
+    let ere = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - ere * 400;
+    let mp = (i64::from(mois) + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + i64::from(jour) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    ere * 146_097 + doe - 719_468
+}
+
+/// Durée d'une vidéo, en secondes : cache `<hash>.dur` d'abord, sinon demandée
+/// à `ffmpeg` — en-tête seulement (`-i` sans sortie, aucun décodage), donc
+/// quelques millisecondes. Seules les vidéos visibles passent par là (le fil de
+/// vignettes), et le résultat est retenu pour les sessions suivantes.
+pub fn duree(item: &Item, cache: &Path) -> Option<f64> {
+    if item.genre != Genre::Video {
+        return None;
+    }
+    let chemin = cache.join(format!(
+        "{}.dur",
+        cle_cache(item).trim_end_matches(".jpg")
+    ));
+    if let Ok(texte) = std::fs::read_to_string(&chemin)
+        && let Ok(secondes) = texte.trim().parse::<f64>()
+        && secondes.is_finite()
+    {
+        return Some(secondes);
+    }
+    let sortie = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-i"])
+        .arg(&item.path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .ok()?;
+    let texte = String::from_utf8_lossy(&sortie.stderr);
+    let secondes = texte.lines().find_map(parse_duree)?;
+    std::fs::create_dir_all(cache).ok()?;
+    let _ = std::fs::write(&chemin, format!("{secondes:.3}"));
+    Some(secondes)
+}
+
+/// `Duration: 00:01:12.50, start: …` → secondes. `N/A` (flux sans durée) ne
+/// donne rien : la pastille reste absente plutôt que fausse.
+fn parse_duree(ligne: &str) -> Option<f64> {
+    let reste = ligne.split("Duration:").nth(1)?.trim();
+    let duree = reste.split(',').next()?.trim();
+    let mut parties = duree.split(':');
+    let heures: f64 = parties.next()?.parse().ok()?;
+    let minutes: f64 = parties.next()?.parse().ok()?;
+    let secondes: f64 = parties.next()?.parse().ok()?;
+    Some(heures * 3600.0 + minutes * 60.0 + secondes)
+}
+
+/// Durée courte d'une pastille : `0:20`, `1:02:03`.
+pub fn duree_texte(secondes: f64) -> String {
+    let total = secondes.max(0.0) as u64;
+    let (heures, minutes, secondes) = (total / 3600, (total % 3600) / 60, total % 60);
+    if heures > 0 {
+        format!("{heures}:{minutes:02}:{secondes:02}")
+    } else {
+        format!("{minutes}:{secondes:02}")
     }
 }
 
@@ -203,54 +325,192 @@ fn legende_capture(path: &Path, genre: Genre) -> (Option<String>, Option<PathBuf
         return (champ("nom"), logo);
     }
     if genre == Genre::Image {
-        return (titre_png(path), None);
+        return metadonnees_image(path);
     }
     (None, None)
 }
 
-/// `Title` d'un PNG, sans décoder l'image : on lit les morceaux jusqu'à
-/// `IDAT` (les métadonnées sont avant, toujours chez nous). Un fichier
-/// quelconque n'est pas une erreur, juste « pas de titre ».
-fn titre_png(path: &Path) -> Option<String> {
+/// Nom et logo lus **dans l'image elle-même** (demandé le 27/11 : aucun fichier
+/// à côté d'une capture) : iTXt `Title`/`Logo` d'un PNG, commentaire
+/// `Title=`/`Logo=` d'un JPEG. Le format est reconnu aux **octets magiques**,
+/// pas à l'extension — `gpad-shot` écrit du JPEG par défaut dans un fichier
+/// nommé `.png`, et une capture JPEG n'a pas de morceau de texte, d'où le
+/// commentaire.
+fn metadonnees_image(path: &Path) -> (Option<String>, Option<PathBuf>) {
     use std::io::Read;
-    let mut f = std::fs::File::open(path).ok()?;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return (None, None);
+    };
     let mut sigle = [0u8; 8];
-    f.read_exact(&mut sigle).ok()?;
-    if sigle != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
-        return None;
+    if f.read_exact(&mut sigle).is_err() {
+        return (None, None);
     }
+    if sigle == [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+        return metadonnees_png(&mut f);
+    }
+    if sigle[0] == 0xff && sigle[1] == 0xd8 {
+        // retour au début : le balayage des marqueurs repart de SOI
+        return metadonnees_jpeg(path);
+    }
+    (None, None)
+}
+
+/// Une paire `clé\0valeur` (tEXt).
+fn cle_valeur(data: &[u8]) -> Option<(String, String)> {
+    let fin = data.iter().position(|octet| *octet == 0)?;
+    Some((
+        String::from_utf8_lossy(&data[..fin]).to_string(),
+        String::from_utf8_lossy(&data[fin + 1..]).to_string(),
+    ))
+}
+
+/// iTXt : `clé\0 compression méthode langue\0 traduit\0 texte` (les deux
+/// derniers champs vont jusqu'au NUL, le texte occupe le reste). Le drapeau de
+/// compression est un **octet**, pas un champ : une première version le lisait
+/// par `splitn`, ce qui ne tombait jamais juste et rendait le titre illisible.
+fn itxt(data: &[u8]) -> Option<(String, String)> {
+    let fin = data.iter().position(|octet| *octet == 0)?;
+    let cle = String::from_utf8_lossy(&data[..fin]).to_string();
+    let reste = data.get(fin + 1..)?;
+    let (&compression, apres) = reste.split_first()?;
+    let (_methode, apres) = apres.split_first()?;
+    let fin = apres.iter().position(|octet| *octet == 0)?;
+    let apres = apres.get(fin + 1..)?;
+    let fin = apres.iter().position(|octet| *octet == 0)?;
+    if compression != 0 {
+        return None; // texte compressé : on ne décompresse pas pour un titre
+    }
+    Some((
+        cle,
+        String::from_utf8_lossy(apres.get(fin + 1..)?).to_string(),
+    ))
+}
+
+/// Morceaux d'un PNG jusqu'aux données : `iTXt` et `tEXt` portent le nom et le
+/// logo. Un fichier quelconque n'est pas une erreur, juste « pas de titre ».
+fn metadonnees_png(f: &mut std::fs::File) -> (Option<String>, Option<PathBuf>) {
+    use std::io::Read;
+    let (mut titre, mut logo) = (None, None);
     let mut entete = [0u8; 8];
     for _ in 0..32 {
-        f.read_exact(&mut entete).ok()?;
+        if f.read_exact(&mut entete).is_err() {
+            break;
+        }
         let len = u32::from_be_bytes([entete[0], entete[1], entete[2], entete[3]]) as usize;
         let type_ = &entete[4..8];
         if type_ == b"IDAT" || type_ == b"IEND" {
-            return None;
+            break;
         }
         if len > 8192 {
             // morceau inattendu : on ne saute pas 4 Mo pour rien
-            return None;
+            break;
         }
         let mut data = vec![0u8; len];
-        f.read_exact(&mut data).ok()?;
+        if f.read_exact(&mut data).is_err() {
+            break;
+        }
         let mut crc = [0u8; 4];
-        f.read_exact(&mut crc).ok()?;
-        if type_ == b"iTXt" {
-            // clé\0 flag\0 méthode\0 langue\0 traduit\0 texte
-            let champs: Vec<&[u8]> = data.splitn(6, |octet| *octet == 0).collect();
-            if champs.len() == 6 && champs[0] == b"Title" && champs[1] == [0] {
-                return Some(String::from_utf8_lossy(champs[5]).to_string());
-            }
+        if f.read_exact(&mut crc).is_err() {
+            break;
+        }
+        let champ = if type_ == b"iTXt" {
+            itxt(&data)
         } else if type_ == b"tEXt" {
-            let mut parts = data.splitn(2, |octet| *octet == 0);
-            if let (Some(cle), Some(valeur)) = (parts.next(), parts.next())
-                && cle == b"Title"
-            {
-                return Some(String::from_utf8_lossy(valeur).to_string());
+            cle_valeur(&data)
+        } else {
+            None
+        };
+        for (cle, valeur) in champ.into_iter().collect::<Vec<_>>() {
+            let valeur = valeur.trim().to_string();
+            if valeur.is_empty() {
+                continue;
+            }
+            match cle.as_str() {
+                "Title" => titre = Some(valeur),
+                "Logo" => logo = Some(PathBuf::from(valeur)),
+                _ => {}
             }
         }
     }
-    None
+    (titre, logo)
+}
+
+/// Marqueurs d'un JPEG jusqu'au début du scan : le commentaire `COM` porte
+/// `Title=`/`Logo=` (une ligne par clé). Les captures d'avant le 27/11 n'y
+/// mettaient que le titre nu : il est reconnu comme tel.
+fn metadonnees_jpeg(path: &Path) -> (Option<String>, Option<PathBuf>) {
+    use std::io::{BufReader, Read};
+    let (mut titre, mut logo) = (None, None);
+    let Ok(f) = std::fs::File::open(path) else {
+        return (None, None);
+    };
+    let mut lecteur = BufReader::new(f);
+    let mut octets = [0u8; 2];
+    if lecteur.read_exact(&mut octets).is_err() || octets != [0xff, 0xd8] {
+        return (None, None);
+    }
+    loop {
+        // remplissage 0xFF éventuel, puis le marqueur
+        let mut marqueur = [0u8; 1];
+        if lecteur.read_exact(&mut marqueur).is_err() {
+            break;
+        }
+        if marqueur[0] != 0xff {
+            break; // flux incohérent : on s'arrête là
+        }
+        let mut code = [0u8; 1];
+        while lecteur.read_exact(&mut code).is_ok() && code[0] == 0xff {}
+        let code = code[0];
+        // marqueurs sans longueur : SOI, EOI, RSTn, TEM
+        if code == 0xd8 || code == 0xd9 || code == 0x01 || (0xd0..=0xd7).contains(&code) {
+            if code == 0xd9 {
+                break;
+            }
+            continue;
+        }
+        let mut longueur = [0u8; 2];
+        if lecteur.read_exact(&mut longueur).is_err() {
+            break;
+        }
+        let longueur = u16::from_be_bytes(longueur) as usize;
+        if longueur < 2 {
+            break;
+        }
+        let mut contenu = vec![0u8; longueur - 2];
+        if lecteur.read_exact(&mut contenu).is_err() {
+            break;
+        }
+        if code == 0xfe {
+            // commentaire : `Clé=valeur` par ligne, ou le titre nu (ancien)
+            let texte = String::from_utf8_lossy(&contenu).to_string();
+            let mut structure = false;
+            for ligne in texte.lines() {
+                let ligne = ligne.trim();
+                if let Some(valeur) = ligne.strip_prefix("Title=") {
+                    structure = true;
+                    if !valeur.trim().is_empty() {
+                        titre = Some(valeur.trim().to_string());
+                    }
+                } else if let Some(valeur) = ligne.strip_prefix("Logo=") {
+                    structure = true;
+                    if !valeur.trim().is_empty() {
+                        logo = Some(PathBuf::from(valeur.trim()));
+                    }
+                }
+            }
+            if !structure && titre.is_none() {
+                let texte = texte.trim();
+                if !texte.is_empty() {
+                    titre = Some(texte.to_string());
+                }
+            }
+        }
+        // SOS : plus aucune métadonnée après, le flux image commence
+        if code == 0xda {
+            break;
+        }
+    }
+    (titre, logo)
 }
 
 /// Met un fichier à la **corbeille XDG** (`~/.local/share/Trash`) au lieu de
@@ -537,6 +797,8 @@ pub fn spawn_ticker() {
 pub enum Event {
     /// Vignette prête (ou définitivement absente) pour ce chemin.
     Thumb { path: PathBuf, bytes: Option<Vec<u8>> },
+    /// Durée d'une vidéo (lue/cachée à part, pour la pastille de la tuile).
+    Duree { path: PathBuf, secondes: Option<f64> },
     /// Toutes les vignettes demandées ont été traitées.
     Done,
 }
@@ -557,6 +819,15 @@ where
                     path: item.path.clone(),
                     bytes,
                 });
+                // la durée ne concerne que les vidéos : même fil, même lot de
+                // tuiles visibles, donc pas de `ffmpeg -i` sur toute la galerie
+                if item.genre == Genre::Video {
+                    let secondes = duree(&item, &cache);
+                    emit(Event::Duree {
+                        path: item.path.clone(),
+                        secondes,
+                    });
+                }
             }
             emit(Event::Done);
         });
@@ -638,5 +909,148 @@ mod tests {
         let avant = cle_cache(&item);
         item.mtime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(5);
         assert_ne!(avant, cle_cache(&item), "fichier remplacé = vignette refaite");
+    }
+
+    #[test]
+    fn sections_datees() {
+        assert_eq!(section_jours(100, 100), "Aujourd'hui");
+        assert_eq!(section_jours(100, 101), "Hier");
+        assert_eq!(section_jours(100, 104), "Cette semaine");
+        assert_eq!(section_jours(100, 120), "Ce mois-ci");
+        assert_eq!(section_jours(100, 200), "Plus ancien");
+        // horloge en avance : une capture « du futur » reste aujourd'hui
+        assert_eq!(section_jours(101, 100), "Aujourd'hui");
+    }
+
+    #[test]
+    fn jours_civils_connus() {
+        // 1970-01-01 = jour 0 ; 2000-02-29 = 11016
+        assert_eq!(jours_civils(1970, 1, 1), 0);
+        assert_eq!(jours_civils(2000, 2, 29), 11_016);
+        assert_eq!(jours_civils(2026, 11, 22), 20_779);
+    }
+
+    #[test]
+    fn duree_lue_dans_l_entete_ffmpeg() {
+        assert_eq!(
+            parse_duree("  Duration: 00:01:12.50, start: 0.000000, bitrate: 1 kb/s"),
+            Some(72.5)
+        );
+        assert_eq!(parse_duree("  Duration: 00:00:20.00, start: 0"), Some(20.0));
+        // flux sans durée : pas de pastille plutôt qu'une valeur fausse
+        assert_eq!(parse_duree("  Duration: N/A, start: 0"), None);
+        assert_eq!(parse_duree("Stream #0:0: Video"), None);
+    }
+
+    /// Bac à sable d'un test : un dossier par nom, vidé avant usage.
+    fn bac(nom: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("galerie-test-{}-{nom}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// PNG minimal : signature, IHDR, les iTXt demandés, puis IDAT/IEND (le
+    /// lecteur s'arrête là, les CRC ne sont donc jamais relus).
+    fn png_avec(paires: &[(&str, &str)]) -> Vec<u8> {
+        let mut v = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let mut morceau = |type_: &[u8; 4], data: &[u8]| {
+            v.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            v.extend_from_slice(type_);
+            v.extend_from_slice(data);
+            v.extend_from_slice(&[0, 0, 0, 0]);
+        };
+        morceau(b"IHDR", &[0; 13]);
+        for (cle, texte) in paires {
+            let mut data = cle.as_bytes().to_vec();
+            data.push(0); // fin de clé
+            data.extend_from_slice(&[0, 0, 0, 0]); // non compressé, langue, traduit
+            data.extend_from_slice(texte.as_bytes());
+            morceau(b"iTXt", &data);
+        }
+        morceau(b"IDAT", &[0; 4]);
+        morceau(b"IEND", &[]);
+        v
+    }
+
+    /// JPEG minimal : SOI, un commentaire, puis SOS/EOI.
+    fn jpeg_avec_commentaire(texte: &str) -> Vec<u8> {
+        let mut v = vec![0xff, 0xd8, 0xff, 0xfe];
+        v.extend_from_slice(&((texte.len() + 2) as u16).to_be_bytes());
+        v.extend_from_slice(texte.as_bytes());
+        v.extend_from_slice(&[0xff, 0xda, 0x00, 0x02, 0xff, 0xd9]);
+        v
+    }
+
+    #[test]
+    fn metadonnees_png_titre_et_logo() {
+        let dir = bac("meta-png");
+        let f = dir.join("screenshot_20261127_120000.png");
+        std::fs::write(
+            &f,
+            png_avec(&[("Title", "Astro Bot"), ("Logo", "/tmp/logo.png")]),
+        )
+        .unwrap();
+        let (titre, logo) = metadonnees_image(&f);
+        assert_eq!(titre.as_deref(), Some("Astro Bot"));
+        assert_eq!(logo, Some(PathBuf::from("/tmp/logo.png")));
+    }
+
+    #[test]
+    fn metadonnees_png_sans_logo() {
+        let dir = bac("meta-png-seul");
+        let f = dir.join("screenshot_20261127_120000.png");
+        std::fs::write(&f, png_avec(&[("Title", "Hades II")])).unwrap();
+        let (titre, logo) = metadonnees_image(&f);
+        assert_eq!(titre.as_deref(), Some("Hades II"));
+        assert!(logo.is_none(), "pas de logo dans l'image");
+    }
+
+    #[test]
+    fn metadonnees_jpeg_commentaire_structure() {
+        let dir = bac("meta-jpeg");
+        // `gpad-shot` écrit du JPEG par défaut, dans un fichier nommé `.png` :
+        // c'est le contenu qui décide, pas l'extension
+        let f = dir.join("screenshot_20261127_120000.png");
+        std::fs::write(
+            &f,
+            jpeg_avec_commentaire("Title=Astro Bot\nLogo=/tmp/logo.png"),
+        )
+        .unwrap();
+        let (titre, logo) = metadonnees_image(&f);
+        assert_eq!(titre.as_deref(), Some("Astro Bot"));
+        assert_eq!(logo, Some(PathBuf::from("/tmp/logo.png")));
+    }
+
+    #[test]
+    fn metadonnees_jpeg_ancien_titre_nu() {
+        // captures d'avant le 27/11 : le commentaire ne portait que le titre
+        let dir = bac("meta-jpeg-vieux");
+        let f = dir.join("screenshot_20261120_101500.jpg");
+        std::fs::write(&f, jpeg_avec_commentaire("Elden Ring")).unwrap();
+        let (titre, logo) = metadonnees_image(&f);
+        assert_eq!(titre.as_deref(), Some("Elden Ring"));
+        assert!(logo.is_none());
+    }
+
+    #[test]
+    fn metadonnees_fichier_illisible() {
+        let dir = bac("meta-vide");
+        let f = dir.join("screenshot_20261127_120000.png");
+        std::fs::write(&f, b"pas une image").unwrap();
+        assert_eq!(metadonnees_image(&f), (None, None));
+        assert_eq!(
+            metadonnees_image(&dir.join("absent.png")),
+            (None, None),
+            "fichier absent : aucune erreur"
+        );
+    }
+
+    #[test]
+    fn duree_courte() {
+        assert_eq!(duree_texte(0.0), "0:00");
+        assert_eq!(duree_texte(20.4), "0:20");
+        assert_eq!(duree_texte(72.0), "1:12");
+        assert_eq!(duree_texte(3723.0), "1:02:03");
     }
 }

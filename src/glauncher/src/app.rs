@@ -18,8 +18,8 @@ use iced::widget::{
 };
 use iced::{
     Alignment, Background, Border, Color, ContentFit, Element, Fill, Font, Length, Padding, Point,
-    Rectangle, Renderer, Shadow, Size, Subscription, Task, Theme, Vector, border, keyboard, mouse,
-    window,
+    Radians, Rectangle, Renderer, Shadow, Size, Subscription, Task, Theme, Vector, border, gradient,
+    keyboard, mouse, window,
 };
 
 use crate::assets;
@@ -75,6 +75,23 @@ const CARD_RADIUS: f32 = 14.0;
 /// Rayon des coins de la cover elle-même : juste cassé, pour que le visuel
 /// ressemble à une boîte posée et non à un rectangle brut (demandé le 20/11).
 const ART_RADIUS: f32 = 5.0;
+// --- galerie ----------------------------------------------------------------
+/// Rayon des visuels de la galerie : plus rond que les covers, la galerie se
+/// lit comme une planche de captures (demandé le 26/11).
+const GALERIE_RADIUS: f32 = 10.0;
+/// Écart entre deux cases : plus serré que la grille de jeux (planche).
+const GALERIE_GAP: f32 = 12.0;
+/// Marge transparente (fond de page) entre la case et la carte.
+const GALERIE_INSET: f32 = 4.0;
+/// Filet de surface autour du visuel : la vignette ne flotte plus sur le fond.
+const GALERIE_MATTE: f32 = 3.0;
+/// Hauteur du dégradé de légende posé sur le visuel (borne basse et haute :
+/// sur une petite case il ne doit pas manger toute l'image).
+const GALERIE_LEGENDE_MIN: f32 = 34.0;
+const GALERIE_LEGENDE_MAX: f32 = 58.0;
+/// Hauteur d'un intertitre de section (« Aujourd'hui », « Hier »…), écart
+/// compris : la fenêtre glissante la compte comme une rangée à part.
+const GALERIE_SECTION: f32 = 32.0;
 /// Marge verticale autour de la liste (la verticale de `PAGE_PADDING_X`).
 /// Les deux servent aussi à situer la vignette sélectionnée, d'où le partage
 /// avec `selection_center`.
@@ -648,6 +665,9 @@ pub enum Message {
     GalleryOpen(Option<String>),
     GalleryClose,
     GalleryNav(i32),
+    /// Déplacement vertical d'une rangée (la galerie peut avoir des rangées
+    /// plus courtes aux changements de section).
+    GalleryLigne(i32),
     GalleryAct,
     /// Clic sur une vignette : sélectionne, ou ouvre si déjà sélectionnée.
     GalleryChoose(usize),
@@ -671,6 +691,11 @@ pub enum Message {
     GalleryThumb {
         path: PathBuf,
         bytes: Option<Vec<u8>>,
+    },
+    /// Durée d'une vidéo de la galerie (pour la pastille de la tuile).
+    GalleryDuree {
+        path: PathBuf,
+        secondes: Option<f64>,
     },
     /// Horloge de la galerie : fin de lecture vidéo, fondu de l'aperçu.
     GalleryTick,
@@ -1004,6 +1029,102 @@ fn fenetre(selected: usize, total: usize, visibles: usize) -> (usize, usize) {
     (top, top + visibles)
 }
 
+/// Une rangée de la galerie : une plage **contiguë** d'`items` et, pour la
+/// première rangée d'une section, son intertitre. Les rangées sont coupées au
+/// changement de section, quitte à laisser des colonnes vides à droite : un
+/// intertitre qui coiffe des éléments d'une autre section mentirait (constaté
+/// le 26/11 : « Aujourd'hui » au-dessus de deux captures de la veille).
+struct GalerieRangee {
+    /// Intertitre à afficher au-dessus de cette rangée (première de sa
+    /// section seulement).
+    entete: Option<&'static str>,
+    /// Section de la rangée, toujours connue : quand le début de la section
+    /// sort de la fenêtre, son intertitre est **répété** sur la première
+    /// rangée visible, sinon les tuiles flottent sans contexte.
+    section: &'static str,
+    debut: usize,
+    fin: usize,
+}
+
+/// Découpe la galerie en rangées pour `colonnes` colonnes, sections datées
+/// respectées. Les `sections` sont contiguës (liste triée par date), donc une
+/// rangée est toujours une plage d'indices.
+fn galerie_plan(sections: &[&'static str], colonnes: usize) -> Vec<GalerieRangee> {
+    let colonnes = colonnes.max(1);
+    let mut plan = Vec::new();
+    let mut debut = 0;
+    while debut < sections.len() {
+        let titre = sections[debut];
+        let mut fin = debut;
+        while fin < sections.len() && sections[fin] == titre && fin - debut < colonnes {
+            fin += 1;
+        }
+        let premiere = debut == 0 || sections[debut - 1] != titre;
+        plan.push(GalerieRangee {
+            entete: premiere.then_some(titre),
+            section: titre,
+            debut,
+            fin,
+        });
+        debut = fin;
+    }
+    plan
+}
+
+/// Rangée qui contient l'élément `index` (dernière rangée par défaut : un
+/// index hors bornes ne doit pas faire paniquer la vue).
+fn galerie_rangee_de(plan: &[GalerieRangee], index: usize) -> usize {
+    plan.iter()
+        .position(|rangee| index >= rangee.debut && index < rangee.fin)
+        .unwrap_or(plan.len().saturating_sub(1))
+}
+
+/// Intertitre réellement dessiné au-dessus de la rangée `rangee` : le sien,
+/// ou celui de sa section répété quand la rangée est la première visible et
+/// que le début de la section est sorti de la fenêtre.
+fn galerie_entete(plan: &[GalerieRangee], rangee: usize, haut: usize) -> Option<&'static str> {
+    let r = plan.get(rangee)?;
+    match r.entete {
+        Some(titre) => Some(titre),
+        None if r.debut > 0 && rangee == haut => Some(r.section),
+        None => None,
+    }
+}
+/// Fenêtre glissante de la galerie : comme [`fenetre`] sur les **rangées**,
+/// mais la hauteur d'une rangée est son pas **plus** son intertitre (celui de
+/// sa section, ou le titre répété en haut de fenêtre). On retire d'abord par le
+/// bas, puis on remonte par le haut si la sélection est la dernière rangée.
+fn galerie_fenetre(
+    plan: &[GalerieRangee],
+    selected: usize,
+    dispo: f32,
+    pas: f32,
+) -> (usize, usize) {
+    let rangees = ((dispo / pas).floor() as usize).max(1);
+    let (mut haut, mut bas) = fenetre(selected, plan.len(), rangees);
+    loop {
+        let hauteur: f32 = (haut..bas)
+            .map(|rangee| {
+                pas + if galerie_entete(plan, rangee, haut).is_some() {
+                    GALERIE_SECTION
+                } else {
+                    0.0
+                }
+            })
+            .sum();
+        if hauteur <= dispo || bas - haut <= 1 {
+            return (haut, bas);
+        }
+        if bas > selected + 1 {
+            bas -= 1;
+        } else if haut < selected {
+            haut += 1;
+        } else {
+            return (haut, bas);
+        }
+    }
+}
+
 /// Nom affiché d'une vue (menu « type de liste »).
 fn view_label(view: ViewMode) -> &'static str {
     match view {
@@ -1131,6 +1252,12 @@ struct Galerie {
     /// Effacement armé (index) : Croix efface, Rond ou un déplacement désarme.
     arme: Option<usize>,
     thumbs: std::collections::HashMap<PathBuf, Option<image::Handle>>,
+    /// Sections datées des éléments affichés (« Aujourd'hui », « Hier »…),
+    /// alignées sur `items` : recalculées avec le filtre, jamais dans la vue.
+    sections: Vec<&'static str>,
+    /// Durée des vidéos (secondes), lue par le fil de vignettes : la pastille
+    /// de la tuile ne lance aucun `ffmpeg` depuis l'interface.
+    durees: std::collections::HashMap<PathBuf, Option<f64>>,
     /// Chemins dont la vignette a déjà été demandée (le fil de vignettes ne
     /// traite que la fenêtre visible : une galerie de 2000 vidéos ne lance
     /// pas 2000 `ffmpeg`).
@@ -2090,6 +2217,8 @@ impl App {
             .unwrap_or(0)
             .min(galerie.items.len().saturating_sub(1));
         galerie.arme = None;
+        // les intertitres suivent exactement la liste affichée
+        galerie.sections = gallery::sections(&galerie.items, std::time::SystemTime::now());
     }
 
     /// Demande les vignettes de la fenêtre visible (plus un rang de marge) :
@@ -2098,14 +2227,23 @@ impl App {
         let cache = self.config.cache_dir().join("gallery");
         let colonnes = self.gallery_columns().max(1);
         let pas = galerie_geometrie(self.viewport.0).4;
-        let lignes = (((self.viewport.1 - GALERIE_CHROME) / pas).floor() as usize).max(1);
+        let dispo = (self.viewport.1 - GALERIE_CHROME).max(pas);
         let Some(galerie) = self.galerie.as_mut() else {
             return;
         };
-        let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
-        let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes);
-        let debut = haut.saturating_sub(1) * colonnes;
-        let fin = ((bas + 1) * colonnes).min(galerie.items.len());
+        // même découpage que la vue : les sections peuvent raccourcir une
+        // rangée, donc on demande les éléments des rangées, pas des index
+        let plan = galerie_plan(&galerie.sections, colonnes);
+        if plan.is_empty() {
+            return;
+        }
+        let rangee = galerie_rangee_de(&plan, galerie.selected);
+        let (haut, bas) = galerie_fenetre(&plan, rangee, dispo, pas);
+        let debut = plan[haut.saturating_sub(1)].debut;
+        let fin = plan
+            .get(bas)
+            .map(|rangee| rangee.fin)
+            .unwrap_or(galerie.items.len());
         let lot: Vec<gallery::Item> = galerie.items[debut.min(fin)..fin]
             .iter()
             .filter(|item| !galerie.prepared.contains(&item.path))
@@ -2121,6 +2259,9 @@ impl App {
         gallery::spawn(lot, cache, |event| match event {
             gallery::Event::Thumb { path, bytes } => {
                 post(Message::GalleryThumb { path, bytes });
+            }
+            gallery::Event::Duree { path, secondes } => {
+                post(Message::GalleryDuree { path, secondes });
             }
             gallery::Event::Done => {}
         });
@@ -2149,6 +2290,8 @@ impl App {
                 galerie.tous.retain(|autre| autre.path != item.path);
                 galerie.prepared.remove(&item.path);
                 galerie.thumbs.remove(&item.path);
+                galerie.durees.remove(&item.path);
+                galerie.sections = gallery::sections(&galerie.items, std::time::SystemTime::now());
                 galerie.selected = galerie.selected.min(galerie.items.len().saturating_sub(1));
                 self.status = Some((
                     format!("{} dans la corbeille", item.nom()),
@@ -3068,6 +3211,8 @@ impl App {
                     selected: 0,
                     arme: None,
                     thumbs: std::collections::HashMap::new(),
+                    sections: Vec::new(),
+                    durees: std::collections::HashMap::new(),
                     prepared: HashSet::new(),
                     restant: 0,
                 });
@@ -3138,6 +3283,29 @@ impl App {
                 self.gallery_prepare();
                 Task::none()
             }
+            Message::GalleryLigne(delta) => {
+                // déplacement vertical : la colonne est CONSERVÉE, même si la
+                // rangée visée est plus courte (changement de section)
+                let colonnes = self.gallery_columns().max(1);
+                let Some(galerie) = self.galerie.as_mut() else {
+                    return Task::none();
+                };
+                let plan = galerie_plan(&galerie.sections, colonnes);
+                if plan.is_empty() {
+                    return Task::none();
+                }
+                let rangee = galerie_rangee_de(&plan, galerie.selected);
+                let colonne = galerie.selected - plan[rangee].debut;
+                let cible = rangee as i64 + delta as i64;
+                if cible < 0 || cible as usize >= plan.len() {
+                    return Task::none();
+                }
+                let visee = &plan[cible as usize];
+                galerie.selected = visee.debut + colonne.min(visee.fin - visee.debut - 1);
+                galerie.arme = None;
+                self.gallery_prepare();
+                Task::none()
+            }
             Message::GalleryAct => {
                 let Some(galerie) = self.galerie.as_mut() else {
                     return Task::none();
@@ -3170,6 +3338,14 @@ impl App {
                         // temps de s'ouvrir en plein écran.
                         self.video_veil = 1.0;
                         self.video_veil_target = 1.0;
+                        // la musique s'efface TOUT DE SUITE, comme devant un
+                        // jeu : le film a son propre son, et compter sur la
+                        // règle « un autre flux audible » laissait jusqu'à 2 s
+                        // de musique par-dessus le début (contrôle toutes les
+                        // `AUDIO_CHECK`, constaté le 27/11)
+                        if let Some(music) = &self.music {
+                            music.fade_out();
+                        }
                         self.a_lancer_video =
                             Some((item.path.clone(), item.nom(), std::time::Instant::now()));
                         Task::none()
@@ -3242,6 +3418,12 @@ impl App {
                     .insert(path, bytes.map(image::Handle::from_bytes));
                 Task::none()
             }
+            Message::GalleryDuree { path, secondes } => {
+                if let Some(galerie) = self.galerie.as_mut() {
+                    galerie.durees.insert(path, secondes);
+                }
+                Task::none()
+            }
             Message::GalleryTick => {
                 // fin de la vidéo : on rend la main au launcher, puis on
                 // efface le voile (la fenêtre de mpv a disparu)
@@ -3255,6 +3437,14 @@ impl App {
             Message::GalleryVideoEnd => {
                 if let Some(mut lecteur) = self.lecteur.take() {
                     lecteur.tuer();
+                }
+                // retour au launcher : la musique reprend en fondu, sauf si
+                // elle a été coupée dans les Réglages
+                if self.config.music
+                    && self.config.music_volume > 0
+                    && let Some(music) = &self.music
+                {
+                    music.resume();
                 }
                 self.fade_target = 0.0;
                 self.video_veil = 0.0;
@@ -4878,6 +5068,14 @@ impl App {
                 }
                 None => {
                     self.video_veil_target = 0.0;
+                    // aucune vidéo ne jouera : la musique revient au lieu de
+                    // rester éteinte derrière un message d'erreur
+                    if self.config.music
+                        && self.config.music_volume > 0
+                        && let Some(music) = &self.music
+                    {
+                        music.resume();
+                    }
                     self.status = Some(("lecture impossible (mpv absent ?)".to_string(), true));
                 }
             }
@@ -6156,7 +6354,6 @@ impl App {
             let keyboard::Event::KeyPressed { key, .. } = event else {
                 return Task::none();
             };
-            let colonnes = self.gallery_columns() as i32;
             let arme = self.galerie.as_ref().is_some_and(|galerie| galerie.arme.is_some());
             if arme {
                 return match key {
@@ -6171,10 +6368,8 @@ impl App {
                 keyboard::Key::Named(Named::Escape) => Task::done(Message::GalleryClose),
                 keyboard::Key::Named(Named::ArrowLeft) => Task::done(Message::GalleryNav(-1)),
                 keyboard::Key::Named(Named::ArrowRight) => Task::done(Message::GalleryNav(1)),
-                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::GalleryNav(-colonnes)),
-                keyboard::Key::Named(Named::ArrowDown) => {
-                    Task::done(Message::GalleryNav(colonnes))
-                }
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::GalleryLigne(-1)),
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::GalleryLigne(1)),
                 keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
                     Task::done(Message::GalleryAct)
                 }
@@ -6620,7 +6815,6 @@ impl App {
                     };
                 }
                 if self.galerie.is_some() {
-                    let colonnes = self.gallery_columns() as i32;
                     let arme = self
                         .galerie
                         .as_ref()
@@ -6641,8 +6835,8 @@ impl App {
                         PadButton::North => Task::done(Message::GalleryFilter),
                         PadButton::Left => Task::done(Message::GalleryNav(-1)),
                         PadButton::Right => Task::done(Message::GalleryNav(1)),
-                        PadButton::Up => Task::done(Message::GalleryNav(-colonnes)),
-                        PadButton::Down => Task::done(Message::GalleryNav(colonnes)),
+                        PadButton::Up => Task::done(Message::GalleryLigne(-1)),
+                        PadButton::Down => Task::done(Message::GalleryLigne(1)),
                         _ => Task::none(),
                     };
                 }
@@ -8743,22 +8937,47 @@ impl App {
         };
         let (colonnes, case_w, visuel_w, visuel_h, pas) = galerie_geometrie(self.viewport.0);
         let colonnes = colonnes.max(1);
-        let carte_h = visuel_h + 2.0 * PADDING + GALERIE_CAPTION;
-        // rangées qui tiennent VRAIMENT : la hauteur restante, pas une
-        // constante pessimiste (4 rangées en 2K au lieu de 5)
-        let lignes_vues = (((self.viewport.1 - GALERIE_CHROME) / pas).floor() as usize).max(1);
-        let total_lignes = galerie.items.len().div_ceil(colonnes).max(1);
-        let (haut, bas) = fenetre(galerie.selected / colonnes, total_lignes, lignes_vues);
-        let mut grille = Column::new().spacing(GAP);
-        for ligne in haut..bas {
-            let mut rangee = Row::new().spacing(GAP);
-            for colonne in 0..colonnes {
-                let index = ligne * colonnes + colonne;
+        let carte_h = visuel_h + 2.0 * GALERIE_MATTE;
+        let legende_h = galerie_legende_h(visuel_h);
+        // rangées qui tiennent VRAIMENT : la hauteur restante, moins la place
+        // des intertitres de section
+        let dispo_h = (self.viewport.1 - GALERIE_CHROME).max(pas);
+        let plan = galerie_plan(&galerie.sections, colonnes);
+        let rangee_courante = galerie_rangee_de(&plan, galerie.selected);
+        let (haut, bas) = galerie_fenetre(&plan, rangee_courante, dispo_h, pas);
+        // pas d'espacement de colonne : chaque rangée porte son `GALERIE_GAP`
+        // en bas, sinon un intertitre serait suivi d'un trou de plus et la
+        // fenêtre glissante ne tomberait plus juste
+        let mut grille = Column::new();
+        let maintenant = std::time::SystemTime::now();
+        for (ligne, rangee) in plan.iter().enumerate().take(bas).skip(haut) {
+            if let Some(titre) = galerie_entete(&plan, ligne, haut) {
+                grille = grille.push(
+                    container(text(titre).size(13).color(MUTED))
+                        .width(Fill)
+                        .height(Length::Fixed(GALERIE_SECTION))
+                        .padding(Padding {
+                            top: 0.0,
+                            right: 0.0,
+                            bottom: 6.0,
+                            left: 2.0,
+                        })
+                        .align_y(Alignment::End),
+                );
+            }
+            let mut rangee_widget = Row::new().spacing(GALERIE_GAP);
+            for index in rangee.debut..rangee.fin {
                 let Some(item) = galerie.items.get(index) else {
-                    break;
+                    continue;
                 };
                 let selectionne = index == galerie.selected;
                 let arme = galerie.arme == Some(index);
+                let duree = galerie
+                    .durees
+                    .get(&item.path)
+                    .copied()
+                    .flatten()
+                    .map(gallery::duree_texte);
                 let vignette: Element<'_, Message> =
                     match galerie.thumbs.get(&item.path).and_then(|handle| handle.clone()) {
                         Some(handle) => {
@@ -8766,35 +8985,121 @@ impl App {
                                 .width(Length::Fixed(visuel_w))
                                 .height(Length::Fixed(visuel_h))
                                 .content_fit(ContentFit::Cover)
-                                // mêmes coins cassés que les covers de la
-                                // grille : une boîte posée, pas un rectangle
-                                .border_radius(ART_RADIUS);
-                            // Nature de l'élément, posée SUR la miniature :
-                            // triangle de lecture pour une vidéo, cadre photo
-                            // pour une capture. Les deux natures vivent dans
-                            // la même grille, il faut les distinguer d'un coup
-                            // d'œil sans alourdir la légende.
-                            let coin = container(
-                                container(genre_icon(item.genre))
-                                    .padding(4)
+                                .border_radius(GALERIE_RADIUS);
+                            // Légende POSÉE sur le bas du visuel, sur un
+                            // dégradé : la grille gagne la hauteur qu'elle
+                            // occupait sous la vignette, et la tuile se lit
+                            // comme une planche de captures.
+                            let (premiere, seconde) = match item.titre.as_deref() {
+                                Some(titre) => (
+                                    short(titre, if case_w >= 240.0 { 28 } else { 22 }),
+                                    // le poids a quitté la légende : la date
+                                    // seule tient sans être coupée en plein
+                                    // milieu d'un « 1.9 Mo »
+                                    item.date_courte(maintenant),
+                                ),
+                                None => (item.date_courte(maintenant), item.poids()),
+                            };
+                            let mut bas_ligne = Row::new().spacing(6).align_y(Alignment::Center);
+                            bas_ligne = bas_ligne.push(
+                                text(seconde)
+                                    .size(11.5)
+                                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.74)),
+                            );
+                            bas_ligne = bas_ligne.push(Row::new().width(Fill));
+                            let badge: Element<'_, Message> =
+                                match (item.genre, duree.as_deref()) {
+                                    (gallery::Genre::Video, Some(duree)) => container(
+                                        text(duree.to_string()).size(11.0).color(Color::WHITE),
+                                    )
+                                    .padding([1.0, 5.0])
                                     .style(|_| container::Style {
                                         background: Some(Background::Color(Color {
-                                            a: 0.66,
+                                            a: 0.6,
                                             ..Color::BLACK
                                         })),
                                         border: Border {
-                                            radius: 8.0.into(),
+                                            radius: 6.0.into(),
                                             ..Border::default()
                                         },
                                         ..container::Style::default()
-                                    }),
+                                    })
+                                    .into(),
+                                    // une capture garde la mini-icône, simplement
+                                    // posée au bout de la ligne (pas de pastille)
+                                    (gallery::Genre::Image, _)
+                                    | (gallery::Genre::Video, None) => {
+                                        container(genre_icon(item.genre)).padding(1.0).into()
+                                    }
+                                };
+                            bas_ligne = bas_ligne.push(badge);
+                            let legende = container(
+                                column![
+                                    text(premiere)
+                                        .size(if case_w >= 240.0 { 15.0 } else { 13.0 })
+                                        .color(Color::WHITE),
+                                    bas_ligne,
+                                ]
+                                .spacing(1),
                             )
                             .width(Length::Fixed(visuel_w))
-                            .height(Length::Fixed(visuel_h))
-                            .padding(6)
-                            .align_x(Alignment::End)
-                            .align_y(Alignment::End);
-                            stack![art, coin].into()
+                            .height(Length::Fixed(legende_h))
+                            .padding(Padding {
+                                top: 12.0,
+                                right: 9.0,
+                                bottom: 7.0,
+                                left: 9.0,
+                            })
+                            .align_y(Alignment::End)
+                            .style(|_| container::Style {
+                                background: Some(Background::Gradient(
+                                    gradient::Linear::new(Radians(std::f32::consts::PI))
+                                        .add_stop(0.0, Color::from_rgba(0.0, 0.0, 0.0, 0.0))
+                                        .add_stop(0.55, Color::from_rgba(0.0, 0.0, 0.0, 0.55))
+                                        .add_stop(1.0, Color::from_rgba(0.0, 0.0, 0.0, 0.88))
+                                        .into(),
+                                )),
+                                border: Border {
+                                    radius: border::Radius {
+                                        top_left: 0.0,
+                                        top_right: 0.0,
+                                        bottom_left: GALERIE_RADIUS,
+                                        bottom_right: GALERIE_RADIUS,
+                                    },
+                                    ..Border::default()
+                                },
+                                ..container::Style::default()
+                            });
+                            let legende_place = container(legende)
+                                .width(Length::Fixed(visuel_w))
+                                .height(Length::Fixed(visuel_h))
+                                .align_x(Alignment::Start)
+                                .align_y(Alignment::End);
+                            // pastille de lecture au centre, pour une vidéo
+                            let lecture: Option<Element<'_, Message>> =
+                                (item.genre == gallery::Genre::Video).then(|| {
+                                    container(
+                                        canvas::Canvas::new(PlayBadge)
+                                            .width(Length::Fixed(34.0))
+                                            .height(Length::Fixed(34.0)),
+                                    )
+                                    .width(Length::Fixed(visuel_w))
+                                    .height(Length::Fixed(visuel_h))
+                                    .align_x(Alignment::Center)
+                                    .align_y(Alignment::Center)
+                                    .into()
+                                });
+                            // filet (ou cadre d'accent) AU-DESSUS du visuel :
+                            // un cadre de conteneur passerait derrière l'image
+                            let cadre = container(Row::new())
+                                .width(Length::Fixed(visuel_w))
+                                .height(Length::Fixed(visuel_h))
+                                .style(move |_| galerie_cadre_style(selectionne, arme));
+                            let mut pile = stack![art, legende_place, cadre];
+                            if let Some(lecture) = lecture {
+                                pile = pile.push(lecture);
+                            }
+                            pile.into()
                         }
                         // vignette en cours de fabrication : case vide, jamais
                         // un trou qui fait sauter la grille
@@ -8812,74 +9117,41 @@ impl App {
                         .center_x(Length::Fixed(visuel_w))
                         .center_y(Length::Fixed(visuel_h))
                         .style(|_| container::Style {
-                            background: Some(Background::Color(Color {
-                                a: 0.35,
-                                ..Color::BLACK
-                            })),
+                            background: Some(Background::Color(CELL_BG)),
                             border: Border {
-                                color: Color { a: 0.25, ..TEXT },
+                                color: Color::from_rgba(1.0, 1.0, 1.0, 0.10),
                                 width: 1.0,
-                                radius: ART_RADIUS.into(),
+                                radius: GALERIE_RADIUS.into(),
                             },
                             ..container::Style::default()
                         })
                         .into(),
                     };
-                // Deux lignes, pas plus : le **nom du jeu** quand la capture
-                // le connaît (métadonnée écrite au moment de la prise), puis
-                // `date · poids`. Le nom du FICHIER
-                // (`Video_20261120_101500.mp4`) ne dit rien à personne et
-                // n'apparaît jamais ; le genre, lui, se lit sur la pastille de
-                // la miniature. Capture d'avant la métadonnée : la première
-                // ligne reprend le badge et le poids, comme avant.
-                let date = item.date_lisible();
-                let titre_size = if case_w >= 260.0 { 16.0 } else { 14.5 };
-                let (premiere, seconde, taille, teinte) = match item.titre.as_deref() {
-                    Some(titre) => (
-                        short(titre, 32),
-                        format!("{date} · {}", item.poids()),
-                        titre_size,
-                        if selectionne { TEXT } else { MUTED },
-                    ),
-                    None => (
-                        format!("{} · {}", item.genre.badge(), item.poids()),
-                        date,
-                        13.5,
-                        if selectionne { TEXT } else { MUTED },
-                    ),
-                };
-                let legende = column![
-                    text(premiere).size(taille).color(teinte),
-                    text(seconde).size(12).color(MUTED),
-                ]
-                .spacing(2);
                 // la confirmation est un vrai panneau : la tuile armée se
                 // contente d'un liseré rouge, sans texte qui pousse la grille
-                let tuile = container(column![vignette, legende].spacing(TITLE_GAP))
-                    .width(Length::Fixed(case_w - 2.0 * CARD_INSET))
+                let tuile = container(vignette)
+                    .width(Length::Fixed(case_w - 2.0 * GALERIE_INSET))
                     // hauteur IMPOSÉE par le calcul des rangées (`pas`) :
                     // une carte qui prend sa hauteur réelle dérive sur les
                     // rangées suivantes et la fenêtre glissante se décale
                     .height(Length::Fixed(carte_h))
-                    .padding(PADDING)
-                    // même boîte que la grille de jeux : fond teinté quand
-                    // elle est choisie, cadre d'accent, ombre portée
-                    .style(move |_| {
-                        let mut style = card_style(selectionne, false);
-                        if arme {
-                            style.border.color = DANGER;
-                            style.border.width = 2.0;
-                        }
-                        style
-                    });
+                    .padding(GALERIE_MATTE)
+                    .style(|_| galerie_card_style());
                 let cliquable: Element<'_, Message> = mouse_area(
-                    container(tuile).padding(CARD_INSET).width(Length::Fixed(case_w)),
+                    container(tuile)
+                        .padding(GALERIE_INSET)
+                        .width(Length::Fixed(case_w)),
                 )
                 .on_press(Message::GalleryChoose(index))
                 .into();
-                rangee = rangee.push(cliquable);
+                rangee_widget = rangee_widget.push(cliquable);
             }
-            grille = grille.push(rangee);
+            grille = grille.push(container(rangee_widget).width(Fill).padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: GALERIE_GAP,
+                left: 0.0,
+            }));
         }
 
         let (aide, glyphes): (String, Vec<(&image::Handle, &'static str)>) =
@@ -10935,35 +11207,39 @@ fn barre(pourcent: u8, largeur: f32, sur_ligne: bool) -> Element<'static, Messag
 /// restante — `grid_metrics` fait ce calcul une seule fois pour les deux
 /// grilles.
 ///
-/// `pas` est le pas RÉEL d'une rangée : carte (visuel + padding + légende
-/// sur deux lignes) + 2 × `CARD_INSET` + `GAP`. Il valait `tuile_h + 86`
-/// (5 px de trop) au temps des tuiles nues, ce qui faisait perdre une rangée
-/// entière en 2K (constaté le 23/11).
+/// `pas` est le pas RÉEL d'une rangée : carte (le visuel 16:9 et sa matte) +
+/// 2 × `GALERIE_INSET` + `GALERIE_GAP`. La légende n'est plus dessous, elle est
+/// posée **sur** le visuel (dégradé), ce qui rend une rangée de plus.
 fn galerie_geometrie(largeur: f32) -> (usize, f32, f32, f32, f32) {
     // taille FIXE visée d'une case : le zoom de la galerie a été retiré le
-    // 23/11, jugé inutile sur une grille plein écran. La case fait la même
-    // largeur que celle de la grille de jeux (~260 px), mais le visuel garde
-    // le 16:9 des captures et des vidéos.
+    // 23/11, jugé inutile sur une grille plein écran.
     const VISEE: f32 = 260.0;
-    let (_, _, colonnes) = grid_metrics(largeur, VISEE, 10, GAP);
+    let (_, _, colonnes) = grid_metrics(largeur, VISEE, 10, GALERIE_GAP);
     // petite fenêtre : deux colonnes au moins, jamais zéro
     let colonnes = colonnes.clamp(2, 10);
     let dispo = usable_width(largeur);
-    let case_w = ((dispo - GAP * (colonnes as f32 - 1.0)) / colonnes as f32)
+    let case_w = ((dispo - GALERIE_GAP * (colonnes as f32 - 1.0)) / colonnes as f32)
         .floor()
         .max(120.0);
-    // la boîte visible est plus étroite que sa case : `CARD_INSET` (marge
-    // transparente) puis `PADDING` (marge interne de la carte), exactement
-    // comme la grille des jeux
-    let visuel_w = (case_w - 2.0 * (PADDING + CARD_INSET)).max(80.0);
+    // le visuel 16:9 remplit la carte, moins la matte de surface (3 px) et
+    // l'inset transparent entre deux cases (4 px)
+    let visuel_w = (case_w - 2.0 * (GALERIE_INSET + GALERIE_MATTE)).max(80.0);
     let visuel_h = (visuel_w * 9.0 / 16.0).floor().max(68.0);
-    let carte_h = visuel_h + 2.0 * PADDING + GALERIE_CAPTION;
-    (colonnes, case_w, visuel_w, visuel_h, carte_h + 2.0 * CARD_INSET + GAP)
+    let carte_h = visuel_h + 2.0 * GALERIE_MATTE;
+    (
+        colonnes,
+        case_w,
+        visuel_w,
+        visuel_h,
+        carte_h + 2.0 * GALERIE_INSET + GALERIE_GAP,
+    )
 }
 
-/// Hauteur de la légende d'une carte de galerie : deux lignes (le jeu ou la
-/// capture, puis la date et le poids), comme la ligne de titre de la grille.
-const GALERIE_CAPTION: f32 = 36.0;
+/// Hauteur du dégradé de légende, proportionnée au visuel : sur une petite
+/// case (fenêtre étroite) il ne doit pas recouvrir la moitié de l'image.
+fn galerie_legende_h(visuel_h: f32) -> f32 {
+    (visuel_h * 0.34).clamp(GALERIE_LEGENDE_MIN, GALERIE_LEGENDE_MAX)
+}
 
 /// Hauteur prise au-dessus et au-dessous de la grille de la galerie : padding
 /// (2 × 18, ceux de la page), titre (28), sous-titre (13), compteur (12),
@@ -11154,6 +11430,52 @@ fn card_style(selected: bool, canvas_frame: bool) -> container::Style {
     }
 }
 
+/// Carte de la galerie : **surface constante** (gris bleuté, jamais du noir
+/// pur) et ombre portée, sans cadre — le filet et l'accent sont dessinés
+/// par-dessus le visuel (`galerie_cadre_style`), sinon le conteneur les
+/// peindrait derrière l'image.
+fn galerie_card_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(CELL_BG)),
+        border: Border {
+            radius: (GALERIE_RADIUS + GALERIE_MATTE).into(),
+            ..Border::default()
+        },
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.38),
+            offset: Vector::new(0.0, 6.0),
+            blur_radius: 14.0,
+        },
+        ..container::Style::default()
+    }
+}
+
+/// Cadre posé **au-dessus** du visuel de galerie : filet blanc discret au
+/// repos (la vignette ne flotte plus sur le fond), accent de 4 px sur la
+/// sélection, liseré rouge quand la corbeille est armée.
+fn galerie_cadre_style(selected: bool, arme: bool) -> container::Style {
+    container::Style {
+        border: Border {
+            color: if arme {
+                DANGER
+            } else if selected {
+                ACCENT
+            } else {
+                Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+            },
+            width: if arme {
+                2.0
+            } else if selected {
+                FOCUS_BORDER
+            } else {
+                1.0
+            },
+            radius: GALERIE_RADIUS.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
 /// Mini-icône de genre posée sur une miniature de la galerie : triangle de
 /// lecture pour une vidéo, cadre photo pour une capture. Dessinée au `canvas`
 /// (quelques pixels) plutôt qu'un caractère : `▶`/`▣` dépendraient du repli de
@@ -11222,6 +11544,39 @@ impl canvas::Program<Message> for GenreIcon {
                 frame.fill(&monts, Color::WHITE);
             }
         }
+        vec![frame.into_geometry()]
+    }
+}
+
+/// Pastille de lecture au centre d'une vignette vidéo : un rond sombre
+/// translucide et un triangle blanc. Dessinée au `canvas` (comme
+/// [`GenreIcon`]) : un « ▶ » dépendrait du repli de police du poste.
+struct PlayBadge;
+
+impl canvas::Program<Message> for PlayBadge {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let (w, h) = (bounds.width.max(1.0), bounds.height.max(1.0));
+        frame.fill(
+            &canvas::Path::circle(Point::new(w / 2.0, h / 2.0), w / 2.0),
+            Color::from_rgba(0.0, 0.0, 0.0, 0.38),
+        );
+        let play = canvas::Path::new(|b| {
+            b.move_to(Point::new(w * 0.40, h * 0.28));
+            b.line_to(Point::new(w * 0.74, h * 0.5));
+            b.line_to(Point::new(w * 0.40, h * 0.72));
+            b.close();
+        });
+        frame.fill(&play, Color::WHITE);
         vec![frame.into_geometry()]
     }
 }
@@ -11504,19 +11859,20 @@ mod tests {
         // 1080p : 6 cases qui occupent toute la largeur utile de la page
         let (colonnes, case_w, w, h, pas) = galerie_geometrie(1920.0);
         assert_eq!(colonnes, 6);
-        let occupe = case_w * colonnes as f32 + GAP * (colonnes as f32 - 1.0);
+        let occupe = case_w * colonnes as f32 + GALERIE_GAP * (colonnes as f32 - 1.0);
         assert!(
             (occupe - usable_width(1920.0)).abs() <= 6.0,
             "occupe {occupe}"
         );
-        // le visuel est 16:9 et plus étroit que sa case (marges de la carte)
+        // le visuel est 16:9 et plus étroit que sa case (matte + inset)
         assert!(h < w && (w * 9.0 / 16.0 - h).abs() <= 1.0);
-        assert!(w <= case_w - 2.0 * (PADDING + CARD_INSET));
-        assert!(pas > h + GALERIE_CAPTION, "la légende sous la vignette");
+        assert!(w <= case_w - 2.0 * (GALERIE_INSET + GALERIE_MATTE));
+        assert!(pas > h + 2.0 * GALERIE_MATTE, "la carte sous le visuel");
+        assert!(galerie_legende_h(h) <= h * 0.35, "la légende ne mange pas l'image");
         // 2K : plus de colonnes, et la grille occupe encore toute la largeur
         let (colonnes, case_w, _, _, _) = galerie_geometrie(2560.0);
-        assert_eq!(colonnes, 8);
-        let occupe = case_w * colonnes as f32 + GAP * (colonnes as f32 - 1.0);
+        assert_eq!(colonnes, 9);
+        let occupe = case_w * colonnes as f32 + GALERIE_GAP * (colonnes as f32 - 1.0);
         // arrondi vers le bas de la largeur de case : quelques pixels de
         // reste, jamais une bande vide
         assert!(
@@ -11582,5 +11938,52 @@ mod tests {
         // garde-fous : jamais de fenêtre vide ni hors bornes
         assert_eq!(fenetre(0, 0, 5), (0, 0));
         assert_eq!(fenetre(4, 10, 0), (4, 5));
+    }
+
+    /// La galerie compte les intertitres de section dans la hauteur : la
+    /// rangée choisie reste visible et la fenêtre ne déborde jamais.
+    #[test]
+    fn fenetre_galerie_avec_sections() {
+        let pas = 100.0;
+        // 5 « aujourd'hui » puis 3 « hier » sur 4 colonnes : la 2e rangée
+        // d'aujourd'hui est courte (1 seule case), hier commence sur une
+        // nouvelle rangée — un intertitre ne coiffe jamais deux sections
+        let sections = [
+            "Aujourd'hui",
+            "Aujourd'hui",
+            "Aujourd'hui",
+            "Aujourd'hui",
+            "Aujourd'hui",
+            "Hier",
+            "Hier",
+            "Hier",
+        ];
+        let plan = galerie_plan(&sections, 4);
+        let vues: Vec<(Option<&str>, usize, usize)> = plan
+            .iter()
+            .map(|rangee| (rangee.entete, rangee.debut, rangee.fin))
+            .collect();
+        assert_eq!(
+            vues,
+            vec![
+                (Some("Aujourd'hui"), 0, 4),
+                (None, 4, 5),
+                (Some("Hier"), 5, 8),
+            ]
+        );
+        // l'élément 4 (rangée courte) est bien dans la 2e rangée
+        assert_eq!(galerie_rangee_de(&plan, 4), 1);
+        assert_eq!(galerie_rangee_de(&plan, 7), 2);
+        // 6 rangées de hauteur : 2 intertitres + 3 rangées = 3 × 100 + 2 ×
+        // GALERIE_SECTION, ça tient ; la sélection en bas reste visible
+        let (haut, bas) = galerie_fenetre(&plan, 2, 3.0 * pas, pas);
+        assert!(haut <= 2 && bas > 2, "{haut}..{bas}");
+        // sans section : même résultat que `fenetre`
+        let vides: Vec<&'static str> = vec![""; 8];
+        let plan_vide = galerie_plan(&vides, 4);
+        assert_eq!(
+            galerie_fenetre(&plan_vide, 1, 3.0 * pas, pas),
+            fenetre(1, 2, 3)
+        );
     }
 }

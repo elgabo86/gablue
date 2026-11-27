@@ -100,7 +100,8 @@ leurs icônes, pour l'interface.
   « remettre par défaut » = retirer la clé (aucun chemin en dur)
 - `src/gallery.rs` — galerie : scan des captures et vidéos, vignettes 320 px
   (JPEG) sur un fil de fond, cache `<cache>/gallery/`, date locale
-  (`localtime_r`), minuteur de lecture
+  (`localtime_r`), durée des vidéos lue dans l'en-tête `ffmpeg` (cache
+  `<hash>.dur`), sections datées, minuteur de lecture
 - `src/play.rs` — lecture d'un enregistrement : `mpv` plein écran piloté par
   socket IPC (pause, ±5 s, sortie), barre de progression en `osd-overlay` ASS
   (fil dédié), `PR_SET_PDEATHSIG` contre les films orphelins
@@ -241,14 +242,19 @@ Section **séparée** (menus des vues → « Galerie… », triangle/T), plein �
 en session console. Deux dossiers lus dans `recorder.conf` : `screenshot_*.png`
 (captures) et `Video_*.mp4` / `Replay_*.mp4` (enregistrements, replays), triés
 du plus récent au plus ancien. Un seul flux (captures **et** vidéos mêlées,
-le filtre est une option), chaque tuile affiche **deux lignes** : le nom du jeu
-quand la capture le connaît (métadonnée), puis `date · poids` ; sans nom de jeu,
-`genre · poids` puis la date **locale au propre** (« 22 nov. 2026 · 22:31 ») —
-**jamais le nom du fichier** (`Video_20261120_101500.mp4` ne dit rien à
-personne). Le genre n'est plus une ligne de texte : une **mini-icône** est
-posée sur le coin bas droit de la miniature (triangle de lecture pour une vidéo,
-cadre photo pour une capture, dessinée au `canvas` par `genre_icon`) — les deux
-natures vivent dans la même grille et se distinguent d'un coup d'œil. Le fond
+le filtre est une option), chaque tuile affiche **deux lignes posées sur le
+visuel** (26/11) : le nom du jeu quand la capture le connaît (métadonnée) puis
+la date **locale au propre** (« 26 nov. · 23:31 » — sans l'année quand c'est
+l'année courante, `Item::date_courte`), ou la date puis le poids pour un
+fichier sans nom de jeu. La légende n'est plus SOUS l'image mais dans un
+**dégradé** collé au bas du visuel (transparent → noir 0.88), ce qui rend une
+rangée de hauteur à la grille et fait lire la galerie comme une planche de
+captures. **Jamais le nom du fichier** (`Video_20261120_101500.mp4` ne dit rien
+à personne). Le genre n'est plus une ligne de texte : **triangle de lecture
+centré** sur une vidéo (pastille ronde sombre, `PlayBadge`) et **pastille de
+durée** en bas à droite (`0:20`, `1:02:03`) pour un enregistrement, **mini-icône**
+en bas à droite pour une capture (`genre_icon`, cadre photo) — les deux natures
+vivent dans la même grille et se distinguent d'un coup d'œil. Le fond
 garde la **poussière d'étoiles** du launcher (`sparkles`), posée au-dessus de
 la grille, sur la teinte `BG` de la liste (pas du noir pur : deux écrans du
 même launcher).
@@ -272,13 +278,19 @@ même launcher).
   l'ouverture d'une page (au plus toutes les 20 s) et à la fermeture de la
   galerie (une capture mise à la corbeille fait disparaître le bouton).
 
-- **Nom du jeu et logo** : `screenshot.sh`, `recorder.sh` et `replay.sh`
-  écrivent un sidecar `<fichier>.jeu` (`nom=`, `logo=`) en lisant
-  `running.txt` (launcher d'abord, puis `gwine`/`lgplaunch`), avec les PID
-  comme garde (un fichier qui traîne après un plantage n'étiquette rien).
-  Les captures `gpad-shot --titre=` portent en plus un `iTXt Title` dans le
-  PNG ; la galerie lit le sidecar, puis cette métadonnée pour les anciennes
-  captures. Le nom est **dans la galerie**, jamais gravé dans les pixels.
+- **Nom du jeu et logo** : les captures le portent **dans l'image** (27/11) —
+  iTXt `Title`/`Logo` d'un PNG, commentaire `Title=`/`Logo=` d'un JPEG,
+  écrits par `gpad-shot` ; `gallery::metadonnees_image` les relit en
+  reconnaissant le format aux **octets magiques** (le réglage par défaut
+  produit du JPEG dans un fichier nommé `.png`). Aucun fichier à côté d'une
+  capture. Les **clips** (mp4/mkv), eux, gardent leur sidecar
+  `<clip>.jeu` (`nom=`, `logo=`, posé par `gpad-rec`) : la galerie lit le
+  sidecar d'abord (compatibilité, et c'est la seule source pour une vidéo),
+  puis la métadonnée de l'image. `running.txt` sert de garde par les PID (un
+  fichier qui traîne après un plantage n'étiquette rien) et se lit dans le
+  **cache réel du launcher** (`GLAUNCHER_CACHE`, `cache_dir` de sa config,
+  sinon `~/.local/share/glauncher`) — `~/.cache/glauncher` n'a jamais existé.
+  Le nom est **dans la galerie**, jamais gravé dans les pixels.
 - **Filtre** : `Triangle` cycle tout → captures → vidéos (`GalleryFilter`,
   aussi `Tab`). C'est lui qui rend les captures accessibles quand une
   bibliothèque de milliers de vidéos les enterre en fin de tri (constaté le
@@ -293,11 +305,13 @@ même launcher).
 - **Corbeille, jamais de suppression** : `gallery::mettre_a_la_corbeille`
   range le fichier dans la **corbeille XDG** (`~/.local/share/Trash/files` +
   `.trashinfo` URL-encodé, date locale, suffixes `.1`, `.2` en cas de
-  collision) ; le sidecar `.jeu` suit. Échec = fichier laissé en place.
+  collision) ; le sidecar `.jeu` suit **s'il existe** (clips). Échec =
+  fichier laissé en place.
 - **Copie partageable** : dans l'aperçu, `Carré` (ou `C`) écrit
   `<original>-logo.png` à côté : le screenshot avec le **logo du jeu** incrusté
   en bas à droite (18 % de la largeur, marge 2,5 %, jamais plus de 30 % de la
-  hauteur), écriture atomique, sidecar recopié. L'original n'est pas touché ;
+  hauteur), écriture atomique, sidecar recopié s'il y en avait un. L'original
+  n'est pas touché ;
   sans logo connu (capture hors jeu), le bouton n'est pas proposé.
 
 - **Vignettes** (`src/gallery.rs`) : fabriquées sur un fil de fond, une par une
@@ -308,7 +322,11 @@ même launcher).
   mtime (un fichier remplacé est refait). **À la demande** : seules les
   vignettes de la fenêtre visible (+ un rang de marge) sont demandées
   (`gallery_prepare`, `prepared`), sinon ouvrir une galerie de milliers de
-  vidéos lancerait autant de `ffmpeg`. Rien n'anime la grille : pas de
+  vidéos lancerait autant de `ffmpeg`. Le **même lot** fait aussi la durée des
+  vidéos : `gallery::duree` lit l'en-tête (`ffmpeg -hide_banner -i`, aucun
+  décodage), cache `<hash>.dur` à côté de la vignette et remonte par
+  `Event::Duree` (message `GalleryDuree`, `Galerie.durees`) — la tuile
+  n'appelle jamais `ffmpeg` depuis l'interface. Rien n'anime la grille : pas de
   respiration, cadre de sélection fixe.
 - **Géométrie** : `galerie_geometrie(largeur)` (pure, testée) choisit le
   nombre de colonnes pour une case visée de ~260 px (2 à 10), la **même** que
@@ -316,23 +334,44 @@ même launcher).
   `grid_metrics` (une seule formule pour les deux grilles). Avant, 6 colonnes
   de 240 px figées : sur un écran 2K la galerie s'arrêtait « à la zone 1080 »,
   ~1500 px au milieu de 2560 (constaté le 22/11). À 1080p : 6 colonnes ; à 2K :
-  8. Le visuel garde le 16:9 des captures et des vidéos, plus étroit que sa
-  case (`CARD_INSET` puis `PADDING`), comme les covers de la grille.
+  9 depuis que la grille est plus serrée (26/11 : `GALERIE_GAP` 12 au lieu de
+  `GAP` 20, la case s'élargit d'autant). Le visuel garde le 16:9 exact des
+  captures et des vidéos, moins la matte et l'inset (`GALERIE_MATTE` 3 px,
+  `GALERIE_INSET` 4 px — deux constantes propres à la galerie, la grille de
+  jeux garde `PADDING`/`CARD_INSET`/`GAP`).
   **Rangées** : `lignes_vues` se calcule sur la hauteur réellement libre
   (`hauteur - GALERIE_CHROME`, 178 px : padding 2×18 de la page, titre,
   sous-titre, compteur, aide et leurs interlignes ; un ressort pousse le
   compteur et l'aide tout en bas), pas sur une constante pessimiste. `pas` =
-  carte (visuel + 2 × `PADDING` + légende `GALERIE_CAPTION`) +
-  2 × `CARD_INSET` + `GAP` : le `+86` d'avant, avec un chrome de 290, ne
-  laissait que **4 rangées en 2K alors que la 5ᵉ tenait** (constaté le 23/11).
-- **Même boîte que la grille de jeux** (demandé le 25/11) : chaque tuile est
-  une carte `card_style` — coins `CARD_RADIUS`, ombre portée, fond teinté et
-  cadre d'accent `FOCUS_BORDER` quand elle est sélectionnée, liseré rouge quand
-  elle est armée (corbeille) — et le visuel porte `ART_RADIUS`. Interligne
-  `GAP` (20 px) entre colonnes et rangées. Pas de respiration : la grille de
-  la galerie reste fixe (seule la grille de jeux respire). L'aide de commande
-  est un **pied de page** centré en bas de l'écran, comme celle de la liste ;
-  le compteur « N/M · vignettes prêtes » est à gauche au-dessus.
+  carte (visuel + 2 × `GALERIE_MATTE`) + 2 × `GALERIE_INSET` + `GALERIE_GAP`.
+  La légende ayant quitté le dessous du visuel, `GALERIE_CAPTION` n'existe plus.
+- **Sections datées** (26/11) : la liste est triée par date, donc ses sections
+  sont **contiguës** — `gallery::sections` les calcule au chargement et à
+  chaque filtre (`Aujourd'hui`, `Hier`, `Cette semaine` 2-6 j, `Ce mois-ci`
+  7-29 j, `Plus ancien`), sur des **jours ordinaux locaux** (`jour_local`,
+  `jours_civils` de Howard Hinnant : un changement d'heure ne décale pas la
+  veille, une horloge en avance donne « Aujourd'hui »). `galerie_plan` découpe
+  ensuite la liste en `GalerieRangee` : une rangée ne mélange **jamais** deux
+  sections (elle est courte au besoin — sans ça un intertitre coiffait des
+  éléments de la veille, constaté au banc), et son intertitre n'est posé que
+  sur la première. Quand le début d'une section sort de la fenêtre,
+  `galerie_entete` **répète** son titre sur la première rangée visible, sinon
+  les tuiles flottent sans contexte. `galerie_fenetre` compte la hauteur des
+  intertitres (et de celui répété) en plus des pas ; `GalerieLigne` déplace
+  d'une **rangée** (haut/bas, clavier et manette) en gardant la colonne,
+  bornée à la longueur de la rangée visée — `GalleryNav` reste l'horizontale.
+- **Surface et cadre** (26/11) : chaque tuile porte une **surface constante**
+  (`galerie_card_style` : `CELL_BG`, ombre portée, rayon `GALERIE_RADIUS` + la
+  matte), pas seulement la sélection : la vignette ne flotte plus sur le fond
+  de page. Le **filet** (1 px blanc à 10 %) et le cadre d'accent
+  (`FOCUS_BORDER`, liseré `DANGER` quand la corbeille est armée) sont dessinés
+  **au-dessus** du visuel dans un `stack` (`galerie_cadre_style`) : un bord de
+  conteneur passe derrière une image pleine, donc invisible. Visuel arrondi à
+  `GALERIE_RADIUS` (10 px, plus rond que `ART_RADIUS` de la grille de jeux).
+  Pas de respiration : la grille de la galerie reste fixe (seule la grille de
+  jeux respire). L'aide de commande est un **pied de page** centré en bas de
+  l'écran, comme celle de la liste ; le compteur « N/M · vignettes prêtes » est
+  à gauche au-dessus.
 - **Ouverture** : `Croix` sur une capture → aperçu plein écran dans le launcher
   (image **pleine**, pas la vignette) : l'image est là **tout de suite**, seule
   une entrée de 0,16 s (opacité 0,70 → 1 et échelle 1,03 → 1) l'accompagne,
@@ -345,7 +384,11 @@ même launcher).
   l'animation d'ouverture de la fenêtre de mpv, qui sinon « venait de bas à
   droite » (constaté le 23/11).
 - **Lecture vidéo** (`src/play.rs`) : `mpv --no-config --fullscreen --osc=no`
-  avec une socket IPC. Le launcher garde la main : **Croix = pause**, **gauche/
+  avec une socket IPC. La **musique de fond s'efface au lancement du film**
+  (`music.fade_out()` en même temps que le voile, `resume()` à la fin, à la
+  fermeture ou si `mpv` ne démarre pas) : compter sur la règle « un autre flux
+  audible » laissait jusqu'à 2 s de musique par-dessus le début (contrôle
+  toutes les `AUDIO_CHECK`, constaté le 27/11). Le launcher garde la main : **Croix = pause**, **gauche/
   droite = ±5 s** (`seek … relative`), **Rond = sortie** (puis délai de grâce
   de 3 s avant `SIGKILL`). La manette est lue en evdev direct, donc elle marche
   même quand la fenêtre de `mpv` a le focus (la garde de focus est court-
