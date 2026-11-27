@@ -14,7 +14,10 @@ install_openal() {
         unzip -q "$cache_zip" -d "$tmp_dir" 2>/dev/null || true
         
         if [ -f "$tmp_dir/oalinst.exe" ]; then
-            WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "$tmp_dir/oalinst.exe" /s 2>/dev/null || true
+            # InstallShield : fenêtre requise même avec /s → display virtuel
+            # fourni par run_installer_quiet sous init headless.
+            run_installer_quiet "OpenAL" "$tmp_dir/oalinst.exe" /s \
+                || WINCOMPONENTS_FAILED+=("openal")
         fi
         
         rm -rf "$tmp_dir"
@@ -46,8 +49,7 @@ install_physx() {
     if command -v 7z >/dev/null 2>&1 \
        && rm -rf "$payload" && mkdir -p "$payload" \
        && 7z x -y -o"$payload" "$cache_file" >/dev/null 2>&1; then
-        if timeout 300 env WINEPREFIX="$WINEPREFIX" \
-                "$WINE_BIN" "$payload/setup.exe" -s >/dev/null 2>&1; then
+        if run_installer_quiet "PhysX" "$payload/setup.exe" -s; then
             echo "  ✓ PhysX installé"
         else
             echo "  ⚠ PhysX installé (peut déjà être présent)"
@@ -63,8 +65,7 @@ install_physx() {
     
     # Sans 7z : auto-extracteur d'origine, borné par un timeout puisqu'il
     # peut se figer sans écran.
-    if timeout 300 env WINEPREFIX="$WINEPREFIX" \
-            "$WINE_BIN" "$cache_file" /s 2>/dev/null; then
+    if run_installer_quiet "PhysX" "$cache_file" /s; then
         echo "  ✓ PhysX installé"
     else
         echo "  ⚠ PhysX installé (peut déjà être présent)"

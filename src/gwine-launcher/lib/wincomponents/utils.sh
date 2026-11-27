@@ -145,6 +145,86 @@ download_all_wincomponents() {
     return 0
 }
 
+# Lance un installateur Windows silencieux dans le préfixe.
+#
+# Les bootstrappers WiX/Burn de Microsoft (.NET Desktop Runtime, VC++ 2012+)
+# créent une fenêtre MÊME avec /quiet : sous DISPLAY/WAYLAND_DISPLAY vides
+# (init headless), ils sortent « Failed to create window » (0x80070578) sans
+# rien installer. Un display virtuel leur suffit, et `gamescope --backend
+# headless` en fournit un sans rien afficher chez l'utilisateur.
+#
+# gamescope ne rend jamais la main (il attend TOUS ses descendants, winedevice
+# compris — bug connu, vécu 27/11/2026) : le code retour de l'installateur
+# passe donc par un FIFO et gamescope est tué dès qu'il est reçu. La lecture du
+# FIFO est bloquante (aucun sleep/poll) et bornée par un timeout.
+#
+# Usage : run_installer_quiet <nom> <exe> [args...]
+# Retour : code de l'installateur (0 = ok), 124 = timeout, 125 = pas de display
+run_installer_quiet() {
+    local name="$1"; shift
+    local limit="${WINCOMPONENTS_INSTALLER_TIMEOUT:-900}"
+    local rc=0
+
+    # Session graphique normale : l'installateur trouve son display tout seul
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        timeout -k 10 "$limit" env WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "$@"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "  ✗ $name : installateur sorti en code $rc"
+        fi
+        return "$rc"
+    fi
+
+    if ! command -v gamescope &>/dev/null; then
+        echo "  ✗ $name : aucun display et gamescope absent (installateur à fenêtre)"
+        return 125
+    fi
+
+    local tmp_dir rc_file gs_pid
+    tmp_dir=$(mktemp -d "${SHARED_TMP_DIR:-/tmp}/gwine-display.XXXXXX") || return 1
+    chmod 700 "$tmp_dir"
+    rc_file="$tmp_dir/rc.fifo"
+    mkfifo "$rc_file"
+
+    cat > "$tmp_dir/run.sh" <<'EOS'
+#!/bin/bash
+# Enfant sous gamescope : exécute l'installateur, publie son code retour sur le
+# FIFO (gamescope ne se termine pas seul, c'est le parent qui le tue).
+rc_file="$1"; shift
+"$@"
+rc=$?
+printf '%s' "$rc" > "$rc_file" 2>/dev/null
+exit "$rc"
+EOS
+    chmod +x "$tmp_dir/run.sh"
+
+    env XDG_RUNTIME_DIR="$tmp_dir" DISPLAY= WAYLAND_DISPLAY= \
+        gamescope --backend headless -W 1280 -H 720 -- \
+        "$tmp_dir/run.sh" "$rc_file" env WINEPREFIX="$WINEPREFIX" "$WINE_BIN" "$@" \
+        >/dev/null 2>&1 &
+    gs_pid=$!
+
+    # Attente bloquante du code retour, plafonnée (le `timeout` borne `cat`)
+    rc=$(timeout -k 5 "$((limit + 30))" cat "$rc_file" 2>/dev/null)
+    if [ -z "$rc" ]; then
+        rc=124
+        echo "  ✗ $name : aucun code retour après ${limit}s"
+    fi
+
+    # Teardown du display jetable : TERM puis KILL, et par motif pour emporter
+    # le reaper (gamescope ignore TERM). Rien ne doit rester vivant.
+    kill -TERM "$gs_pid" 2>/dev/null
+    kill -KILL "$gs_pid" 2>/dev/null
+    pkill -KILL -f "$tmp_dir" 2>/dev/null
+    wait "$gs_pid" 2>/dev/null
+    rm -rf "$tmp_dir"
+
+    if [ "$rc" -ne 0 ]; then
+        echo "  ✗ $name : installateur sorti en code $rc"
+    fi
+    return "$rc"
+}
+
 prepare_wincomponents_cache() {
     ensure_dir "$WINCOMPONENTS_CACHE"
     

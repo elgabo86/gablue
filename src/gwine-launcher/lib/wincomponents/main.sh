@@ -6,6 +6,8 @@
 
 install_all_wincomponents() {
     echo "Installation des composants Windows..."
+
+    WINCOMPONENTS_FAILED=()
     
     if [ "${OFFLINE_MODE:-false}" = "true" ]; then
         if ! check_wincomponents_cache; then
@@ -51,5 +53,14 @@ install_all_wincomponents() {
     install_wmp9
     
     echo "✓ Installation des composants Windows terminée"
+
+    # Un échec ne bloque pas l'init (un préfixe utilisable vaut mieux qu'un
+    # rollback), mais il doit être visible : les jeux qui dépendent de la DLL
+    # manquante sortiront sinon avec une erreur incompréhensible côté jeu.
+    if [ ${#WINCOMPONENTS_FAILED[@]} -gt 0 ]; then
+        echo ""
+        echo "⚠ Composants Windows incomplets : ${WINCOMPONENTS_FAILED[*]}"
+        echo "  Voir les lignes ✗ ci-dessus ; les jeux qui en dépendent échoueront."
+    fi
     return 0
 }

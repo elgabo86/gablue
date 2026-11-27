@@ -9,6 +9,12 @@ WINCOMPONENTS_CACHE="${CACHE_DIR:-$HOME/.cache/gwine}/wincomponents"
 
 ensure_dir -s "$WINCOMPONENTS_CACHE"
 
+# Composants dont l'installation a échoué (nom de la clé de cache). Rempli par
+# les installateurs, résumé par install_all_wincomponents : un échec doit
+# s'entendre, jamais se perdre dans `|| true` (vécu 27/11/2026 : redist VC++
+# muet sous init headless → jeux GameMaker cassés trois semaines plus tard).
+declare -a WINCOMPONENTS_FAILED=()
+
 declare -A COMPONENT_URLS
 declare -A COMPONENT_SHA256
 

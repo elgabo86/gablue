@@ -127,11 +127,16 @@ install_wmp9() {
     local saved_cwd="$PWD"
     cd "$tmp_dir" || { rm -rf "$tmp_dir"; _wmp9_restore_winver; return 1; }
     
+    # setup_wm.exe est un installeur de type Windows : fenêtre requise même en
+    # /Quiet (display virtuel fourni par run_installer_quiet si l'init est
+    # headless). Le cwd compte : l'installeur lit ses fichiers voisins.
     if [ "$WINEARCH" = "win64" ]; then
         sed -i 's/IsWow64Process/IsNow64Process/' setup_wm.exe 2>/dev/null || true
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" setup_wm.exe /Quiet 2>/dev/null || true
+        run_installer_quiet "wmp9" "$tmp_dir/setup_wm.exe" /Quiet \
+            || WINCOMPONENTS_FAILED+=("wmp9")
     else
-        WINEPREFIX="$WINEPREFIX" "$WINE_BIN" setup_wm.exe /Quiet 2>/dev/null || true
+        run_installer_quiet "wmp9" "$tmp_dir/setup_wm.exe" /Quiet \
+            || WINCOMPONENTS_FAILED+=("wmp9")
         _wmp9_install_codecs
     fi
     
@@ -162,7 +167,9 @@ _wmp9_install_codecs() {
     local saved_cwd="$PWD"
     cd "$(dirname "$cache_codecs")" || return 1
     
-    WINEPREFIX="$WINEPREFIX" "$WINE_BIN" WM9Codecs9x.exe /q 2>/dev/null || true
+    # Auto-extracteur Windows Media : fenêtre requise même en /q
+    run_installer_quiet "wm9codecs" "$(dirname "$cache_codecs")/WM9Codecs9x.exe" /q \
+        || WINCOMPONENTS_FAILED+=("wm9codecs")
     
     cd "$saved_cwd"
     
