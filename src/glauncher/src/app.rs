@@ -964,7 +964,13 @@ enum ArtMenuEntry {
     Xbox,
 }
 
-fn art_menu_entries(kind: Kind, gamescope: bool) -> Vec<ArtMenuEntry> {
+/// Le paquet est-il hors de tout dossier de jeux choisi ? Vrai = trouvé
+/// ailleurs (disque externe scanné), donc copiable.
+fn hors_des_dossiers(path: &Path, dirs: &[PathBuf]) -> bool {
+    !dirs.iter().any(|dir| path.starts_with(dir))
+}
+
+fn art_menu_entries(kind: Kind, gamescope: bool, copier: bool) -> Vec<ArtMenuEntry> {
     let mut entries = vec![
         ArtMenuEntry::Kind(covers::ArtKind::Grid),
         ArtMenuEntry::Kind(covers::ArtKind::Hero),
@@ -973,9 +979,14 @@ fn art_menu_entries(kind: Kind, gamescope: bool) -> Vec<ArtMenuEntry> {
         ArtMenuEntry::Identify,
         ArtMenuEntry::Alias,
         ArtMenuEntry::Date,
-        ArtMenuEntry::Copier,
-        ArtMenuEntry::Gamescope,
     ];
+    // la copie sert à **ranger** un paquet trouvé sur un disque externe dans un
+    // dossier de jeux : un jeu déjà sous un `game_dirs` n'a aucune destination
+    // qui ne soit pas la sienne, la ligne n'aurait rien à proposer
+    if copier {
+        entries.push(ArtMenuEntry::Copier);
+    }
+    entries.push(ArtMenuEntry::Gamescope);
     // la résolution forcée n'a de sens QUE dans gamescope : hors de lui, le
     // jeu prend celle de l'écran et la ligne n'apprendrait rien (demandé le
     // 25/11/2026). La ligne apparaît donc à l'activation de gamescope.
@@ -3723,6 +3734,11 @@ impl App {
                 let Some(game) = self.jeu_courant() else {
                     return Task::none();
                 };
+                // garde : un jeu déjà dans un dossier de jeux n'a pas de copie à
+                // proposer (cf. `copiable`), la touche `C` passe par ici aussi
+                if !self.copiable(game) {
+                    return Task::none();
+                }
                 let source = game.path.clone();
                 let size = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
                 let mut dests = vec![CopyDest {
@@ -7857,7 +7873,16 @@ impl App {
 
     fn art_entries(&self) -> Vec<ArtMenuEntry> {
         let kind = self.art_kind();
-        art_menu_entries(kind, self.art_options().gamescope)
+        let copier = self.jeu_courant().is_some_and(|game| self.copiable(game));
+        art_menu_entries(kind, self.art_options().gamescope, copier)
+    }
+
+    /// Le paquet est-il hors de tout dossier de jeux choisi ? Seul ce cas a une
+    /// copie à proposer : un jeu trouvé sur un disque externe se range dans un
+    /// `game_dirs`. Un jeu déjà dans un dossier choisi n'a nulle part où aller
+    /// (la seule destination qui aurait du sens serait son propre dossier).
+    fn copiable(&self, game: &Game) -> bool {
+        hors_des_dossiers(&game.path, &self.config.game_dirs())
     }
 
     fn art_kind(&self) -> Kind {
@@ -9653,7 +9678,7 @@ impl App {
         let absent = self.absents.get(&game.slug).filter(|absent| covers::absent_frais(absent));
         let year = self.year_of(&game.slug);
         let options = self.art_options();
-        let entries = art_menu_entries(game.kind, options.gamescope);
+        let entries = art_menu_entries(game.kind, options.gamescope, self.copiable(game));
 
         let mut rows = Column::new().spacing(6);
         for (index, entry) in entries.iter().enumerate() {
@@ -11739,8 +11764,8 @@ mod tests {
     /// `.wgp` garde « manettes Xbox » en dernier.
     #[test]
     fn resolution_seulement_dans_gamescope() {
-        let sans = art_menu_entries(Kind::Lgp, false);
-        let avec = art_menu_entries(Kind::Lgp, true);
+        let sans = art_menu_entries(Kind::Lgp, false, true);
+        let avec = art_menu_entries(Kind::Lgp, true, true);
         assert!(!sans.contains(&ArtMenuEntry::Resolution));
         assert!(avec.contains(&ArtMenuEntry::Resolution));
         let rang = avec
@@ -11753,8 +11778,35 @@ mod tests {
             sans.len() + 1,
             "une seule ligne ajoutée par gamescope"
         );
-        let wgp = art_menu_entries(Kind::Wgp, true);
+        let wgp = art_menu_entries(Kind::Wgp, true, true);
         assert_eq!(wgp.last(), Some(&ArtMenuEntry::Xbox));
+    }
+
+    /// « Copier le jeu… » n'existe que pour un paquet hors des dossiers choisis
+    /// (trouvé sur un disque externe) : un jeu déjà dans un `game_dirs` n'a
+    /// aucune destination autre que son propre dossier.
+    #[test]
+    fn copie_seulement_hors_des_dossiers_choisis() {
+        let depots = vec![PathBuf::from("/home/gab/Games"), PathBuf::from("/jeux")];
+        assert!(!hors_des_dossiers(
+            Path::new("/home/gab/Games/Zelda.lgp"),
+            &depots
+        ));
+        assert!(!hors_des_dossiers(Path::new("/jeux/mario.wgp"), &depots));
+        assert!(hors_des_dossiers(
+            Path::new("/run/media/gab/t5/Games/zelda.lgp"),
+            &depots
+        ));
+        // préfixe trompeur : /home/gab/Games-du-midi n'est pas /home/gab/Games
+        assert!(hors_des_dossiers(
+            Path::new("/home/gab/Games-du-midi/x.lgp"),
+            &depots
+        ));
+        let dedans = art_menu_entries(Kind::Lgp, false, false);
+        assert!(!dedans.contains(&ArtMenuEntry::Copier));
+        let dehors = art_menu_entries(Kind::Lgp, false, true);
+        assert!(dehors.contains(&ArtMenuEntry::Copier));
+        assert_eq!(dehors.len(), dedans.len() + 1);
     }
 
     #[test]

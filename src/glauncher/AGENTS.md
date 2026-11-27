@@ -630,7 +630,12 @@ même launcher).
   (`write_atomic`), et les marqueurs aussi. Un dossier `assets/` synchronisé
   ne doit jamais propager une image à moitié écrite.
 - **Copier un paquet** (`C` sur la page, ou `Options ▸ Copier le jeu…`) :
-  panneau des destinations — **Téléchargements** (`XDG_DOWNLOAD_DIR` de
+  **seulement pour un paquet trouvé hors des dossiers choisis** (disque externe
+  scanné) — `App::copiable` ; un jeu déjà sous un `game_dirs` n'a aucune
+  destination qui ne soit la sienne, la ligne n'est ni dans `Options` ni
+  derrière `C` (la garde est aussi dans `Message::CopyOpen`, donc tout chemin
+  qui l'ouvrirait est inerte). Panneau des destinations — **Téléchargements**
+  (`XDG_DOWNLOAD_DIR` de
   `~/.config/user-dirs.dirs`, repli `~/Téléchargements` puis `~/Downloads`,
   jamais `xdg-user-dir` qui n'existe pas en session console) puis chaque
   dossier de `game_dirs` — avec la **place libre** de chacun (`statvfs`,
@@ -1144,7 +1149,9 @@ même launcher).
   Héros, Logo, Icône (`✓` = déjà là), `Identifier le jeu…` (ou `Revérifier sur
   SteamGridDB` quand la marque « introuvable » est fraîche), `Reprendre les
   visuels d'un jeu…`, `Date de sortie…` (année connue en bout de ligne) et
-  `Copier le jeu…` (voir *Copier un paquet*) — **suivies des options de
+  `Copier le jeu…` pour un jeu hors des dossiers choisis seulement (voir
+  *Copier un paquet*), donc **sept lignes** pour un jeu déjà rangé dans un
+  `game_dirs` — **suivies des options de
   lancement du jeu** (voir ci-dessous). Une ligne mène au menu d'images du
   type choisi. **Aucun raccourci** n'ouvre ce menu depuis la liste, ni depuis la
   page (retiré le 20/11 : `C` sur la liste, puis `I`/`G`/`H`/`L`/`C`/`R`/`D` et

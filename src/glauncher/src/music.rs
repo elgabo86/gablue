@@ -447,7 +447,7 @@ mod tests {
     /// musique repart du début au retour d'une partie (constaté 20/11).
     #[test]
     fn la_position_se_trouve_derriere_les_reponses_de_volume() {
-        let (mut client, mut mpv) = UnixStream::pair().unwrap();
+        let (client, mut mpv) = UnixStream::pair().unwrap();
         let writer = std::thread::spawn(move || {
             for _ in 0..30 {
                 let _ = writeln!(mpv, "{{\"request_id\":0,\"error\":\"success\"}}");
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn une_position_indisponible_ne_bloque_pas() {
         // au tout début du chargement, `mpv` répond « property unavailable »
-        let (mut client, mut mpv) = UnixStream::pair().unwrap();
+        let (client, mut mpv) = UnixStream::pair().unwrap();
         let writer = std::thread::spawn(move || {
             let _ = writeln!(
                 mpv,
