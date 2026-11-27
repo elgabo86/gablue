@@ -60,7 +60,19 @@ dans `/usr/share/ublue-os/gablue/scripts/killthemall`, exporté au service par
   qui plante à chaque Home (constaté le 24/11/2026). Vérifié le même jour avec
   un `WAYLAND_DISPLAY=gablue-gaming` mort : « adopté wayland-1 », overlay
   résident mappé et menu visible ; avec un environnement valide, aucune
-  adoption (rien n'est touché).
+  adoption (rien n'est touché). **Ce test ne vaut qu'au démarrage** : un
+  résident déjà connecté au compositeur de la session console survit à la
+  bascule et reste aveugle (Home répond par l'IPC, le panneau se dessine sur un
+  compositeur mort, puis se referme après 10 s — constaté le 27/11/2026 sur
+  gen1, avec en prime un kscreen-doctor lancé par le script VRR qui héritait du
+  vieil environnement, tombait sur le greffon Qt « xcb » absent et laissait une
+  notification de crash drkonqi). D'où
+  `etc/xdg/autostart/gablue-pad.desktop` → `session-start.sh` : à chaque login
+  Plasma, il attend que `WAYLAND_DISPLAY` du gestionnaire désigne un socket
+  existant puis **`systemctl --user restart`** l'unité (jamais `start` : une
+  unité déjà active garde l'environnement de la session précédente). Le script
+  ne fait rien si l'unité est masquée (`gablue-pad off`). L'aller desktop →
+  console était déjà couvert par `gablue-gaming-session` (même `restart`).
 - **Écran du panneau** : en double écran, le résident vise l'écran **qui a le
   focus** (`org.kde.KWin.activeOutputName`) et ne recrée sa surface que si
   l'écran change — layer-shell fige l'écran à la création, donc un résident

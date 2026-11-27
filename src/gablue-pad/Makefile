@@ -12,7 +12,7 @@ LIBEXEC = $(DESTDIR)$(PREFIX)/libexec/gablue-pad
 # arborescence copiée telle quelle : les scripts résolvent `sounds/`, `scripts/`
 # et `kwin/` par rapport à leur propre dossier, comme au banc.
 DATA = recorder.sh screenshot.sh replay.sh vrr.sh mangohud.sh booster.sh \
-       scripts sounds kwin
+       session-start.sh scripts sounds kwin
 
 BINS = gpad-trigger gpad-mouse gpad-inhibit gpad-rumble gpad-login \
        gpad-shot

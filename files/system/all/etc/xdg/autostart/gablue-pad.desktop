@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Gablue Pad (session)
+Comment=Relance l'overlay manette avec l'environnement de CETTE session
+Exec=/usr/libexec/gablue-pad/session-start.sh
+Terminal=false
+NoDisplay=true
+OnlyShowIn=KDE;
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel
