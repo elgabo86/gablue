@@ -1,0 +1,22 @@
+[Unit]
+Description=Gablue Session Reset (rétablit la session par défaut au démarrage)
+Documentation=man:plasmalogin(1)
+# Une bascule (`MODE JEU` / `MODE BUREAU` du menu Home, `FERMER LA SESSION`)
+# ne vaut que pour la session COURANTE : ce oneshot réécrit l'autologin lu par
+# plasmalogin depuis /etc/gablue/session.conf (le défaut réglé dans Gablue
+# Manager) AVANT que le gestionnaire de connexion ne démarre. Sans lui, la
+# dernière bascule restait le démarrage de tous les suivants : un « mode jeu »
+# d'une soirée survivait à l'extinction (vécu 27/11/2026).
+# DefaultDependencies=no sert à pouvoir passer AVANT plasmalogin.service, qui
+# n'est pas un service d'early boot : l'ordre n'a de sens qu'avec un tri
+# explicite. `local-fs.target` garantit /etc monté (et donc inscriptible).
+DefaultDependencies=no
+After=local-fs.target
+Before=plasmalogin.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gablue-session-mode reset
+
+[Install]
+WantedBy=multi-user.target

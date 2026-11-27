@@ -106,22 +106,35 @@
   la préférence d'écran du jeu (`gablue-display`). C'est le bon endroit et non
   `gablue-gaming-session` : ce script tourne **dans** KWin, donc
   `WAYLAND_DISPLAY`, le bus utilisateur et le compositeur existent déjà.
-- **gablue-session-mode** : bascule de session demandée depuis le menu Home
-  de `gpad` — `console` (session Gablue Gaming), `bureau` (Plasma), `greeter`
-  (aucune session : écran de connexion), `status` (autologin en place, sans
-  privilège), `etat` (`session=console|bureau|greeter` **puis**
-  `autologin=<compte|vide>`, sortie stable lue par le dialogue « Session
-  graphique » de Gablue Manager, sans privilège — le nom affiché est celui qui
-  démarrera sans mot de passe, le fichier étant commun aux comptes). Root via pkexec, autorisé sans mot de passe par
+- **gablue-session-mode** : session graphique, **deux niveaux** (27/11/2026).
+  La **session par défaut** vit dans `/etc/gablue/session.conf`
+  (`[Session] Default=console|bureau|greeter`, `User=`) et ne se règle que par
+  `defaut` — c'est ce qu'écrit le dialogue « Session graphique » de Gablue
+  Manager. Une **bascule** (`console`, `bureau`, `greeter`, demandée par le
+  menu Home de `gpad` ou par `FERMER LA SESSION`) est **ponctuelle** : elle
+  change la session maintenant et ne touche pas au défaut ;
+  `gablue-session-reset.service` réécrit l'autologin effectif depuis le défaut
+  au démarrage suivant (avant plasmalogin). Sans ça, un « mode jeu » d'une
+  soirée restait le démarrage de tous les suivants. L'ancien état est **adopté**
+  au premier démarrage de cette image (le défaut est repris de l'autologin en
+  place), donc personne ne change de session par surprise. `status` (lisible,
+  sans privilège), `etat` (`session=`, `autologin=`, `defaut=`,
+  `autologin_defaut=` — sortie stable du dialogue, les deux premiers décrivent
+  le **prochain** démarrage et peuvent donc montrer une bascule en cours, les
+  deux derniers le réglage persistant), `defaut` sans argument (le défaut seul),
+  `reset` (root, démarrage). Root via pkexec, autorisé sans mot de passe par
   `60-gablue-session-mode.rules` (groupe wheel, session locale, programme
-  exact). Le fichier lu est `/etc/plasmalogin.conf.d/zz-gablue-session.conf` ;
-  **aucun autre autologin ne doit exister** — `plasma-setup.service` (assistant
-  de premier démarrage de KDE) écrivait `User=plasma-setup` dans
-  `99-plasma-setup.conf` à chaque démarrage : sans effet tant que le `zz-`
-  l'écrase, mais en mode « écran de connexion » (fichier retiré) il ouvrait
-  l'assistant au lieu du greeter. Le paquet et le wizard sont **conservés**
-  (premier démarrage d'une installation) : c'est `gablue-session-mode` qui doit
-  imposer un `[Autologin] User=` vide en mode greeter, pas un drapeau posé au
+  exact). Le fichier lu par plasmalogin est
+  `/etc/plasmalogin.conf.d/zz-gablue-session.conf` ; le défaut vit **hors** de
+  ce dossier et porte `Default=` — deux fichiers `[Autologin]` y seraient lus
+  tous les deux. **Aucun autre autologin ne doit exister** —
+  `plasma-setup.service` (assistant de premier démarrage de KDE) écrit
+  `User=plasma-setup` dans `99-plasma-setup.conf` : en mode « écran de
+  connexion » le `zz-` est donc écrit avec `User=` **vide mais présent**, qui
+  écrase cette clé. Le retirer (ancien comportement) laissait le wizard
+  s'autologiner à la place du greeter (constaté le 25/11/2026). Le paquet et le
+  wizard sont **conservés** (premier démarrage d'une installation) : c'est
+  `gablue-session-mode` qui impose l'écran de connexion, pas un drapeau posé au
   build (voir `files/scripts/AGENTS.md`). Trois précautions,
   toutes mesurées le 23/11/2026 :
   (1) **redémarrer plasmalogin** plutôt que se déconnecter — il lit
@@ -208,6 +221,14 @@ Drop-ins dans `*.service.d/`, appliqués à l'échelle du système (priorité pl
   celui de l'utilisateur) puis laisse plasmalogin réessayer, avec un
   redémarrage du démon en dernier recours. Raison et vécu : bug amont
   **sddm#1844**, bullets `gablue-session-mode` ci-dessus.
+- **gablue-session-reset.service** (système, oneshot, `DefaultDependencies=no`,
+  `After=local-fs.target`, `Before=plasmalogin.service`,
+  `WantedBy=multi-user.target`) : `gablue-session-mode reset` — réécrit
+  l'autologin effectif depuis `/etc/gablue/session.conf` **avant** que
+  plasmalogin ne le lise, donc une bascule (`MODE JEU` / `MODE BUREAU`,
+  `FERMER LA SESSION`) ne survit pas au redémarrage. Ne bascule rien, ne
+  redémarre rien. `DefaultDependencies=no` sert uniquement à passer avant
+  plasmalogin, qui n'est pas un service d'early boot.
 - **gablue-pad-wake.service** (système, oneshot) : déclare les manettes
   Bluetooth appariées comme sources de réveil (`bluetoothctl wake <mac> on`),
   filtrées sur `Icon: input-gaming` — un téléphone ou un casque apparié ne doit

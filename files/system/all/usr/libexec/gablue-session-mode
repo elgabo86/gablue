@@ -2,12 +2,28 @@
 
 # gablue-session-mode — passer d'une session graphique à l'autre.
 #
-#   gablue-session-mode console   session « Gablue Gaming » (KWin nu)
-#   gablue-session-mode bureau    session Plasma
-#   gablue-session-mode greeter   aucune session : écran de connexion
+# DEUX NIVEAUX, et c'est le cœur du contrat :
+#
+#   * la session PAR DÉFAUT (`/etc/gablue/session.conf`) est la seule qui
+#     survive à un redémarrage. Elle se règle dans Gablue Manager
+#     (« Session graphique… ») et NULLE PART ailleurs :
+#       gablue-session-mode defaut            affiche le défaut (sans privilège)
+#       gablue-session-mode defaut console|bureau|greeter
+#                                             écrit le défaut ET applique
+#   * une BASCULE est ponctuelle (`MODE JEU` / `MODE BUREAU` du menu Home,
+#     `FERMER LA SESSION`) : elle change la session maintenant, et le
+#     démarrage suivant revient au défaut (demande de l'utilisateur,
+#     27/11/2026). Sans ça, un « mode jeu » d'une soirée restait le défaut du
+#     poste jusqu'à une bascule inverse.
+#
+#   gablue-session-mode console   session « Gablue Gaming » (KWin nu), ponctuel
+#   gablue-session-mode bureau    session Plasma, ponctuel
+#   gablue-session-mode greeter   aucune session : écran de connexion, ponctuel
+#   gablue-session-mode reset     au démarrage (une unité, avant plasmalogin) :
+#                                 réécrit la session effective depuis le défaut
 #   gablue-session-mode status    autologin en place, sans privilège
-#   gablue-session-mode etat      `session=console|bureau|greeter` puis
-#                                 `autologin=<compte|vide>`, lisible par un
+#   gablue-session-mode etat      `session=`, `autologin=`, `defaut=`,
+#                                 `autologin_defaut=` — lisible par un
 #                                 programme (Gablue Manager), sans privilège
 #
 # Lancé en root par pkexec (menu Home de gpad) : la règle polkit livrée avec
@@ -32,6 +48,9 @@
 set -uo pipefail   # jamais -e : une étape ratée ne doit pas laisser la machine sans session
 
 CONF=/etc/plasmalogin.conf.d/zz-gablue-session.conf
+# Session par défaut de la machine. HORS de /etc/plasmalogin.conf.d : y poser
+# un second fichier ferait lire deux [Autologin] à plasmalogin.
+DEFAUT=/etc/gablue/session.conf
 SESSION_CONSOLE=gablue-gaming.desktop
 SESSION_BUREAU=plasma.desktop
 # L'utilisateur à basculer est celui qui DEMANDE, jamais root : pkexec expose
@@ -42,17 +61,196 @@ DEMANDEUR_UID=${PKEXEC_UID:-${SUDO_UID:-$(id -u)}}
 
 log() { printf 'gablue-session-mode: %s\n' "$*" >&2; }
 
-mode=${1:-}
-controle_seulement=0
-[ "${2:-}" = "--check" ] && controle_seulement=1
+# --- lecture des deux fichiers ------------------------------------------------
+# Une session se juge sur `User=` PUIS `Session=`, dans cet ordre : un fichier
+# avec `User=` vide n'autologine personne, quelle que soit la session écrite
+# (c'est ainsi qu'on impose l'écran de connexion, voir ecrire_effectif).
+session_desktop() {   # console|bureau → nom du .desktop
+    case "$1" in
+    console) echo "$SESSION_CONSOLE" ;;
+    bureau) echo "$SESSION_BUREAU" ;;
+    esac
+}
 
-case "$mode" in
-console|bureau|greeter|status|etat) ;;
+compte_fichier() {   # fichier → compte autologiné (vide si aucun)
+    [ -f "$1" ] || return 0
+    sed -n 's/^[[:space:]]*User=//p' "$1" 2>/dev/null | head -1
+}
+
+session_fichier() {   # fichier → console|bureau|greeter
+    local user
+    if [ ! -f "$1" ]; then
+        echo greeter
+        return
+    fi
+    user=$(compte_fichier "$1")
+    if [ -z "$user" ]; then
+        echo greeter
+        return
+    fi
+    case "$(sed -n 's/^[[:space:]]*Session=//p' "$1" 2>/dev/null | head -1)" in
+    "$SESSION_CONSOLE") echo console ;;
+    "$SESSION_BUREAU") echo bureau ;;
+    *) echo greeter ;;
+    esac
+}
+
+# Le fichier de défaut ne porte PAS `Session=` (clé de plasmalogin) mais
+# `Default=` : il ne doit jamais tomber dans `/etc/plasmalogin.conf.d`, où
+# plasmalogin lirait deux autologins. D'où ce lecteur séparé.
+session_defaut_fichier() {   # fichier → console|bureau|greeter
+    local defaut compte
+    [ -f "$1" ] || { echo greeter; return; }
+    compte=$(compte_fichier "$1")
+    defaut=$(sed -n 's/^[[:space:]]*Default=//p' "$1" 2>/dev/null | head -1)
+    if [ -z "$compte" ] || [ -z "$defaut" ]; then
+        echo greeter
+        return
+    fi
+    case "$defaut" in
+    console|bureau) echo "$defaut" ;;
+    *) echo greeter ;;
+    esac
+}
+
+# Défaut VU par la machine : avant la première adoption (image mise à jour mais
+# pas encore redémarrée), il n'y a pas de fichier de défaut — c'est
+# l'autologin en place qui fait foi, et il sera adopté au premier démarrage.
+defaut_voulu() {
+    if [ -f "$DEFAUT" ]; then
+        session_defaut_fichier "$DEFAUT"
+    else
+        session_fichier "$CONF"
+    fi
+}
+
+compte_defaut() {
+    if [ -f "$DEFAUT" ]; then
+        compte_fichier "$DEFAUT"
+    else
+        compte_fichier "$CONF"
+    fi
+}
+
+# --- écriture des deux fichiers -----------------------------------------------
+ecrire_effectif() {   # session, compte
+    mkdir -p "$(dirname "$CONF")"
+    if [ "$1" = greeter ]; then
+        # `User=` VIDE mais ÉCRIT : il écrase l'autologin que le paquet
+        # plasma-setup livre dans `99-plasma-setup.conf` (`User=plasma-setup`).
+        # Retirer le fichier laissait cette clé gagner : le wizard s'autologinait
+        # à la place du greeter (constaté le 25/11/2026). plasmalogin ne lance
+        # un autologin que si `User=` ET `Session=` sont renseignés.
+        printf '# Écrit par gablue-session-mode : écran de connexion voulu.\n# `User=` vide est volontaire : il écrase 99-plasma-setup.conf.\n[Autologin]\nUser=\nRelogin=false\n' \
+            >"$CONF"
+    else
+        printf '# Écrit par gablue-session-mode : session effective du prochain\n# démarrage. Une bascule est PONCTUELLE — gablue-session-reset.service\n# réécrit ce fichier depuis %s au démarrage suivant.\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' \
+            "$DEFAUT" "$2" "$(session_desktop "$1")" >"$CONF"
+    fi
+    chmod 644 "$CONF"
+}
+
+ecrire_defaut() {   # session, compte
+    mkdir -p "$(dirname "$DEFAUT")"
+    printf '# Session par défaut de la machine (Gablue Manager, « Session graphique… »).\n# MODE JEU / MODE BUREAU de la manette ne changent que la session COURANTE :\n# gablue-session-reset.service rétablit ce défaut au démarrage suivant.\n[Session]\nDefault=%s\nUser=%s\n' \
+        "$1" "$2" >"$DEFAUT"
+    chmod 644 "$DEFAUT"
+}
+
+adopter_defaut() {
+    [ -f "$DEFAUT" ] && return 0
+    local session compte
+    session=$(session_fichier "$CONF")
+    compte=$(compte_fichier "$CONF")
+    [ "$session" = greeter ] && compte=
+    ecrire_defaut "$session" "$compte"
+    log "défaut adopté depuis l'autologin en place : $session"
+}
+
+commande=${1:-}
+sous=${2:-}
+controle_seulement=0
+if [ "$commande" = defaut ] && [ "${3:-}" = "--check" ]; then
+    controle_seulement=1
+elif [ "$sous" = "--check" ]; then
+    controle_seulement=1
+    sous=
+fi
+
+case "$commande" in
+console|bureau|greeter|status|etat|reset) ;;
+defaut)
+    case "$sous" in
+    ""|console|bureau|greeter) ;;
+    *)
+        echo "usage : $0 defaut [console|bureau|greeter]" >&2
+        exit 2
+        ;;
+    esac
+    ;;
 *)
-    echo "usage : $0 console|bureau|greeter|status [--check]" >&2
+    echo "usage : $0 console|bureau|greeter|defaut|reset|status|etat [--check]" >&2
     exit 2
     ;;
 esac
+
+# `reset` n'a de sens qu'au démarrage : il ne bascule RIEN, il remet
+# l'autologin effectif sur le défaut. Il tourne avant plasmalogin, sans compte
+# demandeur, d'où le traitement avant tout le reste.
+if [ "$commande" = reset ]; then
+    if [ "$(id -u)" != 0 ]; then
+        echo "$0 reset : root requis" >&2
+        exit 1
+    fi
+    # Premier démarrage de la nouvelle image : le défaut est repris de
+    # l'autologin qui était en place, personne ne change de session par
+    # surprise. À partir de là, les bascules redeviennent ponctuelles.
+    adopter_defaut
+    ecrire_effectif "$(session_defaut_fichier "$DEFAUT")" "$(compte_fichier "$DEFAUT")"
+    log "session effective du démarrage : $(session_fichier "$CONF")"
+    exit 0
+fi
+
+if [ "$commande" = defaut ] && [ -z "$sous" ]; then
+    defaut_voulu
+    exit 0
+fi
+
+mode=$commande
+regler_defaut=0
+if [ "$commande" = defaut ]; then
+    mode=$sous
+    regler_defaut=1
+fi
+
+if [ "$mode" = etat ]; then
+    # Sortie STABLE pour Gablue Manager : une ligne, une clé. `status` reste
+    # lisible par un humain (contenu du fichier) et n'est pas parsé ailleurs.
+    # `session=`/`autologin=` = ce que plasmalogin ouvrira au PROCHAIN
+    # démarrage (donc une bascule ponctuelle en cours, s'il y en a une) ;
+    # `defaut=`/`autologin_defaut=` = le réglage persistant de Gablue Manager.
+    # `autologin=` nomme le compte qui démarrera SANS mot de passe (vide =
+    # écran de connexion) : le dialogue l'affiche, parce que le fichier est
+    # commun à TOUS les comptes de la machine — chacun n'y met que son propre
+    # nom, mais le dernier qui bascule prend l'autologin (25/11/2026).
+    echo "session=$(session_fichier "$CONF")"
+    echo "autologin=$(compte_fichier "$CONF")"
+    echo "defaut=$(defaut_voulu)"
+    echo "autologin_defaut=$(compte_defaut)"
+    exit 0
+fi
+
+if [ "$mode" = status ]; then
+    echo "session effective : $(session_fichier "$CONF") ($(compte_fichier "$CONF"))"
+    echo "défaut           : $(defaut_voulu) ($(compte_defaut))"
+    if [ -f "$CONF" ]; then
+        tr '\n' ' ' <"$CONF"
+        echo
+    else
+        echo "aucun autologin (écran de connexion au prochain démarrage)"
+    fi
+    exit 0
+fi
 
 if [ "$DEMANDEUR_UID" = 0 ]; then
     log "utilisateur demandeur inconnu (uid 0) : lancer par pkexec, ou par sudo (SUDO_UID)"
@@ -71,37 +269,6 @@ fi
 # arrêté, KWin empilés, bascule lente).
 UID_NUM=$(id -u "$UTILISATEUR")
 RUNTIME=/run/user/$UID_NUM
-
-if [ "$mode" = etat ]; then
-    # Sortie STABLE pour Gablue Manager : une ligne, une clé. `status` reste
-    # lisible par un humain (contenu du fichier) et n'est pas parsé ailleurs.
-    # `autologin=` nomme le compte qui démarrera SANS mot de passe (vide =
-    # écran de connexion) : le dialogue l'affiche, parce que le fichier est
-    # commun à TOUS les comptes de la machine — chacun n'y met que son propre
-    # nom, mais le dernier qui bascule prend l'autologin (25/11/2026).
-    if [ ! -f "$CONF" ]; then
-        echo "session=greeter"
-        echo "autologin="
-    else
-        case "$(sed -n 's/^[[:space:]]*Session=//p' "$CONF" | head -1)" in
-        "$SESSION_CONSOLE") echo "session=console" ;;
-        "$SESSION_BUREAU") echo "session=bureau" ;;
-        *) echo "session=greeter" ;;
-        esac
-        echo "autologin=$(sed -n 's/^[[:space:]]*User=//p' "$CONF" | head -1)"
-    fi
-    exit 0
-fi
-
-if [ "$mode" = status ]; then
-    if [ -f "$CONF" ]; then
-        tr '\n' ' ' <"$CONF"
-        echo
-    else
-        echo "aucun autologin (écran de connexion au prochain démarrage)"
-    fi
-    exit 0
-fi
 
 # Contrôle préalable : mieux vaut refuser que laisser la machine sans session.
 # Aucun chemin ne doit dépendre d'un paquet absent de l'image.
@@ -139,10 +306,18 @@ fi
 # meurt avec elle). Sans unité transitoire, le script s'arrêterait au milieu et
 # laisserait la machine à mi-chemin (constaté au banc le 23/11/2026).
 if [ "${GABLUE_SESSION_MODE_DETACHE:-0}" != 1 ]; then
+    # La ré-exécution doit garder l'intention « régler le défaut » : sans le
+    # `defaut` en tête, le défaut serait perdu et la bascule redeviendrait
+    # persistante (le bug qu'on corrige).
+    if [ "$regler_defaut" = 1 ]; then
+        set -- defaut "$mode"
+    else
+        set -- "$mode"
+    fi
     exec systemd-run --collect --unit=gablue-session-mode \
         --setenv=GABLUE_SESSION_MODE_DETACHE=1 \
         --setenv=PKEXEC_UID="$DEMANDEUR_UID" \
-        /usr/bin/bash "$0" "$mode"
+        /usr/bin/bash "$0" "$@"
 fi
 
 # Toutes les commandes passent par le gestionnaire UTILISATEUR (c'est lui qui
@@ -283,20 +458,6 @@ attendre_session() {
     return 1
 }
 
-ecrire_autologin() {   # session .desktop
-    mkdir -p "$(dirname "$CONF")"
-    # `Relogin=false` est ESSENTIEL : avec `true`, la fin de la session fait
-    # relancer par plasmalogin la session qu'il a EN MÉMOIRE (bug KDE 522181),
-    # donc le bureau Plasma se réaffichait une seconde avant la session jeu
-    # (mesuré le 25/11/2026 : session 8 créée avec `startplasma-wayland` juste
-    # après la fin de la session 7, puis tuée par la bascule). Sans Relogin, le
-    # démon attend simplement l'autologin dicté par le nouveau fichier.
-    printf '# Écrit par gablue-session-mode : session choisie depuis le menu Home.\n# Retiré par le mode « greeter » (fermer la session).\n[Autologin]\nUser=%s\nSession=%s\nRelogin=false\n' \
-        "$UTILISATEUR" "$1" >"$CONF"
-    chmod 644 "$CONF"
-    log "autologin : $1"
-}
-
 log "mode=$mode utilisateur=$UTILISATEUR sessions=$(sessions_siege | tr '\n' ' ')"
 
 # 0. Le gestionnaire de connexion est arrêté AVANT que la session ne se termine.
@@ -365,14 +526,33 @@ fi
 
 # 4. Configuration d'autologin, puis redémarrage du gestionnaire de connexion,
 #    seul moyen d'appliquer `Session=` (cf. en-tête).
-case "$mode" in
-console) ecrire_autologin "$SESSION_CONSOLE" ;;
-bureau) ecrire_autologin "$SESSION_BUREAU" ;;
-greeter)
-    rm -f "$CONF"
-    log "autologin retiré : écran de connexion"
-    ;;
-esac
+#    `ecrire_effectif` écrit aussi `Relogin=false`, ESSENTIEL : avec `true`, la
+#    fin de la session fait relancer par plasmalogin la session qu'il a EN
+#    MÉMOIRE (bug KDE 522181), donc le bureau Plasma se réaffichait une seconde
+#    avant la session jeu (mesuré le 25/11/2026 : session 8 créée avec
+#    `startplasma-wayland` juste après la fin de la session 7, puis tuée par la
+#    bascule). Sans Relogin, le démon attend simplement l'autologin dicté par
+#    le nouveau fichier.
+#    Le défaut n'est écrit QUE par `defaut …` (Gablue Manager) : sinon la
+#    bascule serait le défaut, et un « mode jeu » resterait pour toujours.
+if [ "$regler_defaut" = 1 ]; then
+    if [ "$mode" = greeter ]; then
+        ecrire_defaut greeter ""
+    else
+        ecrire_defaut "$mode" "$UTILISATEUR"
+    fi
+    log "défaut : $(defaut_voulu)"
+fi
+# Une bascule est PONCTUELLE : le défaut doit exister AVANT qu'on écrive
+# l'effectif, sinon le démarrage suivant adopterait la bascule comme défaut.
+adopter_defaut
+if [ "$mode" = greeter ]; then
+    ecrire_effectif greeter ""
+    log "bascule ponctuelle : écran de connexion (défaut rétabli au démarrage)"
+else
+    ecrire_effectif "$mode" "$UTILISATEUR"
+    log "bascule ponctuelle : $mode (défaut « $(defaut_voulu) » rétabli au démarrage)"
+fi
 
  # Le neuf lit le fichier écrit juste au-dessus. `reset-failed` d'abord : s'il a
 # été arrêté pendant une rafale d'échecs, l'unité porte encore son compteur de

@@ -1,7 +1,8 @@
 // gablue-session-mode : basculer entre la session console et le bureau depuis
 // le menu Home de la manette, sans mot de passe.
 //
-// Le helper écrit /etc/plasmalogin.conf.d/zz-gablue-session.conf et redémarre
+// Le helper écrit /etc/plasmalogin.conf.d/zz-gablue-session.conf (autologin
+// effectif) et /etc/gablue/session.conf (session par défaut), puis redémarre
 // plasmalogin : deux opérations root. Sans cette règle, chaque appui sur
 // « MODE JEU » / « MODE BUREAU » demanderait une authentification — impossible
 // en session console, où il n'y a ni clavier ni agent PolicyKit (l'appui

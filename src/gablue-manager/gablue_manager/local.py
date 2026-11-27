@@ -2454,14 +2454,19 @@ def session_mode_available() -> bool:
 
 
 def session_mode_etat() -> dict:
-    """`session=` et `autologin=` de `gablue-session-mode etat`, sans privilège.
+    """`session=`, `autologin=`, `defaut=` et `autologin_defaut=`, sans privilège.
 
-    `session` vaut `console`, `bureau` ou `greeter` ; `autologin` nomme le
-    compte qui démarrera **sans mot de passe** (chaîne vide = écran de
-    connexion). Dictionnaire vide = helper absent ou réponse incompréhensible :
-    le dialogue ne doit rien inventer.
+    `session` vaut `console`, `bureau` ou `greeter` : la session que
+    plasmalogin ouvrira au **prochain** démarrage — donc une bascule
+    ponctuelle en cours, s'il y en a une. `defaut` est le réglage persistant
+    (Gablue Manager) que le démarrage suivant rétablit ; les deux diffèrent
+    après un `MODE JEU` / `MODE BUREAU` de la manette. `autologin` et
+    `autologin_defaut` nomment le compte qui démarrera **sans mot de passe**
+    (chaîne vide = écran de connexion). Dictionnaire vide = helper absent ou
+    réponse incompréhensible : le dialogue ne doit rien inventer.
     """
-    etat = {"session": "", "autologin": ""}
+    etat = {"session": "", "autologin": "", "defaut": "",
+            "autologin_defaut": ""}
     if not session_mode_available():
         return {}
     try:
@@ -2476,10 +2481,15 @@ def session_mode_etat() -> dict:
     for line in result.stdout.splitlines():
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip()
-        if key == "session" and value in ("console", "bureau", "greeter"):
-            etat["session"] = value
-        elif key == "autologin":
-            etat["autologin"] = value
+        if key in ("session", "defaut"):
+            if value in ("console", "bureau", "greeter"):
+                etat[key] = value
+        elif key in ("autologin", "autologin_defaut"):
+            etat[key] = value
+    # Image antérieure : pas de notion de défaut, l'effectif en fait office.
+    if etat["defaut"] == "":
+        etat["defaut"] = etat["session"]
+        etat["autologin_defaut"] = etat["autologin"]
     return etat
 
 
@@ -2492,13 +2502,16 @@ def session_mode_state() -> str:
     return session_mode_etat().get("session", "")
 
 
-def session_mode_command(mode: str) -> list[str]:
-    """Commande root du changement de session (règle polkit, groupe wheel).
+def session_default_command(mode: str) -> list[str]:
+    """Commande root qui règle la session PAR DÉFAUT (règle polkit, wheel).
 
-    Le helper se détache dans une unité systemd avant d'agir : c'est lui qui
+    `defaut` et non le mode seul : une bascule simple (celle de la manette)
+    est ponctuelle et ne touche pas au défaut — c'est tout l'objet de la
+    distinction, et le dialogue de Gablue Manager est le seul chemin qui écrit
+    le défaut. Le helper se détache dans une unité systemd avant d'agir : il
     tue la session en cours, donc la commande rend la main tout de suite.
     """
-    return ["pkexec", SESSION_MODE_HELPER, mode]
+    return ["pkexec", SESSION_MODE_HELPER, "defaut", mode]
 
 
 def services_helpers_available() -> bool:

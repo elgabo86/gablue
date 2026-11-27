@@ -1,14 +1,22 @@
 """Session graphique : celle que plasmalogin ouvre au démarrage.
 
-Trois choix, écrits par `/usr/libexec/gablue-session-mode` — le MÊME helper que
-le menu Home de l'overlay manette (`MODE JEU` / `MODE BUREAU` / `FERMER LA
-SESSION`), donc un seul mécanisme et un seul fichier :
+Trois choix, écrits par `/usr/libexec/gablue-session-mode` :
 
-- « Écran de connexion » retire l'autologin : au démarrage (et après une
-  déconnexion), le greeter demande qui se connecte ;
+- « Écran de connexion » n'autologine personne (`User=` vide, exprès) : au
+  démarrage — et après une déconnexion —, le greeter demande qui se connecte ;
 - « Bureau » autologin la session Plasma ;
 - « Mode jeu » autologin la session console (KWin nu + launcher + overlay
   manette), ce qui est exactement ce que fait `MODE JEU` depuis le canapé.
+
+DEUX NIVEAUX depuis le 27/11/2026 :
+
+- ce dialogue règle la session **par défaut**, la seule qui survit à un
+  redémarrage (`defaut …`) ;
+- `MODE JEU` / `MODE BUREAU` / `FERMER LA SESSION` de la manette ne font
+  qu'une bascule **ponctuelle** (`console|bureau|greeter`) : elle change la
+  session maintenant, et `gablue-session-reset.service` rétablit le défaut au
+  démarrage suivant. Sans ça, un « mode jeu » d'une soirée restait le défaut
+  du poste (vécu 27/11/2026).
 
 Le fichier est **commun à tous les comptes** de la machine : chacun ne peut y
 mettre que SON nom (le helper le prend dans `PKEXEC_UID`, aucun argument ne
@@ -19,8 +27,8 @@ démarre sans mot de passe » (25/11/2026).
 
 Le choix APPLIQUE TOUT DE SUITE : le helper redémarre plasmalogin, donc la
 session en cours est arrêtée. L'écran de connexion (ou la session choisie)
-revient une seconde plus tard et le réglage survit aux redémarrages suivants.
-Gablue Manager meurt avec la session, c'est annoncé avant d'appliquer.
+revient une seconde plus tard. Gablue Manager meurt avec la session, c'est
+annoncé avant d'appliquer.
 """
 
 import os
@@ -34,7 +42,7 @@ from PySide6.QtWidgets import (
 
 from ..constants import _which
 from ..local import (
-    session_mode_available, session_mode_command, session_mode_etat,
+    session_default_command, session_mode_available, session_mode_etat,
 )
 from ..tasks import LocalTaskDialog, start_task
 from ..uiutil import fit_dialog_height
@@ -61,8 +69,15 @@ CHOIX = (
 )
 
 
+def _libelle(mode: str) -> str:
+    for cle, titre, _detail in CHOIX:
+        if cle == mode:
+            return titre
+    return mode
+
+
 class SessionModeDialog(QDialog):
-    """La session du prochain démarrage (et de la prochaine déconnexion)."""
+    """La session par défaut, celle que chaque démarrage ouvrira."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,9 +94,9 @@ class SessionModeDialog(QDialog):
         root.addWidget(heading)
 
         note = QLabel(
-            "La session que Gablue ouvre au démarrage. C'est le même réglage "
-            "que MODE JEU / MODE BUREAU du menu Home de la manette : un seul "
-            "fichier, aucune divergence entre les deux chemins.",
+            "La session qui s'ouvre à chaque démarrage. Une bascule faite avec "
+            "MODE JEU / MODE BUREAU de la manette, elle, ne vaut que pour la "
+            "session en cours : le démarrage suivant revient à ce choix-ci.",
             self,
         )
         note.setObjectName("subtitle")
@@ -155,8 +170,10 @@ class SessionModeDialog(QDialog):
     # -- état ---------------------------------------------------------------
     def _reload(self) -> None:
         etat = session_mode_etat()
-        self.initial = etat.get("session", "")
-        self.autologin = etat.get("autologin", "")
+        # les radios portent le DÉFAUT : c'est lui que ce dialogue écrit
+        self.initial = etat.get("defaut", "")
+        self.autologin = etat.get("autologin_defaut", "")
+        self.effectif = etat.get("session", "")
         if self.initial in self.radios:
             self.radios[self.initial].setChecked(True)
         self._update_autologin_note()
@@ -170,10 +187,20 @@ class SessionModeDialog(QDialog):
             self.change_note.setText("")
         else:
             self.change_note.setText(
-                "Au prochain démarrage, aucune demande de mot de passe : la "
-                f"session choisie s'ouvre directement pour {moi} (ton compte "
-                "est écrit dans le fichier, il n'y a pas de choix d'un autre "
-                "compte depuis ici)."
+                "Aucune demande de mot de passe au démarrage : la session par "
+                f"défaut s'ouvre directement pour {moi} (ton compte est écrit "
+                "dans le fichier, il n'y a pas de choix d'un autre compte "
+                "depuis ici)."
+            )
+        # bascule ponctuelle en cours : elle ne sera PAS la session du prochain
+        # démarrage, le dire évite de croire que le réglage a été perdu
+        if (self.effectif and self.initial
+                and self.effectif != self.initial):
+            self.change_note.setText(
+                f"En cours : bascule ponctuelle vers « {_libelle(self.effectif)} » "
+                f"(MODE JEU / MODE BUREAU de la manette). Le prochain démarrage "
+                f"reviendra à « {_libelle(self.initial)} »."
+                + (" " + self.change_note.text() if self.change_note.text() else "")
             )
         self._update_apply()
 
@@ -218,14 +245,16 @@ class SessionModeDialog(QDialog):
         mode = self.chosen()
         if not self.disponible or not mode or mode == self.initial:
             return
-        libelle = next(t for c, t, _d in CHOIX if c == mode)
+        libelle = _libelle(mode)
         answer = QMessageBox.question(
             self, "Changer de session",
-            f"Passer à « {libelle} » ?\n\n"
+            f"Faire de « {libelle} » la session par défaut ?\n\n"
             "La session en cours est arrêtée maintenant : Gablue Manager se "
             "ferme avec elle et la nouvelle session apparaît une seconde plus "
             "tard.\n\n"
-            "Le réglage reste en place aux démarrages suivants.",
+            "C'est ce choix que chaque démarrage ouvrira. Une bascule faite "
+            "avec MODE JEU / MODE BUREAU de la manette reste ponctuelle et "
+            "revient ici au démarrage suivant.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -244,8 +273,8 @@ class SessionModeDialog(QDialog):
             return
         dialog = LocalTaskDialog(
             self, title="Session graphique",
-            subtitle="Bascule demandée.",
-            argv=[pkexec, *session_mode_command(mode)[1:]],
+            subtitle="Nouvelle session par défaut.",
+            argv=[pkexec, *session_default_command(mode)[1:]],
             progress_mode="busy",
             progress_text="Bascule de session…",
             reveal_log_on_error=True,

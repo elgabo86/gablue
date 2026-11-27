@@ -1812,12 +1812,29 @@ fn lancer_deconnexion() {
     }
 }
 
-/// Configuration d'autologin écrite par `gablue-session-mode` : sa présence
-/// signifie qu'une déconnexion relancerait la même session.
+/// Configuration d'autologin écrite par `gablue-session-mode` : un `User=`
+/// renseigné signifie qu'une déconnexion relancerait la même session.
+/// Le fichier existe PRESQUE TOUJOURS depuis le 27/11/2026 (il porte la
+/// session effective, réécrite au démarrage depuis le défaut) : la seule
+/// présence ne prouve donc plus rien — en mode « écran de connexion » il est
+/// présent avec `User=` vide, exprès (cela écrase l'autologin de
+/// `99-plasma-setup.conf`).
 const AUTOLOGIN: &str = "/etc/plasmalogin.conf.d/zz-gablue-session.conf";
 
+fn autologin_arme_dans(chemin: &std::path::Path) -> bool {
+    let Ok(texte) = std::fs::read_to_string(chemin) else {
+        return false;
+    };
+    texte.lines().any(|l| {
+        let Some(valeur) = l.trim().strip_prefix("User=") else {
+            return false;
+        };
+        !valeur.trim().is_empty()
+    })
+}
+
 fn autologin_arme() -> bool {
-    std::path::Path::new(AUTOLOGIN).exists()
+    autologin_arme_dans(std::path::Path::new(AUTOLOGIN))
 }
 
 /// Bascule de session (`console`, `bureau`, `greeter`). Le helper écrit dans
@@ -8707,6 +8724,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Le fichier d'autologin peut EXISTER sans armer quoi que ce soit :
+    /// l'écran de connexion voulu s'écrit avec `User=` vide (il écrase
+    /// l'autologin de `99-plasma-setup.conf`). Seul un compte renseigné fait
+    /// qu'une déconnexion relancerait la même session — et donc qu'il faut
+    /// passer par le helper `greeter` au lieu d'une déconnexion polie.
+    #[test]
+    fn autologin_arme_seulement_avec_un_compte() {
+        let dir = bac("autologin");
+        let vide = dir.join("vide.conf");
+        std::fs::write(&vide, "[Autologin]\nUser=\nRelogin=false\n").unwrap();
+        assert!(!autologin_arme_dans(&vide));
+        let arme = dir.join("arme.conf");
+        std::fs::write(&arme, "[Autologin]\nUser=gab\nSession=plasma.desktop\n").unwrap();
+        assert!(autologin_arme_dans(&arme));
+        assert!(!autologin_arme_dans(&dir.join("absent.conf")));
     }
 
     /// La bascule ne doit pas seulement activer : le plein écran du jeu est

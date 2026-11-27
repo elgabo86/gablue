@@ -255,10 +255,18 @@ périphérique virtuel.
 la ligne vit dans SYSTEME, entre la veille et les sorties — elle passe par
 `/usr/libexec/gablue-session-mode` (root via pkexec, règle polkit wheel), qui
 arrête la session sortante, écrit l'autologin de plasmalogin puis redémarre le
-gestionnaire de connexion. `FERMER LA SESSION` prend le même chemin **quand un
-autologin est armé** (fichier `zz-gablue-session.conf` présent) : une simple
-déconnexion relancerait la même session (plasmalogin garde `Session=` en
-mémoire, bug KDE 522181). Détail et pièges → `files/system/AGENTS.md`.
+gestionnaire de connexion. La bascule est **ponctuelle** (27/11/2026) : elle ne
+touche pas à la session **par défaut** (`/etc/gablue/session.conf`, réglée par
+Gablue Manager), et `gablue-session-reset.service` rétablit ce défaut au
+démarrage suivant — un « mode jeu » d'une soirée ne reste donc plus le
+démarrage du poste (vécu le 27/11/2026 : bascule en jeu, extinction, et le
+reboot ne rendait pas le bureau). `FERMER LA SESSION` prend le même chemin
+**quand un autologin est armé** (une déconnexion simple relancerait la même
+session, plasmalogin garde `Session=` en mémoire, bug KDE 522181) ; « armé » se
+juge sur un `User=` **renseigné** dans `zz-gablue-session.conf`, jamais sur la
+présence du fichier — il existe presque toujours, et l'écran de connexion voulu
+s'écrit avec `User=` vide (`autologin_arme_dans`). Détail et pièges →
+`files/system/AGENTS.md`.
 
 **Bascule jeu ⇄ application compagne** (`BASCULER`, accueil et L2/R2 panneau
 ouvert) :
