@@ -400,7 +400,14 @@ unité systemd + deflate plus coûteux). Aucun paquet nouveau au runtime :
   `GPAD_SHOT_TITRE` acceptée) → `gpad-shot` écrit un `iTXt Title` (UTF-8, pas
   `tEXt` Latin-1) **dans le PNG**, jamais dans les pixels, et pose un sidecar
   `<fichier>.jeu` (`nom=`, `logo=`). `recorder.sh` et `replay.sh` posent le
-  même sidecar sur leurs clips finalisés. La galerie du launcher s'en sert
+  même sidecar sur leurs clips finalisés ; pour un **enregistrement**, le
+  sidecar est posé **dès le départ** (`start`), pas seulement à l'arrêt : la
+  capture peut s'arrêter ailleurs qu'entre nos mains (résolution changée à la
+  fermeture du jeu, démon relancé, session), `stop()` ne tourne alors jamais et
+  le clip restait anonyme — donc absent de la galerie du jeu, qui filtre sur le
+  titre (vécu le 27/11/2026). À l'arrêt, le sidecar n'est réécrit que si un
+  titre est encore lisible : les PID du jeu sont morts après un Home+SELECT, et
+  le fichier posé au départ est conservé. La galerie du launcher s'en sert
   pour la légende et la copie avec logo ; les PID de `running.txt` servent de
   garde (fichier orphelin après un plantage = aucune étiquette).
 

@@ -155,6 +155,8 @@ static void config_finalise(struct config *c)
 
 struct capture {
     int card;
+    char carte[64];           /* chemin du nœud DRM, pour réouvrir après un
+                               * changement de scanout (voir capture_reouvre) */
     uint32_t plane;
     uint32_t crtc;            /* CRTC de la plane capturée (cherche le curseur) */
     int w, h;
@@ -209,6 +211,7 @@ static int capture_ouvre(struct capture *c, const char *card)
 
     c->card = open(card, O_RDWR | O_CLOEXEC);
     if (c->card < 0) { logx("open %s: %s", card, strerror(errno)); return -1; }
+    snprintf(c->carte, sizeof c->carte, "%s", card);
     drmSetClientCap(c->card, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
     /* SANS le cap atomic, libdrm ne rend PAS les propriétés atomiques de plane
      * (FB_ID, CRTC_X/CRTC_Y, CRTC_W/H) : la position du curseur devient
@@ -263,6 +266,22 @@ static int capture_ouvre(struct capture *c, const char *card)
     return 0;
 }
 
+/* Réouvre la capture après un changement de scanout (résolution ou format) :
+ * le jeu se ferme ou change de mode. Le device, le contexte VAAPI et les
+ * frames appartiennent à l'ancienne taille — on les relâche avant de repartir,
+ * `capture_ouvre` remettant la structure à zéro. Le chemin du nœud DRM est
+ * conservé dans la structure exprès (la carte ne change pas). */
+static int capture_reouvre(struct capture *c)
+{
+    char carte[64];
+    snprintf(carte, sizeof carte, "%s", c->carte);
+    if (c->frames) av_buffer_unref(&c->frames);
+    if (c->dev) av_buffer_unref(&c->dev);
+    if (c->card >= 0) close(c->card);
+    if (c->caps) { cap_free(c->caps); c->caps = NULL; }
+    return capture_ouvre(c, carte);
+}
+
 static void libere_desc(void *opaque, uint8_t *data)
 {
     AVDRMFrameDescriptor *d = (AVDRMFrameDescriptor *)data;
@@ -281,7 +300,8 @@ static uint32_t capture_fb_courant(struct capture *c)
     return fb;
 }
 
-/* 0 = ok, >0 = rien à capturer, <0 = le scanout a changé (arrêt propre) */
+/* 0 = ok, >0 = rien à capturer (on retente), <0 = le scanout a changé de
+ * taille/format : l'appelant réouvre la capture (voir thread_video). */
 static int capture_frame(struct capture *c, AVFrame **out)
 {
     drmModePlane *pl = drmModeGetPlane(c->card, c->plane);
@@ -294,7 +314,8 @@ static int capture_frame(struct capture *c, AVFrame **out)
     if (!fb) return 1;
     if (!fb->handles[0]) { drmModeFreeFB2(fb); return 1; }
     if ((int)fb->width != c->w || (int)fb->height != c->h || fb->pixel_format != c->fourcc) {
-        logx("scanout changé (%ux%u 0x%08x) : arrêt propre", fb->width, fb->height, fb->pixel_format);
+        logx("scanout changé (%ux%u 0x%08x, capture %dx%d 0x%08x)", fb->width, fb->height,
+             fb->pixel_format, c->w, c->h, c->fourcc);
         drmModeFreeFB2(fb);
         return -1;
     }
@@ -1470,7 +1491,42 @@ static void *thread_video(void *arg)
         int64_t t1 = maintenant_us();
         AVFrame *f = NULL;
         int r = capture_frame(&e->cap, &f);
-        if (r < 0) { e->arret = 1; break; }
+        if (r < 0) {
+            /* Scanout changé de taille/format : le jeu se ferme (ou change de
+             * mode) et la géométrie capturée n'est plus celle de l'écran.
+             * Avant le 27/11/2026 on posait `arret` : le démon ENTIER sortait,
+             * la socket disparaissait, le buffer de replay avec, et le clip en
+             * cours restait sans arrêt explicite — vécu en session jeu
+             * (« le record s'arrête tout seul »). On finalise donc le clip
+             * (complet, et déjà nommé par `recorder.sh start`), on arrête
+             * l'enregistrement — le retour au menu n'a pas à finir dans la
+             * vidéo — et on réouvre la capture. `replay_demande` est laissé
+             * tel quel : l'anneau repart de lui-même une fois le moteur
+             * réouvert, comme après un `reload`. */
+            pthread_mutex_lock(&e->verrou);
+            if (e->rec_actif) mux_ferme_mp4(e, 1);
+            e->rec_demande = 0;
+            if (e->replay_actif) ring_ferme(e);
+            e->redemarrer = 1;
+            pthread_mutex_unlock(&e->verrou);
+            /* La plane peut être détachée pendant la bascule de mode (fb_id
+             * à 0, aucune plane active) : on retente pendant 2 s. */
+            int ok = 0;
+            for (int essai = 0; essai < 20 && !ok; essai++) {
+                if (essai) usleep(100000);
+                ok = capture_reouvre(&e->cap) == 0;
+            }
+            if (!ok) {
+                logx("scanout changé : réouverture impossible, arrêt");
+                e->arret = 1;
+                break;
+            }
+            logx("scanout changé : clip finalisé, capture réouverte (%dx%d)", e->cap.w, e->cap.h);
+            dernier_fb = 0;
+            grille = 0;
+            nb_pts = 0;
+            continue;
+        }
         if (r > 0) { usleep(500); continue; }
 
         if (!e->graphe && graphe_ouvre(e) < 0) { e->arret = 1; break; }

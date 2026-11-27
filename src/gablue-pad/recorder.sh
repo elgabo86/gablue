@@ -62,7 +62,10 @@ assure_daemon() {
     daemon_vivant && return 0
     [[ -x "$REC" ]] || { echo "ECHEC: $REC absent (enregistreur non installé)"; return 1; }
     mkdir -p "$(dirname "$SOCK")"
-    setsid "$REC" --daemon --socket "$SOCK" > "$LOG" 2>&1 < /dev/null &
+    # Journal en AJOUT : un démon relancé après une sortie écrasait les lignes
+    # de la session précédente (le « scanout changé » qui explique un arrêt
+    # disparaissait au redémarrage suivant).
+    setsid "$REC" --daemon --socket "$SOCK" >> "$LOG" 2>&1 < /dev/null &
     for _ in $(seq 1 50); do
         daemon_vivant && return 0
         sleep 0.1
@@ -94,6 +97,30 @@ bip_depart() {
 # (`nom`, `logo`), puis celui du lanceur gwine/lgplaunch (`titre`, `nom`). Les
 # PID servent de garde : un fichier qui traîne après un plantage ne doit pas
 # étiqueter un clip avec le dernier jeu.
+# Dossier de cache du launcher : `GLAUNCHER_CACHE`, puis `cache_dir` de
+# `~/.config/glauncher/config.toml`, puis le défaut `~/.local/share/glauncher`.
+# C'est LÀ qu'il publie `running.txt` pendant une partie. Ne jamais y remettre
+# `~/.cache/glauncher` : ce chemin n'a jamais existé, donc `titre` restait vide,
+# donc aucun sidecar n'était posé et la galerie perdait le nom du jeu ET l'option
+# « copie avec le logo » (constaté le 27/11, captures du 26/11 sans `.jeu`).
+cache_launcher() {
+    local conf valeur=""
+    if [[ -n "${GLAUNCHER_CACHE:-}" ]]; then
+        printf '%s\n' "$GLAUNCHER_CACHE"
+        return 0
+    fi
+    conf="${XDG_CONFIG_HOME:-$HOME/.config}/glauncher/config.toml"
+    if [[ -f "$conf" ]]; then
+        valeur=$(sed -n 's/^[[:space:]]*cache_dir[[:space:]]*=[[:space:]]*//p' "$conf" | tail -1)
+        valeur="${valeur%\"}"; valeur="${valeur#\"}"
+        valeur="${valeur%\'}"; valeur="${valeur#\'}"
+    fi
+    case "$valeur" in
+        "") printf '%s\n' "$HOME/.local/share/glauncher" ;;
+        "~/"*) printf '%s\n' "$HOME/${valeur#"~/"}" ;;
+        *) printf '%s\n' "$valeur" ;;
+    esac
+}
 champ_fichier() { sed -n "s/^$2=//p" "$1" 2>/dev/null | tail -1; }
 pids_vivants() {
     local p q=0
@@ -102,7 +129,7 @@ pids_vivants() {
 }
 ecrire_sidecar() {
     local f=$1 titre="" logo=""
-    local launcher="${XDG_CACHE_HOME:-$HOME/.cache}/glauncher/running.txt"
+    local launcher; launcher="$(cache_launcher)/running.txt"
     if [[ -f "$launcher" ]] && pids_vivants "$(champ_fichier "$launcher" pids)"; then
         titre=$(champ_fichier "$launcher" nom)
         logo=$(champ_fichier "$launcher" logo)
@@ -134,7 +161,15 @@ start() {
     sleep 0.4
     r=$(sock '{"cmd":"status"}')
     if [[ "$(champ "$r" recording)" == true ]]; then
-        echo "enregistrement : $(champ "$r" file)"
+        local f; f=$(champ "$r" file)
+        echo "enregistrement : $f"
+        # Nom du jeu posé DÈS LE DÉPART, pas seulement à l'arrêt : si la capture
+        # s'arrête ailleurs qu'ici (résolution changée à la fermeture du jeu,
+        # démon relancé, session coupée), `stop()` ne tourne jamais et le clip
+        # restait anonyme — donc absent de la galerie du jeu, qui filtre sur le
+        # titre (vécu le 27/11/2026). Les PID du jeu sont vivants à cet instant :
+        # c'est la seule fenêtre où le titre est sûr.
+        [[ -n "$f" ]] && ecrire_sidecar "$f"
     else
         echo "ECHEC: l'enregistreur n'a pas démarré (voir $LOG)"
         return 1

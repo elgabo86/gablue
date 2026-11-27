@@ -206,8 +206,23 @@ Les débits, eux, restent ce qu'ils sont — c'est juste une information :
 - **`AR30` → `XR30`** : ne pas « corriger » ce mapping, c'est ce qui rend la
   capture possible ; le vérifier si KWin change de format (le log dit le fourcc).
 - Le format du scanout peut changer en cours de route (HDR activé, changement de
-  mode) : sur `Plane framebuffer format changed`, **arrêter proprement** plutôt
-  que d'encoder du garbage.
+  mode, **fermeture du jeu**) : `capture_frame` rend `-1`, et le thread vidéo
+  **finalise le clip en cours, arrête l'enregistrement puis réouvre la capture**
+  au nouveau format (`capture_reouvre`, 2 s d'essais espacés de 100 ms — la
+  plane est parfois détachée pendant la bascule). Rien n'est encodé au mauvais
+  format : la frame est jetée avant le muxeur. Conséquence voulue : le clip
+  s'arrête à la sortie du jeu — le retour au menu n'a pas à finir dans la vidéo
+  — mais il est **complet, finalisé et nommé**, et le démon (socket, buffer de
+  replay) survit. Avant le 27/11/2026, `-1` posait `arret` : le démon entier
+  sortait, la socket et le replay disparaissaient, et le clip restait anonyme —
+  vécu en session jeu (« le record s'arrête tout seul », clip absent de la
+  galerie).
+- **`gpad-rec.service` n'est PAS `PartOf=graphical-session.target`** (retiré le
+  27/11/2026) : un passage bureau ⇄ console arrête les cibles plasma, donc le
+  démon avec elles, et la session console ne redémarre jamais la cible — le
+  service restait mort (`inactive (dead)` constaté sur gen1 à 14:32, toutes les
+  captures suivantes servies par un démon jetable lancé par `recorder.sh`). La
+  capture est du KMS : elle ne dépend pas du compositeur.
 - **La rotation de l'anneau suit les images clés, pas l'horloge** : le muxeur
   `segment` ne coupe qu'à un IDR, et en VFR (`fps=flips`) un GOP de `fps_enc`
   IMAGES dure ce que dure l'activité de l'écran. Sur un bureau presque figé la
