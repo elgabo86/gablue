@@ -161,6 +161,7 @@ ARG IMAGE_DATE
 # gablue-pad : copies explicites, composant par composant. `gpad/` (Rust) arrive
 # par COPY --from=gpad-build, `gpad/target/` (centaines de Mo) et les bancs
 # `evgrab/` ne doivent jamais entrer dans le contexte ni dans la couche.
+# Un fichier ajoute a `DATA` dans src/gablue-pad/Makefile doit etre ajoute ici.
 COPY src/gablue-pad/Makefile /src/gablue-pad/Makefile
 COPY src/gablue-pad/trigger /src/gablue-pad/trigger
 COPY src/gablue-pad/mouse /src/gablue-pad/mouse
@@ -174,7 +175,8 @@ COPY src/gablue-pad/kwin /src/gablue-pad/kwin
 COPY src/gablue-pad/scripts /src/gablue-pad/scripts
 COPY src/gablue-pad/sounds /src/gablue-pad/sounds
 COPY src/gablue-pad/recorder.sh src/gablue-pad/replay.sh src/gablue-pad/screenshot.sh \
-     src/gablue-pad/vrr.sh src/gablue-pad/mangohud.sh src/gablue-pad/booster.sh /src/gablue-pad/
+     src/gablue-pad/vrr.sh src/gablue-pad/mangohud.sh src/gablue-pad/booster.sh \
+     src/gablue-pad/session-start.sh /src/gablue-pad/
 COPY src/ds2xbox /src/ds2xbox
 COPY src/gablue-dualsense /src/gablue-dualsense
 COPY src/gablue-isomount /src/gablue-isomount

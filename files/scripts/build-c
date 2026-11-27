@@ -69,7 +69,17 @@ if [ ! -x "/usr/libexec/gablue-pad/login-bridge.sh" ]; then
     echo "ERREUR FATALE : /usr/libexec/gablue-pad/login-bridge.sh absent" >&2
     exit 1
 fi
-if [ ! -x "/usr/libexec/gablue-pad/recorder.sh" ] || [ ! -x "/usr/libexec/gablue-pad/booster.sh" ] || [ ! -x "/usr/libexec/gablue-pad/screenshot.sh" ] || [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
+# Scripts de donnees = la liste DATA du Makefile de gablue-pad. Un fichier
+# ajoute la-bas mais oublie dans les COPY explicites du Containerfile fait
+# echouer `make install` sur un `cp: cannot stat` ; ici le manquant est nomme.
+for s in recorder.sh replay.sh screenshot.sh vrr.sh mangohud.sh booster.sh \
+         session-start.sh; do
+    if [ ! -x "/usr/libexec/gablue-pad/${s}" ]; then
+        echo "ERREUR FATALE : /usr/libexec/gablue-pad/${s} absent apres compilation de gablue-pad" >&2
+        exit 1
+    fi
+done
+if [ ! -d "/usr/libexec/gablue-pad/kwin" ]; then
     echo "ERREUR FATALE : donnees de gablue-pad absentes de /usr/libexec/gablue-pad" >&2
     exit 1
 fi
