@@ -366,8 +366,10 @@ dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
   depuis le retrait de `FERMER` et `PLEIN ECRAN`, le 25/11/2026).
 - **Ordre de l'accueil** (27/11/2026) : fenêtre active (bureau) ou
   `FERMER` + `BASCULER` (console), volumes, `CAPTURE ECRAN`,
-  `ENREGISTRER UNE VIDEO`, `ACTIVER LE REPLAY`, `SAUVER REPLAY` (si le buffer
-  tourne), et **seulement ensuite** `MODE SOURIS` / `CLAVIER VIRTUEL` — les
+  `ENREGISTRER UNE VIDEO`, `SAUVER REPLAY` (si le buffer tourne) **puis**
+  `ACTIVER LE REPLAY` — la sauvegarde d'abord : c'est elle qu'on vient
+  chercher buffer en marche, et l'interrupteur y arrête en réalité le buffer —,
+  et **seulement ensuite** `MODE SOURIS` / `CLAVIER VIRTUEL` — les
   gestes de jeu passent avant les outils ponctuels —, puis les deux
   sous-menus de réglages.
 

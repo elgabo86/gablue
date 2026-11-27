@@ -897,10 +897,14 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     // Le geste reste accessible hors panneau par Home+L2/R2.
     items.push(Entree::Action("CAPTURE ECRAN"));
     items.push(Entree::Action("ENREGISTRER UNE VIDEO"));
-    items.push(Entree::Action("ACTIVER LE REPLAY"));
+    // `SAUVER` AVANT l'interrupteur (demandé le 27/11/2026) : buffer en marche,
+    // c'est la sauvegarde qu'on vient chercher, et « ACTIVER LE REPLAY » y
+    // arrête en réalité le buffer — le laisser en tête faisait cliquer la
+    // ligne qui ment sur ce qu'elle fait.
     if dispo.replay {
         items.push(Entree::Action("SAUVER REPLAY"));
     }
+    items.push(Entree::Action("ACTIVER LE REPLAY"));
     // Souris et clavier APRÈS la capture et le replay (demandé le 27/11/2026) :
     // ce sont les gestes de jeu, ils passent avant les outils ponctuels.
     items.push(Entree::Action("MODE SOURIS"));
@@ -9280,6 +9284,17 @@ mod tests {
             ..Dispo::default()
         });
         assert!(plein.contains(&Entree::Action("SAUVER REPLAY")));
+        // sauvegarde AVANT l'interrupteur : buffer en marche, c'est elle qu'on
+        // vient chercher (l'interrupteur, lui, arrête)
+        let i_sauver = plein
+            .iter()
+            .position(|e| *e == Entree::Action("SAUVER REPLAY"))
+            .expect("ligne sauver");
+        let i_activer = plein
+            .iter()
+            .position(|e| *e == Entree::Action("ACTIVER LE REPLAY"))
+            .expect("ligne activer");
+        assert!(i_sauver < i_activer, "SAUVER doit précéder ACTIVER");
         assert!(plein.contains(&Entree::VolumeJeu));
         assert!(plein.contains(&Entree::VolumeApp));
         // les trois volumes restent groupés sous l'en-tête
