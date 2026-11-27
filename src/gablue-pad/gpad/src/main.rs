@@ -904,7 +904,13 @@ fn accueil_items(dispo: Dispo) -> Vec<Entree> {
     if dispo.replay {
         items.push(Entree::Action("SAUVER REPLAY"));
     }
-    items.push(Entree::Action("ACTIVER LE REPLAY"));
+    // Libellé qui suit l'état : buffer en marche, la ligne l'ARRÊTE — « ACTIVER »
+    // y mentait sur ce qu'elle fait (corrigé le 27/11/2026).
+    items.push(Entree::Action(if dispo.replay {
+        "ARRETER LE REPLAY"
+    } else {
+        "ACTIVER LE REPLAY"
+    }));
     // Souris et clavier APRÈS la capture et le replay (demandé le 27/11/2026) :
     // ce sont les gestes de jeu, ils passent avant les outils ponctuels.
     items.push(Entree::Action("MODE SOURIS"));
@@ -4267,7 +4273,7 @@ impl App {
                     self.refresh_vrr();
                     println!("VRR {}", if self.vrr_on { "auto" } else { "desactive" });
                 }
-                "ACTIVER LE REPLAY" => {
+                "ACTIVER LE REPLAY" | "ARRETER LE REPLAY" => {
                     // Indépendant de l'enregistrement : un seul pipeline encode,
                     // l'anneau TS et le mp4 écrivent côte à côte. On démarre ou
                     // on arrête le buffer même pendant une capture.
@@ -5503,11 +5509,11 @@ impl App {
             match *e {
                 // inatteignable : l'en-tête est sauté plus haut
                 Entree::Fenetre => {}
-                Entree::Action("ACTIVER LE REPLAY") => {
+                Entree::Action("ACTIVER LE REPLAY") | Entree::Action("ARRETER LE REPLAY") => {
                     // indépendant de l'enregistrement : l'interrupteur reste
                     // manipulable pendant une capture (c'est le seul chemin
                     // pour arrêter le buffer depuis le panneau).
-                    cv.text_fit(px0 + pad + 36, y, "ACTIVER LE REPLAY", 3, color, inner - 36 - 52);
+                    cv.text_fit(px0 + pad + 36, y, e.nom(), 3, color, inner - 36 - 52);
                     self.interrupteur(
                         &mut cv,
                         px0 + pad + inner,
@@ -7580,6 +7586,7 @@ fn joli(s: &str) -> String {
     match s {
         "STOP ENREGISTRER" => return "Arrêter la vidéo".to_string(),
         "SAUVER REPLAY" => return "Sauver le replay".to_string(),
+        "ARRETER LE REPLAY" => return "Arrêter le replay".to_string(),
         "BLOQUE (REC)" => return "Bloqué (REC)".to_string(),
         "INACTIF" => return "Inactif".to_string(),
         _ => {}
@@ -9292,9 +9299,13 @@ mod tests {
             .expect("ligne sauver");
         let i_activer = plein
             .iter()
-            .position(|e| *e == Entree::Action("ACTIVER LE REPLAY"))
-            .expect("ligne activer");
-        assert!(i_sauver < i_activer, "SAUVER doit précéder ACTIVER");
+            .position(|e| *e == Entree::Action("ARRETER LE REPLAY"))
+            .expect("ligne interrupteur (libellé d'arrêt quand le buffer tourne)");
+        assert!(i_sauver < i_activer, "SAUVER doit précéder l'interrupteur");
+        assert!(
+            !plein.contains(&Entree::Action("ACTIVER LE REPLAY")),
+            "buffer en marche : la ligne ne dit plus ACTIVER"
+        );
         assert!(plein.contains(&Entree::VolumeJeu));
         assert!(plein.contains(&Entree::VolumeApp));
         // les trois volumes restent groupés sous l'en-tête

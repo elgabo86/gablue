@@ -341,7 +341,7 @@ dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
 | Page | Ligne | Effet |
 |---|---|---|
 | ACCUEIL | `ENREGISTRER UNE VIDEO` | `recorder.sh start`/`stop` (bascule, même ligne quand ça tourne) |
-| ACCUEIL | `REPLAY` | interrupteur du buffer (`replay.sh start`/`stop`), usable pendant une capture |
+| ACCUEIL | `ACTIVER LE REPLAY` / `ARRETER LE REPLAY` | interrupteur du buffer (`replay.sh start`/`stop`), usable pendant une capture ; le libellé suit l'état |
 | ACCUEIL | `SAUVER REPLAY` | `replay.sh save` ; la ligne **n'existe pas** quand le buffer est arrêté (elle apparaît dès qu'il tourne) |
 | CAPTURE | `QUALITE`, `CODEC`, `RESOLUTION`, `FPS REC`, `CURSEUR`, `FORMAT PHOTO`, `QUALITE PHOTO` | les réglages de l'enregistreur et des captures d'écran |
 | CAPTURE | `DUREE REPLAY`, `REPLAY AUTO` | profondeur du buffer et son démarrage automatique |
@@ -367,8 +367,10 @@ dessiner. Les gestes (accueil, donc à un appui d'ouverture) et les réglages
 - **Ordre de l'accueil** (27/11/2026) : fenêtre active (bureau) ou
   `FERMER` + `BASCULER` (console), volumes, `CAPTURE ECRAN`,
   `ENREGISTRER UNE VIDEO`, `SAUVER REPLAY` (si le buffer tourne) **puis**
-  `ACTIVER LE REPLAY` — la sauvegarde d'abord : c'est elle qu'on vient
-  chercher buffer en marche, et l'interrupteur y arrête en réalité le buffer —,
+  l'interrupteur du replay — la sauvegarde d'abord : c'est elle qu'on vient
+  chercher buffer en marche —, dont le **libellé suit l'état** :
+  `ACTIVER LE REPLAY` à l'arrêt, `ARRETER LE REPLAY` quand le buffer tourne
+  (il mentait jusqu'au 27/11/2026) —,
   et **seulement ensuite** `MODE SOURIS` / `CLAVIER VIRTUEL` — les
   gestes de jeu passent avant les outils ponctuels —, puis les deux
   sous-menus de réglages.
