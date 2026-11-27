@@ -89,7 +89,9 @@ Exclusions importantes :
 
 **Upgrade initial restreint** (toutes variantes) : `dnf5 -y upgrade --refresh --repo=fedora --repo=updates` AVANT toute installation — image de base jusqu'à 48 h de retard ; dépôts officiels seuls (exclusions copr protègent mesa/kernel, NVIDIA vient des RPMs akmods) ; avant le versionlock qt6-*/plasma-* (Bazzite `c9ef733`, anti-dérive ABI Qt)
 
-Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-welcome, toolbox, xwaylandvideobridge, plasma-discover-rpm-ostree (Kinoite)
+Supprimés : firefox, firefox-langpacks, htop, plasma-welcome-fedora, plasma-welcome, toolbox, plasma-discover-rpm-ostree (Kinoite)
+
+- **`xwaylandvideobridge` conservé** (Bazzite le retire, `1c4f5f19` ; pas Gablue) : c'est l'autostart de session qui permet aux apps X11 (Discord en XWayland, Electron ancien) de partager l'écran sous Wayland. 233 Ko, sans rapport avec Plasma — le retirer casse leur partage d'écran
 
 - **Entrée `org.kde.foreground-booster.desktop`** : le paquet livre déjà `NoDisplay` (deux fois, un `true` et un `True` — bug upstream sans effet sur les menus), l'entrée n'apparaît donc pas ; **ne pas passer `desktop-file-edit --set-key=NoDisplay`** dessus : il remplace celui qu'il trouve et laisse l'autre, ce qui produit un fichier invalide (`multiple keys named "NoDisplay"`, constaté 27/11/2026). Bazzite ajoute `Hidden` (`c2061341`, `3fea6b01`) pour les lanceurs qui ignorent `NoDisplay` ; non repris ici faute de bénéfice visible
 

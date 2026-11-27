@@ -465,8 +465,12 @@ dnf5 -y install tesseract-langpack-fra
 
 # Suppression des paquets non désirés
 # toolbox : distrobox fait déjà le travail (Bazzite 304bb1e0, Konsole 26.08 ne
-# en dépend plus) ; xwaylandvideobridge : inutile, le partage d'écran passe par
-# le portail PipeWire (Bazzite 1c4f5f19).
+# en dépend plus).
+# xwaylandvideobridge N'EST PAS retiré (contrairement à Bazzite 1c4f5f19) :
+# c'est lui qui permet aux applications X11 — Discord en XWayland, Electron
+# ancien — de partager l'écran sous Wayland. Autostart de session
+# (/etc/xdg/autostart/org.kde.xwaylandvideobridge.desktop), 233 Ko : aucun
+# rapport avec Plasma, mais le retirer casse le partage d'écran de ces apps.
 # plasma-setup est CONSERVÉ : c'est le wizard de premier démarrage (clavier,
 # langue, fuseau). Le compte est créé par Anaconda. Ne pas le retirer.
 dnf5 -y remove \
@@ -478,8 +482,7 @@ dnf5 -y remove \
     fedora-workstation-repositories \
     plasma-welcome-fedora \
     plasma-welcome \
-    toolbox \
-    xwaylandvideobridge
+    toolbox
 
 # Ajout de Flathub manuellement (comme ublue-os/main)
 mkdir -p /etc/flatpak/remotes.d/
