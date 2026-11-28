@@ -101,6 +101,8 @@ pub enum Scope {
     Dossiers,
     /// Uniquement les racines trouvées sur un disque monté.
     Disques,
+    /// Uniquement le partage `gablue-share` monté (`src/share.rs`).
+    Partage,
 }
 
 impl Scope {
@@ -109,6 +111,7 @@ impl Scope {
             Scope::Tous => "tous",
             Scope::Dossiers => "dossiers",
             Scope::Disques => "disques",
+            Scope::Partage => "partage",
         }
     }
 
@@ -117,6 +120,7 @@ impl Scope {
             "tous" => Some(Scope::Tous),
             "dossiers" => Some(Scope::Dossiers),
             "disques" => Some(Scope::Disques),
+            "partage" => Some(Scope::Partage),
             _ => None,
         }
     }
@@ -127,6 +131,7 @@ impl Scope {
             Scope::Tous => "Tous les jeux",
             Scope::Dossiers => "Dossiers choisis",
             Scope::Disques => "Disques scannés",
+            Scope::Partage => "Partage réseau",
         }
     }
 
@@ -136,6 +141,7 @@ impl Scope {
             Scope::Tous => "",
             Scope::Dossiers => "dossiers",
             Scope::Disques => "disques",
+            Scope::Partage => "partage",
         }
     }
 
@@ -145,7 +151,12 @@ impl Scope {
         match self {
             Scope::Tous => Scope::Dossiers,
             Scope::Dossiers => Scope::Disques,
+            // `Partage` n'est PAS dans le cycle : un partage réseau s'ouvre
+            // par le menu (écran à part), pas en tournant la portée de la
+            // bibliothèque — sinon les jeux d'un poste se glisseraient dans
+            // le parcours habituel.
             Scope::Disques => Scope::Tous,
+            Scope::Partage => Scope::Tous,
         }
     }
 }

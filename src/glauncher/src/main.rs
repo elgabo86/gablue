@@ -26,6 +26,7 @@ mod copy;
 mod recent;
 mod pose;
 mod recorder;
+mod share;
 mod sons;
 mod sparkles;
 mod spinner;
@@ -301,6 +302,21 @@ fn main() -> iced::Result {
     }
     if options.pads {
         gamepad::describe();
+        return Ok(());
+    }
+    if options.shares {
+        let partages = share::decouvrir();
+        if partages.is_empty() {
+            println!("aucun partage joignable");
+        }
+        for partage in partages {
+            println!(
+                "{}  ({})  {}",
+                partage.libelle(),
+                partage.hote,
+                partage.chemin.display()
+            );
+        }
         return Ok(());
     }
 

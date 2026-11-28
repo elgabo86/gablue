@@ -45,6 +45,7 @@ use crate::play;
 use crate::playtime;
 use crate::pose::Pose;
 use crate::recorder;
+use crate::share;
 use crate::sparkles;
 use crate::spinner;
 use crate::state::{self, Scope, SortBy};
@@ -731,6 +732,19 @@ pub enum Message {
     ViewMenu,
     ViewMenuNav(i32),
     ViewMenuChoose(usize),
+    /// Menu « partages réseau » : ouvrir, naviguer, choisir un partage.
+    SharesMenu,
+    SharesNav(i32),
+    SharesChoose(usize),
+    /// La découverte a rendu la liste des partages joignables (fil de fond).
+    SharesLoaded(Vec<share::Partage>),
+    /// Sortir de l'écran d'un partage : retour à la bibliothèque, démontage.
+    SharesLeave,
+    /// Le montage d'un partage a réussi (point de montage) ou échoué.
+    ShareMounted {
+        partage: share::Partage,
+        point: Result<PathBuf, String>,
+    },
     /// Menu « tri » (carré / X, `T`) : A→Z, récents, favoris.
     SortMenu,
     SortMenuNav(i32),
@@ -1524,6 +1538,17 @@ pub struct App {
     copies: Option<Copies>,
     /// Portée de la bibliothèque : tous, dossiers choisis, disques scannés.
     scope: Scope,
+    /// Menu des partages réseau : ligne choisie (`None` = fermé).
+    shares_menu: Option<usize>,
+    /// Partages joignables, remplis en fond par `share::decouvrir`.
+    shares: Vec<share::Partage>,
+    /// La découverte tourne : le menu affiche « recherche… ».
+    shares_loading: bool,
+    /// Partages montés et celui de la portée courante (`None` = bibliothèque
+    /// entière) : c'est le point de montage qui filtre la grille.
+    share_point: Option<PathBuf>,
+    /// Libellé du partage courant (« gen1 · lgp »), pour la pastille de tri.
+    share_nom: Option<String>,
     /// État du lien réseau, affiché en icône (coin haut gauche).
     reseau: Reseau,
     /// Slugs dont la cover a échoué (réseau) : on ne réessaie pas en boucle.
@@ -1814,6 +1839,11 @@ impl App {
             copy_replace: None,
             copies: None,
             scope: saved.scope,
+            shares_menu: None,
+            shares: Vec::new(),
+            shares_loading: false,
+            share_point: None,
+            share_nom: None,
             reseau: status::reseau(),
             cover_failed: HashSet::new(),
             visible_covers: Vec::new(),
@@ -1954,6 +1984,10 @@ impl App {
                 tasks.push(Task::done(Message::SettingsNav(3)));
             }
             _ => {}
+        }
+        // crochet de banc : menu des partages réseau (mDNS + SSH réels)
+        if std::env::var_os("GLAUNCHER_SHARE_DEMO").is_some() {
+            tasks.push(Task::done(Message::SharesMenu));
         }
         // crochet de banc : ouvre la galerie au démarrage, pour la
         // photographier sans manette (dossiers lus dans recorder.conf)
@@ -2127,6 +2161,7 @@ impl App {
             || self.page.is_some()
             || !matches!(self.config.view, ViewMode::Grid)
             || self.view_menu.is_some()
+            || self.shares_menu.is_some()
             || self.sort_menu.is_some()
             || self.year_menu.is_some()
             || self.art_menu.is_some()
@@ -2589,6 +2624,7 @@ impl App {
         };
         bit(self.settings.is_some());
         bit(self.view_menu.is_some());
+        bit(self.shares_menu.is_some());
         bit(self.sort_menu.is_some());
         bit(self.year_menu.is_some());
         bit(self.art_menu.is_some());
@@ -4309,8 +4345,9 @@ impl App {
             }
             Message::ViewMenuNav(delta) => {
                 if let Some(choice) = self.view_menu.as_mut() {
-                    // les vues, puis « Réglages… » et « Galerie… »
-                    let last = VIEWS.len() + 1;
+                    // les vues, puis « Réglages… », « Galerie… » et
+                    // « Partages réseau… »
+                    let last = VIEWS.len() + 2;
                     *choice = (*choice as i32 + delta).clamp(0, last as i32) as usize;
                 }
                 Task::none()
@@ -4325,10 +4362,108 @@ impl App {
                 if index == VIEWS.len() + 1 {
                     return Task::done(Message::GalleryOpen(None));
                 }
+                // puis les partages réseau (jeux d'un autre poste)
+                if index == VIEWS.len() + 2 {
+                    return Task::done(Message::SharesMenu);
+                }
                 let Some(&view) = VIEWS.get(index) else {
                     return Task::none();
                 };
                 self.begin_swap(Swap::View(view));
+                Task::none()
+            }
+            Message::SharesMenu => {
+                if self.running.is_some() {
+                    return Task::none();
+                }
+                self.shares_menu = Some(0);
+                // mDNS + SSH : la découverte prend une seconde ou deux, elle
+                // vit donc sur un fil de fond (l'interface reste fluide)
+                if self.shares.is_empty() && !self.shares_loading {
+                    self.shares_loading = true;
+                    std::thread::spawn(|| post(Message::SharesLoaded(share::decouvrir())));
+                }
+                Task::none()
+            }
+            Message::SharesNav(delta) => {
+                if let Some(choix) = self.shares_menu.as_mut() {
+                    // ligne 0 = « toute la bibliothèque », puis les partages
+                    let last = self.shares.len() as i32;
+                    *choix = (*choix as i32 + delta).clamp(0, last) as usize;
+                }
+                Task::none()
+            }
+            Message::SharesLoaded(liste) => {
+                self.shares = liste;
+                self.shares_loading = false;
+                if let Some(choix) = self.shares_menu.as_mut() {
+                    *choix = (*choix).min(self.shares.len());
+                }
+                Task::none()
+            }
+            Message::SharesChoose(index) => {
+                self.shares_menu = None;
+                // ligne 0 : toute la bibliothèque, et le partage est démonté
+                if index == 0 {
+                    if let Some(point) = self.share_point.take() {
+                        self.config.share_dirs.retain(|dir| dir != &point);
+                        share::demonter(&point);
+                        self.refresh(self.config.scan_dirs());
+                    }
+                    self.share_nom = None;
+                    self.scope = Scope::Tous;
+                    self.remember();
+                    self.apply_filter();
+                    return Task::none();
+                }
+                let Some(partage) = self.shares.get(index - 1).cloned() else {
+                    return Task::none();
+                };
+                self.status = Some((format!("Montage de {}…", partage.libelle()), false));
+                // sshfs bloque une seconde : fil de fond, comme la découverte
+                std::thread::spawn(move || {
+                    let point = share::monter(&partage);
+                    post(Message::ShareMounted { partage, point });
+                });
+                Task::none()
+            }
+            Message::SharesLeave => {
+                if let Some(point) = self.share_point.take() {
+                    self.config.share_dirs.retain(|dir| dir != &point);
+                    share::demonter(&point);
+                    self.refresh(self.config.scan_dirs());
+                    self.status = Some(("partage démonté".to_string(), false));
+                }
+                self.share_nom = None;
+                self.scope = Scope::Tous;
+                self.remember();
+                self.apply_filter();
+                Task::none()
+            }
+            Message::ShareMounted { partage, point } => {
+                match point {
+                    Ok(point) => {
+                        // un seul partage à la fois : le précédent est démonté
+                        if let Some(ancien) = self.share_point.take() {
+                            self.config.share_dirs.retain(|dir| dir != &ancien);
+                            if ancien != point {
+                                share::demonter(&ancien);
+                            }
+                        }
+                        if !self.config.share_dirs.contains(&point) {
+                            self.config.share_dirs.push(point.clone());
+                        }
+                        self.share_point = Some(point);
+                        self.share_nom = Some(partage.libelle());
+                        self.scope = Scope::Partage;
+                        self.remember();
+                        self.refresh(self.config.scan_dirs());
+                        self.status = Some((format!("{} · monté", partage.libelle()), false));
+                    }
+                    Err(erreur) => {
+                        self.status = Some((format!("{} : {erreur}", partage.libelle()), true));
+                    }
+                }
                 Task::none()
             }
             Message::SortMenu => {
@@ -4370,7 +4505,18 @@ impl App {
                     // suite (sans annoncer la ligne vide, la pastille de tri
                     // dit déjà la portée)
                     SortMenuEntry::Scope => {
+                        // depuis un partage, la portée repasse par la
+                        // bibliothèque : on quitte l'écran à part entière
+                        if self.scope == Scope::Partage {
+                            self.sort_menu = None;
+                            return Task::done(Message::SharesLeave);
+                        }
                         self.scope = self.scope.next();
+                        // aucun partage monté : cette portée n'aurait rien à
+                        // montrer, on repasse directement à toute la bibliothèque
+                        if self.scope == Scope::Partage && self.share_point.is_none() {
+                            self.scope = Scope::Tous;
+                        }
                         self.remember();
                         self.apply_filter();
                         self.selected = self.selected.min(self.games.len().saturating_sub(1));
@@ -4402,6 +4548,10 @@ impl App {
                 Task::none()
             }
             Message::Back => {
+                // le partage est un écran : le retour y ramène à la bibliothèque
+                if self.share_point.is_some() {
+                    return Task::done(Message::SharesLeave);
+                }
                 // même priorité qu'Échap : le plus profond d'abord
                 if self.date.is_some() {
                     self.date = None;
@@ -4425,6 +4575,10 @@ impl App {
                 }
                 if self.view_menu.is_some() {
                     self.view_menu = None;
+                    return Task::none();
+                }
+                if self.shares_menu.is_some() {
+                    self.shares_menu = None;
                     return Task::none();
                 }
                 if self.year_menu.is_some() {
@@ -4836,7 +4990,13 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Quit => iced::exit(),            Message::Nothing => Task::none(),
+            Message::Quit => {
+                // aucun montage orphelin en quittant
+                if let Some(point) = self.share_point.take() {
+                    share::demonter(&point);
+                }
+                iced::exit()
+            }            Message::Nothing => Task::none(),
         }
     }
 
@@ -6303,17 +6463,26 @@ impl App {
         let scope = self.scope;
         let choisis = self.config.game_dirs();
         let disques = self.config.extra_dirs.clone();
+        // les jeux d'un partage réseau ne font PAS partie de la bibliothèque :
+        // ils n'apparaissent que lorsque ce partage est la portée choisie
+        // (demandé le 28/11/2026 — sinon un poste branché mélange ses 600
+        // paquets à ceux du poste)
+        let partages = self.config.share_dirs.clone();
         self.games = self
             .all_games
             .iter()
             .filter(|game| requete.is_empty() || normalise(&game.name).contains(&requete))
             .filter(|game| match scope {
-                Scope::Tous => true,
+                Scope::Tous => !partages.iter().any(|dir| game.path.starts_with(dir)),
                 Scope::Dossiers => choisis.iter().any(|dir| game.path.starts_with(dir)),
                 Scope::Disques => {
                     disques.iter().any(|dir| game.path.starts_with(dir))
                         && !choisis.iter().any(|dir| game.path.starts_with(dir))
                 }
+                Scope::Partage => match self.share_point.as_ref() {
+                    Some(point) => game.path.starts_with(point),
+                    None => false,
+                },
             })
             .filter(|game| !favorites || self.favorites.contains(&game.slug))
             // filtre d'année : seuls les jeux dont la date est connue peuvent
@@ -6600,6 +6769,22 @@ impl App {
             };
         }
 
+        // menu « partages réseau » : haut/bas puis Entrée
+        if let Some(choice) = self.shares_menu {
+            return match &key {
+                keyboard::Key::Named(Named::Escape) => {
+                    self.shares_menu = None;
+                    Task::none()
+                }
+                keyboard::Key::Named(Named::Enter) | keyboard::Key::Named(Named::Space) => {
+                    Task::done(Message::SharesChoose(choice))
+                }
+                keyboard::Key::Named(Named::ArrowDown) => Task::done(Message::SharesNav(1)),
+                keyboard::Key::Named(Named::ArrowUp) => Task::done(Message::SharesNav(-1)),
+                _ => Task::none(),
+            };
+        }
+
         // menu « tri » (T) : haut/bas puis Entrée, et T le referme
         if let Some(choice) = self.sort_menu {
             return match &key {
@@ -6725,6 +6910,10 @@ impl App {
                     return Task::done(Message::OpenPage(self.selected));
                 }
                 Named::Escape => {
+                    // sur l'écran d'un partage, Échap y revient d'abord
+                    if self.share_point.is_some() {
+                        return Task::done(Message::SharesLeave);
+                    }
                     return if self.mode.is_console() {
                         Task::none()
                     } else {
@@ -6956,6 +7145,19 @@ impl App {
                         _ => Task::none(),
                     };
                 }
+                // menu « partages réseau »
+                if let Some(choice) = self.shares_menu {
+                    return match button {
+                        PadButton::Confirm => Task::done(Message::SharesChoose(choice)),
+                        PadButton::View | PadButton::North | PadButton::Back => {
+                            self.shares_menu = None;
+                            Task::none()
+                        }
+                        PadButton::Up => Task::done(Message::SharesNav(-1)),
+                        PadButton::Down => Task::done(Message::SharesNav(1)),
+                        _ => Task::none(),
+                    };
+                }
                 // menu « tri » (carré / X)
                 if let Some(choice) = self.sort_menu {
                     return match button {
@@ -7038,6 +7240,11 @@ impl App {
                     // la session, la sortie passe par le menu système de gpad
                     // (Home maintenu), qui propose aussi Éteindre/Redémarrer.
                     PadButton::Back => {
+                        // même priorité qu'Échap : on quitte le partage, pas
+                        // le launcher
+                        if self.share_point.is_some() {
+                            return Task::done(Message::SharesLeave);
+                        }
                         if self.mode.is_console() {
                             Task::none()
                         } else if self.back_press.is_some_and(|at| at.elapsed() < QUIT_WINDOW) {
@@ -7163,6 +7370,9 @@ impl App {
         }
         if self.view_menu.is_some() {
             menus = stack![menus, self.view_menu_view()].into();
+        }
+        if self.shares_menu.is_some() {
+            menus = stack![menus, self.shares_menu_view()].into();
         }
         if self.sort_menu.is_some() {
             menus = stack![menus, self.sort_menu_view()].into();
@@ -7522,7 +7732,24 @@ impl App {
     /// Liste des jeux (grille, liste ou mosaïque) avec en-tête et pied.
     fn launcher_view(&self) -> Element<'_, Message> {
         let content: Element<'_, Message> = if self.games.is_empty() {
-            if self.sort == SortBy::Favorites {
+            // écran d'un partage : parler des dossiers de jeux du poste serait
+            // un mensonge, c'est le partage qui est vide
+            if let Some(nom) = self.share_nom.as_deref() {
+                container(
+                    column![
+                        text("Aucun jeu dans ce partage").size(22).color(TEXT),
+                        text(nom.to_string()).size(15).color(ACCENT),
+                        text("Le partage ne contient aucun paquet .lgp ou .wgp.")
+                            .size(14)
+                            .color(MUTED),
+                    ]
+                    .spacing(8),
+                )
+                .width(Fill)
+                .height(Fill)
+                .padding(24)
+                .into()
+            } else if self.sort == SortBy::Favorites {
                 self.favorites_empty()
             } else if self.sort == SortBy::Recent && self.recent.is_empty() {
                 self.recent_empty()
@@ -7565,6 +7792,37 @@ impl App {
         // champ de recherche : visible tant qu'il est ouvert ou qu'un filtre
         // est actif, pour qu'on ne cherche pas pourquoi la liste est courte
         let mut pile = Column::new().spacing(0);
+        // Écran à part : les jeux d'un partage réseau ne sont pas la
+        // bibliothèque. Le bandeau nomme le partage et son compte ; le retour
+        // (Échap, rond) en sort et démonte. La portée `Tous` écarte déjà ces
+        // paquets, donc aucun mélange n'est possible.
+        if let Some(nom) = self.share_nom.clone() {
+            let compte = self.games.len();
+            let bandeau = row![
+                text("Partages réseau").size(14).color(MUTED),
+                text("·").size(14).color(MUTED),
+                text(nom).size(20).color(ACCENT).width(Length::Fill),
+                text(if compte == 1 {
+                    "1 jeu".to_string()
+                } else {
+                    format!("{compte} jeux")
+                })
+                .size(14)
+                .color(MUTED),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center);
+            pile = pile.push(
+                container(bandeau)
+                    .width(Fill)
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 12.0,
+                        bottom: 14.0,
+                        left: 2.0,
+                    }),
+            );
+        }
         if self.search_open || !self.search.is_empty() {
             let vide = self.search.is_empty();
             let ligne = text(if vide {
@@ -9388,6 +9646,102 @@ impl App {
         stack![fond, image, container(pied).width(Fill).height(Fill).align_y(Alignment::End)].into()
     }
 
+    /// Menu des partages réseau : « toute la bibliothèque » puis un partage
+    /// par ligne (`gen1 · lgp`). La liste vient de `share::decouvrir` (mDNS +
+    /// SSH), lancée en fond à l'ouverture : le menu peut donc afficher
+    /// « recherche… » un instant.
+    fn shares_menu_view(&self) -> Element<'_, Message> {
+        let Some(choice) = self.shares_menu else {
+            return Row::new().into();
+        };
+        let mut rows = Column::new().spacing(6);
+
+        // ligne 0 : revenir à toute la bibliothèque (et démonter)
+        let selectionnee = choice == 0;
+        let ligne = container(
+            row![
+                text("Toute la bibliothèque")
+                    .size(18)
+                    .width(Fill)
+                    .color(if selectionnee { Color::BLACK } else { TEXT }),
+                text(if self.share_point.is_none() { "✓" } else { "" })
+                    .size(14)
+                    .color(if selectionnee { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(selectionnee));
+        rows = rows.push(mouse_area(ligne).on_press(Message::SharesChoose(0)));
+
+        if self.shares_loading && self.shares.is_empty() {
+            rows = rows.push(container(text("Recherche des partages…").size(15).color(MUTED))
+                .padding([9.0, 14.0]));
+        } else if self.shares.is_empty() {
+            rows = rows.push(
+                container(
+                    text("Aucun partage joignable (SSH indisponible ou rien de partagé)")
+                        .size(15)
+                        .color(MUTED),
+                )
+                .padding([9.0, 14.0]),
+            );
+        }
+
+        for (index, partage) in self.shares.iter().enumerate() {
+            let selectionnee = choice == index + 1;
+            let actif = self.share_nom.as_deref() == Some(partage.libelle().as_str());
+            let ligne = container(
+                row![
+                    text(partage.libelle())
+                        .size(18)
+                        .width(Fill)
+                        .color(if selectionnee { Color::BLACK } else { TEXT }),
+                    text(if actif { "●" } else { "" })
+                        .size(14)
+                        .color(if selectionnee { Color::BLACK } else { MUTED }),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([9.0, 14.0])
+            .style(move |_| action_style(selectionnee));
+            rows = rows.push(
+                mouse_area(ligne).on_press(Message::SharesChoose(index + 1)),
+            );
+        }
+
+        let panel = container(
+            column![
+                text("Partages réseau").size(18).color(TEXT),
+                text("Les jeux du partage se lancent et se copient comme ceux d'un disque externe.")
+                    .size(13)
+                    .color(MUTED),
+                rows,
+            ]
+            .spacing(12),
+        )
+        .padding(18)
+        .width(Length::Fixed(430.0))
+        .style(|_| picker_panel_style());
+
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(24)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color {
+                    a: 0.55,
+                    ..Color::BLACK
+                })),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     fn view_menu_view(&self) -> Element<'_, Message> {
         let Some(choice) = self.view_menu else {
             return Row::new().into();
@@ -9458,6 +9812,28 @@ impl App {
         .style(move |_| action_style(galerie_selected));
         rows = rows.push(
             mouse_area(ligne).on_press(Message::ViewMenuChoose(VIEWS.len() + 1)),
+        );
+
+        // puis les partages réseau : les jeux d'un autre poste, montés à la
+        // volée par sshfs. La pastille dit qu'un partage est actif.
+        let partages_selected = choice == VIEWS.len() + 2;
+        let ligne = container(
+            row![
+                text("Partages réseau…")
+                    .size(18)
+                    .width(Fill)
+                    .color(if partages_selected { Color::BLACK } else { TEXT }),
+                text(if self.share_point.is_some() { "●" } else { "▸" })
+                    .size(14)
+                    .color(if partages_selected { Color::BLACK } else { MUTED }),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([9.0, 14.0])
+        .style(move |_| action_style(partages_selected));
+        rows = rows.push(
+            mouse_area(ligne).on_press(Message::ViewMenuChoose(VIEWS.len() + 2)),
         );
 
         let panel =
@@ -10763,10 +11139,17 @@ impl App {
         // n'a pas de sortie propre (c'est le menu système de gpad qui la
         // porte). Afficher « Quitter » y serait un mensonge.
         let console = self.mode.is_console();
+        // sur l'écran d'un partage, « retour » ramène à la bibliothèque : il
+        // ne quitte pas le launcher, l'aide doit le dire
+        let retour = if self.share_point.is_some() {
+            "Bibliothèque"
+        } else {
+            "Quitter (2×)"
+        };
         let hints: Element<'_, Message> = match (self.pad_hints(), console) {
             (true, false) => row![
                 hint(self.glyphs.confirm.clone(), "Ouvrir"),
-                hint(self.glyphs.back.clone(), "Quitter (2×)"),
+                hint(self.glyphs.back.clone(), retour),
                 hint(self.glyphs.view.clone(), self.next_view_label()),
                 hint(self.glyphs.sort.clone(), "Tri"),
                 hint(self.glyphs.zoom_out.clone(), "Taille −"),
@@ -10795,7 +11178,7 @@ impl App {
                 key_hint(&["−", "+"], "taille"),
                 key_hint(&["T"], "tri"),
                 key_hint(&["F"], "plein écran"),
-                key_hint(&["Échap"], "quitter"),
+                key_hint(&["Échap"], if self.share_point.is_some() { "bibliothèque" } else { "quitter" }),
             ]
             .spacing(16)
             .align_y(Alignment::Center)

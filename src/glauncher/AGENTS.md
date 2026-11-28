@@ -89,6 +89,10 @@ leurs icônes, pour l'interface.
   `/proc/self/mountinfo`, découverte **bornée** des dossiers porteurs de
   paquets, mémoire des racines trouvées (`<cache>/disks.txt`) et guetteur des
   branchements
+- `src/share.rs` — partages `gablue-share` d'autres postes : découverte
+  (mDNS `_gablueshare._tcp` + sonde `tailscale status`), catalogue lu par SSH
+  dans `~/.config/gablue/share.json` du poste, montage `sshfs` en lecture seule
+  sous `$XDG_RUNTIME_DIR/glauncher/partages/<poste>-<id>`, démontage
 - `src/watch.rs` — surveillance inotify : rafale → chemins touchés ; sa
   `Veille` accepte une **nouvelle liste de dossiers à chaud**
 - `src/folders.rs` — choix des dossiers de jeux : listage trié (dossiers
@@ -418,6 +422,57 @@ même launcher).
 - **Banc** : `GLAUNCHER_GALLERY_DEMO=1` ouvre la grille au démarrage,
   `=apercu` ouvre aussi la première capture, `=video` la première vidéo
   (`GLAUNCHER_RECORDER_CONF` redirige le fichier des dossiers).
+
+## Partages réseau (`src/share.rs`)
+
+Menu des vues ▸ **« Partages réseau… »** : la grille ne montre alors que les
+jeux du partage choisi, et ils se lancent et se copient **exactement comme ceux
+d'un disque externe** (le montage est un vrai chemin, `copy.rs` et `launch.rs`
+ne changent pas). Ligne 0 « Toute la bibliothèque » referme la portée et
+démonte. **Les jeux d'un partage n'appartiennent pas à « Toute la
+bibliothèque »** : la portée `Tous` les écarte (`apply_filter`), ils ne
+sortent que par `Scope::Partage` — sinon un poste branché mélangerait ses
+centaines de paquets à ceux du poste, et la recherche les trouverait sans
+qu'on ait rien demandé. Portée retenue : `Scope::Partage` (`state.txt` `portee=partage`), le
+cycle de portée du menu Tri saute la valeur quand aucun partage n'est monté.
+
+- **Transport : `sshfs`, pas le HTTP du partage.** Mesuré le 28/11/2026 sur le
+  même pack : 94 Mo/s dans les deux cas, mais HTTP paie un aller-retour par bloc
+  (15,7 ms/Mio) contre 8,1 ms en SSH multiplexé. Et `sshfs` **ne ment pas** : le
+  montage se fait **sans `ServerAliveInterval`** (c'est lui qui tuait la
+  connexion après 4 s de gel, puis rendait `0 octet` = fin de fichier
+  prématurée, fatale à un jeu). Vérifié : 12 s de coupure → lecture bloquée
+  14 s puis données complètes, SHA-256 identique. `kernel_cache` garde en
+  mémoire récupérable ce qui a été lu — aucune écriture disque.
+- **Le partage donne le catalogue, SSH le système de fichiers.**
+  `/api/info` ne publie pas le chemin d'un partage (l'identifiant `s…` en est
+  dérivé, exprès) : `share::catalogue` lit `~/.config/gablue/share.json` du
+  poste par `ssh -o BatchMode=yes`, d'où le chemin réel. Conséquence assumée :
+  **lancer** un jeu exige un accès SSH au poste (les Gablue du parc) ; sans SSH
+  le menu affiche « aucun partage joignable ».
+- **Découverte bornée** : `timeout 3 avahi-browse -rp _gablueshare._tcp`
+  (`-r` obligatoire, sinon aucune ligne `=` donc aucune adresse) + `tailscale
+  status` (postes `100.x` non `offline`), doublons écartés par nom, le LAN
+  gagnant, 8 postes au plus, et **jamais soi-même**.
+- **Un seul partage monté à la fois** : choisir un autre partage démonte le
+  précédent, `Quit` démonte aussi (jamais de montage orphelin). Le point de
+  montage vit sous `$XDG_RUNTIME_DIR` (disparaît à la déconnexion).
+- **Écran à part, pas une portée de la bibliothèque** (demandé le 28/11/2026,
+  « ça doit être à part ») : un bandeau au-dessus de la grille nomme le partage
+  (« Partages réseau · gen1 · lgp · 18 jeux ») ; `Partage` est **hors du cycle**
+  de portée du menu Tri (on n'y arrive que par le menu des partages) ; en
+  sortir passe par `SharesLeave` — Échap, rond/retour, clic droit ou la ligne
+  « portée » — ce qui démonte et rend la bibliothèque. L'aide de pied de page
+  dit « Bibliothèque », jamais « Quitter (2×) », et une grille vide affiche
+  « Aucun jeu dans ce partage » plutôt que les dossiers de jeux du poste.
+- `config.share_dirs` (rempli à chaud, `#[serde(skip)]`) entre dans
+  `scan_dirs()` mais **pas** dans la clé de l'index (`index_path` ne regarde que
+  `game_dirs`) : un montage qui change à chaque session ne doit pas créer une
+  base neuve.
+- **Banc / diagnostic** : `glauncher --shares` liste les partages joignables
+  (mDNS + SSH réels) et quitte ; `GLAUNCHER_SHARE_DEMO=1` ouvre le menu au
+  démarrage. `cargo test -- --ignored` lance le seul test qui monte vraiment un
+  partage du réseau.
 
 ## Contrats
 

@@ -58,6 +58,12 @@ pub struct Config {
     /// neuve et le scan repartirait de zéro).
     #[serde(skip)]
     pub extra_dirs: Vec<PathBuf>,
+    /// Points de montage des partages `gablue-share` choisis dans le menu
+    /// (`src/share.rs`). Remplis à chaud, **jamais** écrits dans `config.toml`
+    /// ni pris dans la clé de l'index : un point de montage change à chaque
+    /// session (`$XDG_RUNTIME_DIR`).
+    #[serde(skip)]
+    pub share_dirs: Vec<PathBuf>,
     /// Dossiers ignorés par leur nom exact (données de jeu, préfixes Wine…).
     pub scan_skip: Vec<String>,
     /// Dossiers où chercher l'icône d'un jeu (fichier `<slug>.png`).
@@ -100,6 +106,7 @@ impl Default for Config {
             columns: 7,
             scan_disks: false,
             extra_dirs: Vec::new(),
+            share_dirs: Vec::new(),
             cell_size: 220,
             view: ViewMode::default(),
             // Aucun dossier par défaut : le launcher ne scanne QUE ce que
@@ -201,6 +208,9 @@ impl Config {
         if self.scan_disks {
             dirs.extend(self.extra_dirs.iter().cloned());
         }
+        // les partages réseau montés comptent toujours : ils ne dépendent pas
+        // de l'option « disques externes »
+        dirs.extend(self.share_dirs.iter().cloned());
         dirs
     }
 
@@ -453,6 +463,8 @@ pub struct Options {
     pub picker: bool,
     /// Liste les périphériques d'entrée et leurs axes, puis sort.
     pub pads: bool,
+    /// Liste les partages `gablue-share` joignables (mDNS + SSH), puis sort.
+    pub shares: bool,
     pub help: bool,
 }
 
@@ -482,6 +494,7 @@ Usage : glauncher [options]
                        600x900, logos 1000 px, icônes 256 px), puis quitte
   --picker             ouvre le menu de choix d'image au démarrage
   --pads               liste les manettes et leurs axes (diagnostic), puis quitte
+  --shares             liste les partages gablue-share joignables, puis quitte
   --help               cette aide
 
 Variables d'environnement :
@@ -567,6 +580,7 @@ impl Options {
                 }
                 "--picker" => opts.picker = true,
                 "--pads" => opts.pads = true,
+                "--shares" => opts.shares = true,
                 "--help" | "-h" => opts.help = true,
                 other => return Err(format!("option inconnue : {other}")),
             }
