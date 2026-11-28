@@ -2954,10 +2954,10 @@ class InstallKeyOrderTest(unittest.TestCase):
     host = {"user": "gab", "host": "192.168.1.113", "port": 22,
             "addresses": [], "active": ""}
 
-    def _install(self, info, password="", trust=True):
-        calls = {"pin": 0, "copy": 0, "probe": 0}
+    def _install(self, info, password="", trust=True, state=None):
+        calls = {"pin": 0, "copy": 0, "probe": 0, "trust": 0}
         saved = (ssh.key_status, ssh.ensure_local_key, ssh.trust_host_key,
-                 ssh.probe_key, ssh._run_with_password)
+                 ssh.probe_key, ssh._run_with_password, ssh.host_key_state)
         ssh.key_status = lambda _host: info
         ssh.ensure_local_key = lambda: (True, "")
         ssh.trust_host_key = lambda _raw, _host: (calls.__setitem__(
@@ -2966,15 +2966,39 @@ class InstallKeyOrderTest(unittest.TestCase):
             "probe", calls["probe"] + 1) or (True, ""))
         ssh._run_with_password = lambda *_args, **_kwargs: (
             calls.__setitem__("copy", calls["copy"] + 1) or (0, ""))
+        if state is not None:
+            ssh.host_key_state = lambda _host, _raw: (
+                state, ["ED25519    SHA256:x"], [])
         try:
             ok, message = ssh.install_key(
                 self.host, password, lambda *_a: None, None,
-                lambda _prints: trust, info,
+                lambda _prints: (calls.__setitem__("trust", calls["trust"] + 1)
+                                 or trust), info,
             )
         finally:
             (ssh.key_status, ssh.ensure_local_key, ssh.trust_host_key,
-             ssh.probe_key, ssh._run_with_password) = saved
+             ssh.probe_key, ssh._run_with_password,
+             ssh.host_key_state) = saved
         return ok, message, calls
+
+    def test_pinned_before_the_copy_is_not_asked_again(self):
+        """L'empreinte épinglée par le dialogue ne redemande rien au worker.
+
+        `KeyInstallDialog` pose la question et écrit known_hosts AVANT de
+        lancer la copie (une question passée par signal pouvait rester sans
+        réponse et laisser le poste non épinglé, vécu 28/11/2026) : quand
+        `install_key` arrive, l'état est déjà « known ».
+        """
+        ok, _message, calls = self._install(
+            {"authenticated": False, "state": "unknown",
+             "raw": "gigafed ssh-ed25519 AAAA\n", "fingerprints": [],
+             "stored": [], "error": ""},
+            password="secret", state="known",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(calls["trust"], 0)
+        self.assertEqual(calls["pin"], 0)
+        self.assertEqual(calls["copy"], 1)
 
     def test_pinned_and_accepted_needs_nothing(self):
         ok, _message, calls = self._install(
@@ -2982,7 +3006,7 @@ class InstallKeyOrderTest(unittest.TestCase):
              "fingerprints": [], "stored": [], "error": ""}
         )
         self.assertTrue(ok)
-        self.assertEqual(calls, {"pin": 0, "copy": 0, "probe": 0})
+        self.assertEqual(calls, {"pin": 0, "copy": 0, "probe": 0, "trust": 0})
 
     def test_accepted_but_unpinned_pins_without_password(self):
         ok, _message, calls = self._install(

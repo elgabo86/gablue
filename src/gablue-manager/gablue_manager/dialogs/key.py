@@ -4,6 +4,12 @@ Le poste n'entre dans la liste qu'une fois la clé acceptée **et** l'empreinte
 d'hôte épinglée : ce dialogue ne porte donc plus de bouton « Installer la
 clé ». Il demande le mot de passe seulement quand il en faut un (Entrée lance
 la copie) et démarre seul l'épinglage quand la clé est déjà acceptée.
+
+L'empreinte est demandée et épinglée **ici, avant de lancer la copie** : posée
+par le worker (signal `confirm_host_key`), la question pouvait rester en file,
+la fenêtre se fermer entre-temps et l'accord arriver dans le vide — empreinte
+jamais épinglée, poste écarté avec « empreinte d'hôte non acceptée » alors
+qu'elle venait d'être acceptée (vécu 28/11/2026, gigafed).
 """
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -12,7 +18,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..ssh import key_ready
+from ..ssh import host_key_state, key_ready, trust_host_key
 from ..uiutil import restyle_label
 from ..util import address_text, display_name
 from ..workers import KeyInstallWorker, KeyProbeWorker
@@ -169,13 +175,22 @@ class KeyInstallDialog(QDialog):
         low = error.lower()
         last = error.splitlines()[-1] if error else ""
         if state == "unknown":
-            # Clé déjà acceptée mais empreinte non épinglée : il ne reste que
-            # la question de confiance, aucun mot de passe à demander.
-            self.status_label.setText(
-                "Empreinte d'hôte inconnue : elle sera vérifiée et enregistrée "
-                "avant toute copie."
-            )
-            self._message = "empreinte d'hôte non acceptée"
+            # Empreinte jamais vue. Deux cas très différents : la clé passe
+            # déjà (il ne reste que la confiance) ou sshd la refuse (il faut le
+            # mot de passe). Le motif d'échec du pré-scan ne dit donc PAS que
+            # l'empreinte bloque — c'était le texte affiché à tort pour un
+            # poste dont la clé manquait aussi.
+            if authenticated:
+                self.status_label.setText(
+                    "Empreinte d'hôte inconnue : elle sera vérifiée et "
+                    "enregistrée avant toute copie."
+                )
+            else:
+                self.status_label.setText(
+                    "Clé pas encore acceptée par ce poste. Son empreinte sera "
+                    "demandée avant la copie."
+                )
+            self._message = "copie de la clé non effectuée"
         elif state == "changed":
             self.status_label.setText(
                 "L'empreinte enregistrée ne correspond plus à celle du poste : "
@@ -228,18 +243,26 @@ class KeyInstallDialog(QDialog):
         password = self.password_edit.text()
         authenticated = bool((self._prescan or {}).get("authenticated"))
         if not authenticated and not password:
+            # Le motif doit être VRAI : sans mot de passe, ce n'est pas
+            # l'empreinte qui bloque (le pré-scan laissait son texte traîner).
+            self._message = "mot de passe SSH non saisi"
             self._show_result("Mot de passe requis pour copier la clé.", False)
             self.password_edit.setFocus()
             return
-        self.password_edit.setEnabled(False)
-        self.status_label.setText("Copie de la clé en cours…")
-        restyle_label(self.status_label, "hint")
         self.result_label.setVisible(False)
         self.log_view.setVisible(True)
         self.log_view.clear()
         self.log_view.appendPlainText(
             f"→ {address_text(self._host)}\n"
         )
+        if not self._confirm_host_key():
+            self.password_edit.setEnabled(True)
+            self.form_box.setVisible(not authenticated)
+            self.password_edit.setFocus()
+            return
+        self.password_edit.setEnabled(False)
+        self.status_label.setText("Copie de la clé en cours…")
+        restyle_label(self.status_label, "hint")
 
         worker = KeyInstallWorker(self._host, password, self, self._prescan)
         worker.log.connect(self._append_log)
@@ -248,13 +271,58 @@ class KeyInstallDialog(QDialog):
         self._worker = worker
         worker.start()
 
-    def _ask_host_key(self, name: str, fingerprints: list) -> None:
+    def _confirm_host_key(self) -> bool:
+        """Empreinte : question et épinglage AVANT la copie, sur ce thread.
+
+        Le worker ne tranche plus la confiance : sa question passait par un
+        signal, donc par la file d'événements ; une fenêtre fermée entre-temps
+        laissait l'accord sans effet (rien n'était écrit dans known_hosts) et
+        le poste était écarté avec le motif du pré-scan. Ici la réponse est
+        utilisée par l'appelant même, puis `install_key` trouve l'empreinte
+        déjà connue et ne redemande rien.
+        """
+        raw = (self._prescan or {}).get("raw") or ""
+        if not raw:
+            return True             # rien de scanné : le worker tranchera
+        state, scanned, _stored = host_key_state(self._host, raw)
+        if state == "changed":
+            self._message = "empreinte d'hôte changée"
+            self.status_label.setText(
+                "L'empreinte enregistrée ne correspond plus à celle du poste : "
+                "copie refusée par sécurité. Vérifiez la machine."
+            )
+            restyle_label(self.status_label, "warn")
+            return False
+        if state != "unknown":
+            return True             # déjà épinglée sous une adresse du poste
+        if not self._ask_host_key(display_name(self._host), scanned):
+            self._message = "empreinte refusée"
+            self.status_label.setText(
+                "Empreinte refusée : le poste n'est pas ajouté."
+            )
+            restyle_label(self.status_label, "warn")
+            return False
+        if not trust_host_key(raw, self._host):
+            self._message = "impossible d'enregistrer l'empreinte dans known_hosts"
+            self.status_label.setText(
+                "L'empreinte n'a pas pu être enregistrée dans "
+                "~/.ssh/known_hosts."
+            )
+            restyle_label(self.status_label, "warn")
+            return False
+        self._append_log("Empreinte acceptée et enregistrée dans known_hosts.\n")
+        return True
+
+    def _ask_host_key(self, name: str, fingerprints: list) -> bool:
         """Premier contact : montrer l'empreinte, ne jamais l'accepter en douce.
 
         Le bouton dit ce qu'il fait (« Accepter l'empreinte ») : un « Oui »
         générique dans une boîte posée par-dessus un journal se lisait mal, et
         l'empreinte doit être épinglée sous TOUTES les adresses du poste (LAN
         et Tailscale), sinon un changement d'adresse redemande la confiance.
+
+        Rend la réponse : `_start` s'en sert directement, et le worker (repli
+        quand le pré-scan n'a rien scanné) reçoit la même par événement.
         """
         details = "\n".join(f"    {item}" for item in fingerprints) or "    (aucune)"
         text = (
@@ -272,15 +340,13 @@ class KeyInstallDialog(QDialog):
         refuse = box.addButton("Refuser", QMessageBox.RejectRole)
         box.setDefaultButton(refuse)
         box.setWindowModality(Qt.ApplicationModal)
-        box.show()
-        box.raise_()
-        box.activateWindow()
         box.exec()
         answer = box.clickedButton() is accept
         worker = self._worker
         if worker is not None:
             worker.trust_answer = answer
             worker.trust_event.set()
+        return answer
 
     def _append_log(self, text: str) -> None:
         self.log_view.insertPlainText(text)
@@ -328,18 +394,26 @@ class KeyInstallDialog(QDialog):
         """Annule et ferme sans demander (fermeture de la fenêtre principale)."""
         if self._probe_worker is not None and self._probe_worker.isRunning():
             self._probe_worker.wait(5000)
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.cancel.set()
-            self._worker.trust_event.set()   # débloque l'attente d'empreinte
-            self._worker.wait(3000)
+        self._cancel_worker()
         self.accept()
 
     def reject(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.cancel.set()
-            self._worker.trust_event.set()   # débloque l'attente d'empreinte
-            self._worker.wait(3000)
+        self._cancel_worker()
         super().reject()
+
+    def _cancel_worker(self) -> None:
+        """Arrête la copie en cours et consigne l'interruption.
+
+        Une copie interrompue n'est ni une empreinte refusée ni un mot de
+        passe faux : le motif rapporté (« Postes non ajoutés ») doit le dire.
+        """
+        if self._worker is None or not self._worker.isRunning():
+            return
+        self._worker.cancel.set()
+        self._worker.trust_event.set()   # débloque l'attente d'empreinte
+        self._worker.wait(3000)
+        if not self._success:
+            self._message = "ajout interrompu avant la fin de la copie"
 
     def key_installed(self) -> bool:
         return self._success
