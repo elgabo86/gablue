@@ -333,15 +333,18 @@ def update_available(current: dict, info: dict) -> bool | None:
 
 
 def app_update_verdicts(states: dict[str, dict],
-                        infos: dict[str, dict]) -> tuple[list[str], bool]:
-    """Clés des applications installées à mettre à jour, et doute éventuel.
+                        infos: dict[str, dict]) -> tuple[list[str], list[str]]:
+    """Clés des applications installées à mettre à jour, et clés indéterminées.
 
     `infos` porte la dernière version publiée par application ({} = flux muet
     ou version non comparable) : le verdict vaut alors `None`, qui n'est pas
-    une erreur mais interdit de conclure « tout est à jour ».
+    une erreur mais interdit de conclure « tout est à jour ». Les clés
+    indéterminées sont **nommées** (et pas réduites à un booléen) : une
+    application dont le flux casse doit être citée à l'utilisateur et ne doit
+    jamais empêcher les autres d'être mises à jour.
     """
     pending: list[str] = []
-    unknown = False
+    unverified: list[str] = []
     for app in APPS:
         current = states.get(app.key)
         if not current or not installed_any(app, current):
@@ -350,27 +353,29 @@ def app_update_verdicts(states: dict[str, dict],
         if verdict is True:
             pending.append(app.key)
         elif verdict is None:
-            unknown = True
-    return pending, unknown
+            unverified.append(app.key)
+    return pending, unverified
 
 
 def pending_for(states: dict[str, dict],
-                stop=None) -> tuple[list[str], bool, int]:
-    """(clés à mettre à jour, doute, nombre d'applications installées).
+                stop=None) -> tuple[list[str], list[str], int]:
+    """(clés à mettre à jour, clés indéterminées, nombre d'applications installées).
 
     Mêmes verdicts que `pending_updates`, sur des états **déjà lus** : le poste
     local lit les siens (`all_states`), un poste distant les reçoit par SSH
     (`remote_states`). Les flux de releases, eux, se lisent toujours d'ici —
     aucun poste n'a besoin d'un accès réseau sortant pour être à jour.
 
-    `{}` côté version publiée laisse le verdict indéterminé au lieu de mentir.
+    `{}` côté version publiée laisse le verdict indéterminé au lieu de mentir ;
+    la deuxième valeur nomme alors l'application (`latest_info` échoue
+    application par application, jamais pour le lot).
     `stop` (threading.Event) vient de la fermeture de la fenêtre : on cesse
     d'attendre les applications restantes, sans bloquer la sortie. Les sondes
     déjà parties expirent d'elles-mêmes (`PROBE_TIMEOUT`).
     """
     installed = [app for app in APPS if installed_any(app, states[app.key])]
     if not installed:
-        return [], False, 0
+        return [], [], 0
     infos: dict[str, dict] = {}
     pool = ThreadPoolExecutor(max_workers=4)
     try:
@@ -383,7 +388,7 @@ def pending_for(states: dict[str, dict],
             # after interpreter shutdown`) : plus personne n'attend de
             # verdict, on rend « indéterminé » au lieu de lever (vécu
             # 09/11/2026, sonde survivante à la fermeture).
-            return [], True, len(installed)
+            return [], [app.key for app in installed], len(installed)
         for app in installed:
             future = futures.get(app.key)
             if future is None or (stop is not None and stop.is_set()):
@@ -397,11 +402,11 @@ def pending_for(states: dict[str, dict],
                 infos[app.key] = {}
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
-    pending, unknown = app_update_verdicts(states, infos)
-    return pending, unknown, len(installed)
+    pending, unverified = app_update_verdicts(states, infos)
+    return pending, unverified, len(installed)
 
 
-def pending_updates(stop=None) -> tuple[list[str], bool, int]:
+def pending_updates(stop=None) -> tuple[list[str], list[str], int]:
     """Applications installées sur CE poste qui ont une mise à jour."""
     return pending_for(all_states(), stop)
 

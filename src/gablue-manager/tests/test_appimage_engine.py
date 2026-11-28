@@ -288,17 +288,21 @@ class ResolveTest(unittest.TestCase):
         )
 
     def test_xenia_commit_tag(self):
+        # L'amont glisse la version dans le nom de l'asset (constaté le
+        # 28/11/2026) : le catalogue doit matcher le nom réel, pas un nom fixe
+        # — un motif périmé rendait `probe xenia` en échec et le domaine
+        # « Applications » indéterminé en entier.
         feed = (
             "<feed><entry><title>xenia edge</title>"
             "<updated>2026-11-09T12:00:00Z</updated>"
             '<link href="https://github.com/has207/xenia-edge/releases/tag/'
-            '32264e9"/></entry></feed>'
+            '20261127.1"/></entry></feed>'
         )
         page = (
-            '<a href="/has207/xenia-edge/releases/download/32264e9/'
-            'xenia_edge_linux.AppImage">x</a>'
-            '<a href="/has207/xenia-edge/releases/download/32264e9/'
-            'xenia_edge_windows.zip">z</a>'
+            '<a href="/has207/xenia-edge/releases/download/20261127.1/'
+            'xenia_edge_20261127.1_linux.AppImage">x</a>'
+            '<a href="/has207/xenia-edge/releases/download/20261127.1/'
+            'xenia_edge_20261127.1_windows.zip">z</a>'
         )
         with mock.patch.object(
             engine, "fetch_text",
@@ -307,11 +311,12 @@ class ResolveTest(unittest.TestCase):
             ),
         ):
             info = engine.resolve(engine.find_app(self.catalog, "xenia"))
-        self.assertEqual(info["tag"], "32264e9")
-        # Tag = hachage : seule la date permet au manager de conclure.
-        self.assertEqual(info["version"], "32264e9")
+        self.assertEqual(info["tag"], "20261127.1")
+        # Tag = hachage ou version datée : seule la date permet au manager de
+        # conclure quand la version installée est vide.
         self.assertIsNotNone(info["published"])
-        self.assertEqual(info["name"], "xenia_edge_linux.AppImage")
+        self.assertEqual(info["name"], "xenia_edge_20261127.1_linux.AppImage")
+        self.assertTrue(info["url"].endswith(info["name"]))
 
     def test_eden_gitea(self):
         payload = {

@@ -131,17 +131,18 @@ def apps_chain(pending_apps=(), states=None) -> str:
 def probe_apps(host: dict, timeout: float = 90.0) -> tuple:
     """AppImages d'un poste distant : une connexion SSH + les flux de releases.
 
-    Rend `(clés à mettre à jour, doute, installées, états)` — les états servent
-    à construire les commandes (`install_command` a besoin des options que le
-    script du poste connaît). Poste injoignable → `([], True, 0, {})`, jamais
-    « tout est à jour ».
+    Rend `(clés à mettre à jour, clés indéterminées, installées, états)` — les
+    états servent à construire les commandes (`install_command` a besoin des
+    options que le script du poste connaît). Poste injoignable →
+    `([], [], 0, {})`, jamais « tout est à jour » ni une application
+    devinée.
     """
     code, text = ssh_capture(host, apps.REMOTE_STATE_SCRIPT, timeout=timeout)
     if code != 0 or "##gearlever" not in (text or ""):
-        return [], True, 0, {}
+        return [], [], 0, {}
     states, _gearlever = apps.remote_states(text)
-    pending, unknown, installed = apps.pending_for(states)
-    return pending, unknown, installed, states
+    pending, unverified, installed = apps.pending_for(states)
+    return pending, unverified, installed, states
 
 
 # État des AppImages greffé sur la sonde : ses sections `##nom` sont précédées

@@ -1894,21 +1894,31 @@ class UpdatesTest(unittest.TestCase):
         # La même fabrique sert le poste local (`pending_updates`) et un poste
         # distant (`pending_for` sur les états reçus par SSH).
         self.assertEqual(
-            updates.apps_domain(["esde"], False, 3),
-            {"state": "updates", "apps": ["ES-DE"]},
+            updates.apps_domain(["esde"], [], 3),
+            {"state": "updates", "apps": ["ES-DE"], "unverified": []},
         )
         self.assertEqual(
-            updates.apps_domain([], False, 3), {"state": "uptodate", "apps": []}
+            updates.apps_domain([], [], 3),
+            {"state": "uptodate", "apps": [], "unverified": []},
         )
         self.assertEqual(
-            updates.apps_domain([], True, 2), {"state": "unknown", "apps": []}
+            updates.apps_domain([], ["xenia"], 2),
+            {"state": "unknown", "apps": [], "unverified": ["Xenia Edge"]},
         )
         self.assertEqual(
-            updates.apps_domain([], True, 0),
-            {"state": "unavailable", "apps": []},
+            updates.apps_domain([], ["xenia"], 0),
+            {"state": "unavailable", "apps": [], "unverified": []},
+        )
+        # Une application cassée ne masque pas les mises à jour des autres :
+        # le domaine reste « updates », l'indécise est nommée à côté.
+        self.assertEqual(
+            updates.apps_domain(["eden"], ["xenia"], 2),
+            {"state": "updates", "apps": ["Eden"],
+             "unverified": ["Xenia Edge"]},
         )
         state = {"online": True, "domains": {
-            "apps": {"state": "updates", "apps": ["Eden", "ES-DE"]},
+            "apps": {"state": "updates", "apps": ["Eden", "ES-DE"],
+                     "unverified": []},
             "image": {"state": "uptodate"},
         }}
         self.assertEqual(
@@ -1919,8 +1929,24 @@ class UpdatesTest(unittest.TestCase):
             "\n".join(updates.summary_lines(state)),
         )
         self.assertIn("2 mises à jour", updates.compact_summary(state))
+        # Une application non vérifiée est citée, jamais noyée dans « à jour ».
+        partial = {"online": True, "domains": {
+            "apps": {"state": "updates", "apps": ["Eden"],
+                     "unverified": ["Xenia Edge"]},
+        }}
+        text = "\n".join(updates.summary_lines(partial))
+        self.assertIn("Applications : Eden · 1 non vérifiée : Xenia Edge", text)
+        broken = {"online": True, "domains": {
+            "apps": {"state": "unknown", "apps": [],
+                     "unverified": ["Xenia Edge"]},
+        }}
+        self.assertIn(
+            "Applications : vérification impossible · "
+            "1 non vérifiée : Xenia Edge",
+            "\n".join(updates.summary_lines(broken)),
+        )
         # Aucune application installée : domaine indisponible, pas « à jour ».
-        unavailable = {"state": "unavailable", "apps": []}
+        unavailable = {"state": "unavailable", "apps": [], "unverified": []}
         self.assertEqual(updates.domain_count("apps", unavailable), 0)
         self.assertIn(
             "Applications : absent de ce poste",
@@ -2411,15 +2437,17 @@ class AppsTest(unittest.TestCase):
             "eden": {"version": "0.0.2"},
             "xenia": {},                 # flux muet : verdict indéterminé
         }
-        pending, unknown = apps.app_update_verdicts(states, infos)
+        pending, unverified = apps.app_update_verdicts(states, infos)
         self.assertEqual(pending, ["eden"])
-        self.assertTrue(unknown)
+        # L'application au flux muet est NOMMÉE : elle ne bloque pas les
+        # autres et le panneau peut dire laquelle n'a pas été vérifiée.
+        self.assertEqual(unverified, ["xenia"])
         # Rien d'installé : ni mise à jour, ni doute.
         self.assertEqual(
             apps.app_update_verdicts(
                 {"azahar": {"installed": False, "mtime": 0.0, "cli": ""}}, {}
             ),
-            ([], False),
+            ([], []),
         )
 
     def test_update_script(self):

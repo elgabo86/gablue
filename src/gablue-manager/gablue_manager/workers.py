@@ -226,7 +226,7 @@ class AppsUpdateWorker(QThread):
     du fil graphique, comme les autres vérifications réseau.
     """
 
-    done = Signal(object)           # (clés à mettre à jour, doute, installées)
+    done = Signal(object)           # (à mettre à jour, indéterminées, installées)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -254,7 +254,7 @@ class RemoteAppsWorker(QThread):
     releases se lisent d'ici, le poste n'a rien à télécharger pour être jugé.
     """
 
-    done = Signal(str, object)      # id, (à mettre à jour, doute, installées, états)
+    done = Signal(str, object)      # id, (à mettre à jour, indéterminées, installées, états)
 
     def __init__(self, host: dict, parent=None):
         super().__init__(parent)

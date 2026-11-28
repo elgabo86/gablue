@@ -1329,7 +1329,7 @@ class MainWindow(QMainWindow):
 
     def _batch_probe_ready(self, host: dict, result) -> None:
         """Sonde d'un poste terminée : sa chaîne est prête, le lot attend les autres."""
-        pending, _unknown, _installed, states = result
+        pending, _unverified, _installed, states = result
         self._batch_commands[host["id"]] = remote_updates.update_chain(
             pending, states
         )
@@ -2101,7 +2101,7 @@ class MainWindow(QMainWindow):
         self._probe_remote_apps(host, self._offer_remote_all)
 
     def _offer_remote_all(self, host: dict, result) -> None:
-        pending, _unknown, _installed, states = result
+        pending, _unverified, _installed, states = result
         detail = ""
         if pending:
             detail = (
@@ -2129,7 +2129,7 @@ class MainWindow(QMainWindow):
         self._probe_remote_apps(host, self._offer_remote_apps)
 
     def _offer_remote_apps(self, host: dict, result) -> None:
-        pending, unknown, installed, states = result
+        pending, unverified, installed, states = result
         if not installed:
             QMessageBox.information(
                 self, "Applications",
@@ -2138,12 +2138,14 @@ class MainWindow(QMainWindow):
             )
             return
         if not pending:
-            if unknown:
+            if unverified:
+                doubtful = ", ".join(apps_names(unverified))
                 QMessageBox.warning(
                     self, "Applications",
-                    "Mise à jour impossible à déterminer : les flux de "
-                    "versions n'ont pas répondu pour au moins une "
-                    "application.",
+                    "Aucune mise à jour à installer, mais la version publiée "
+                    f"de {doubtful} n'a pas pu être lue sur « "
+                    f"{display_name(host)} » : cette application reste non "
+                    "vérifiée, pas « à jour ».",
                 )
             else:
                 QMessageBox.information(
@@ -2153,9 +2155,12 @@ class MainWindow(QMainWindow):
                 )
             return
         names = ", ".join(apps_names(pending))
+        doubtful = (updates.unverified_apps_text(apps_names(unverified))
+                    if unverified else "")
         answer = QMessageBox.question(
             self, "Mettre à jour les applications",
-            f"Mettre à jour {names} sur « {display_name(host)} » ?",
+            f"Mettre à jour {names} sur « {display_name(host)} » ?"
+            + (f"\n\n{doubtful.capitalize()}." if doubtful else ""),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
@@ -2588,7 +2593,7 @@ class MainWindow(QMainWindow):
     def _probe_apps(self, then) -> None:
         """Sonde des AppImages en retard, puis `then(result)` sur le fil GUI.
 
-        `result` = `(clés à mettre à jour, doute, nombre installé)` de
+        `result` = `(clés à mettre à jour, clés indéterminées, nombre installé)` de
         `apps.pending_updates`. La sonde interroge un flux de releases par
         application : elle tourne hors du fil graphique, la bande d'activité
         tient l'utilisateur pendant ce temps, et une sonde déjà partie n'est
@@ -2609,7 +2614,7 @@ class MainWindow(QMainWindow):
 
     def _apps_update_ready(self, result) -> None:
         """Sonde terminée : lancer les installations, ou dire pourquoi non."""
-        pending, unknown, installed = result
+        pending, unverified, installed = result
         if not installed:
             QMessageBox.information(
                 self, "Applications",
@@ -2617,12 +2622,13 @@ class MainWindow(QMainWindow):
             )
             return
         if not pending:
-            if unknown:
+            if unverified:
+                doubtful = ", ".join(apps_names(unverified))
                 QMessageBox.warning(
                     self, "Applications",
-                    "Mise à jour impossible à déterminer : les flux de "
-                    "versions n'ont pas répondu pour au moins une "
-                    "application.",
+                    "Aucune mise à jour à installer, mais la version publiée "
+                    f"de {doubtful} n'a pas pu être lue : cette application "
+                    "reste non vérifiée, pas « à jour ».",
                 )
             else:
                 QMessageBox.information(
@@ -2636,6 +2642,11 @@ class MainWindow(QMainWindow):
             f"1 application : {names}."
             if count == 1 else f"{count} applications : {names}."
         )
+        if unverified:
+            # Les autres partent quand même : une application au flux muet ne
+            # bloque pas leurs mises à jour (vécu 28/11/2026, Xenia).
+            doubtful = updates.unverified_apps_text(apps_names(unverified))
+            subtitle += f" {doubtful.capitalize()}."
         self._run_local_task(
             "Mise à jour des applications",
             subtitle,

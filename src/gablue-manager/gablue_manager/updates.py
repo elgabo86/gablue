@@ -325,17 +325,42 @@ def check_gwine() -> dict:
         )
     return result
 
-def apps_domain(pending, unknown: bool, installed: int) -> dict:
+def apps_domain(pending, unverified, installed: int) -> dict:
     """État du domaine « applications » depuis une sonde (`pending_updates`).
 
     Partagé par les deux postes : le local sonde ses propres AppImages, un
     poste distant rend les mêmes trois valeurs par SSH (`remote_updates`).
+
+    `unverified` = clés des applications dont le flux de releases n'a pas
+    répondu. Elles sont **nommées** (`unverified` du résultat) et, seules,
+    laissent le domaine « unknown » : une application cassée se dit, mais ne
+    masque jamais celles qui ont réellement une mise à jour — le panneau
+    affiche « 2 disponibles · 1 non vérifiée : Xenia Edge », et le bouton
+    « Mettre à jour » ne lance que les deux premières.
     """
+    unverified_names = apps.names_for(unverified or ())
     if pending:
-        return {"state": "updates", "apps": sorted(apps.names_for(pending))}
+        return {
+            "state": "updates",
+            "apps": sorted(apps.names_for(pending)),
+            "unverified": unverified_names,
+        }
     if not installed:
-        return {"state": "unavailable", "apps": []}
-    return {"state": "unknown" if unknown else "uptodate", "apps": []}
+        return {"state": "unavailable", "apps": [], "unverified": []}
+    return {
+        "state": "unknown" if unverified_names else "uptodate",
+        "apps": [],
+        "unverified": unverified_names,
+    }
+
+
+def unverified_apps_text(names) -> str:
+    """« 1 non vérifiée : Xenia Edge » / « 2 non vérifiées : … » ("" si rien)."""
+    names = [name for name in (names or []) if name]
+    if not names:
+        return ""
+    label = "non vérifiée" if len(names) == 1 else "non vérifiées"
+    return f"{len(names)} {label} : {_list_text(names, 3)}"
 
 
 def check_apps() -> dict:
@@ -605,7 +630,13 @@ def summary_lines(state: dict | None) -> list[str]:
                     f"{label} : " + _list_text(result.get("formulas"))
                 )
             elif domain == "apps":
-                lines.append(f"{label} : " + _list_text(result.get("apps")))
+                line = f"{label} : " + _list_text(result.get("apps"))
+                doubtful = unverified_apps_text(result.get("unverified"))
+                if doubtful:
+                    # Une application au flux muet ne se cache pas derrière
+                    # les mises à jour des autres (vécu 28/11/2026 : Xenia).
+                    line += " · " + doubtful
+                lines.append(line)
             else:
                 parts = []
                 for component in result.get("components") or []:
@@ -623,7 +654,12 @@ def summary_lines(state: dict | None) -> list[str]:
         elif status == "unavailable":
             lines.append(f"{label} : absent de ce poste")
         elif status == "unknown":
-            lines.append(f"{label} : vérification impossible")
+            doubtful = (unverified_apps_text(result.get("unverified"))
+                        if domain == "apps" else "")
+            if doubtful:
+                lines.append(f"{label} : vérification impossible · {doubtful}")
+            else:
+                lines.append(f"{label} : vérification impossible")
 
     return lines
 

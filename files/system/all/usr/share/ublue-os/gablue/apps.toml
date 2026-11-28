@@ -123,12 +123,15 @@ desktop_name = "Xenia Edge"
 desktop_drop = ["X-AppImage-Version"]
 engine = true
 
-# Le tag est un hachage de commit, l'asset un nom fixe : flux Atom pour le tag,
-# expanded_assets pour le nom exact.
+# Le tag est un hachage de commit : flux Atom pour le tag, expanded_assets pour
+# le nom exact. L'amont a glissé la version dans le nom de l'asset
+# (`xenia_edge_20261127.1_linux.AppImage`, constaté le 28/11/2026) : le motif
+# ne peut donc plus l'écrire à l'avance, seule l'extension et la plateforme
+# sont fixes. `[^"]*` ne franchit pas la fin d'un href de la page.
 [app.release]
 kind = "github"
 repo = "has207/xenia-edge"
-asset_regex = 'xenia_edge_linux\.AppImage$'
+asset_regex = 'xenia_edge_[^"]*_linux\.AppImage$'
 
 [[app]]
 key = "lichii"
